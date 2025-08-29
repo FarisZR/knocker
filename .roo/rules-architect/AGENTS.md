@@ -1,0 +1,6 @@
+# Project Architecture Rules (Non-Obvious Only)
+
+- **Stateless Application**: The `knocker` service is designed to be completely stateless. All state is managed in the `whitelist.json` file, which is persisted via a Docker volume. Do not introduce in-memory state that would break this pattern.
+- **Reverse Proxy is Essential**: The application is not designed to be exposed directly to the internet. It relies on a reverse proxy (like Caddy) to handle TLS and to provide the `X-Forwarded-For` header, which is critical for the IP whitelisting logic.
+- **Configuration via Environment Variable**: The application's configuration is loaded from a single YAML file whose path is specified by the `KNOCKER_CONFIG_PATH` environment variable. This is a deliberate design choice to decouple the configuration from the application code.
+- **No Database**: The project intentionally uses a simple JSON file for the whitelist to keep the architecture simple and to avoid introducing a database dependency. Any proposal to add a database would be a major architectural change.

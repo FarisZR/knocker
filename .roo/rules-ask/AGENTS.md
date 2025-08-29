@@ -1,0 +1,6 @@
+# Project Documentation Rules (Non-Obvious Only)
+
+- **`knocker.example.yaml` is the primary reference**: The [`knocker.example.yaml`](knocker.example.yaml:1) file is the most reliable source of truth for configuration options. The `API_SPEC.md` and `README.md` provide a high-level overview, but the YAML file contains all the details.
+- **Core logic is in `src/core.py`**: While [`src/main.py`](src/main.py:1) defines the API endpoints, all the business logic for IP validation, whitelist management, and API key permissions is located in [`src/core.py`](src/core.py:1).
+- **`dev/docker-compose.yml` for development**: The `docker-compose.yml` in the root is for production deployment. The `dev/docker-compose.yml` is specifically for the development environment and includes the Caddy reverse proxy for full end-to-end testing.
+- **CI workflow shows integration tests**: The [`.github/workflows/ci.yml`](.github/workflows/ci.yml:1) file contains the `curl` commands that serve as the project's integration tests. This is the best place to understand the expected request/response flow.
