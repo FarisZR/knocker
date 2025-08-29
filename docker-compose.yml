@@ -19,7 +19,8 @@ services:
       - knocker
 
   knocker:
-    build: .
+    # Use the pre-built image from the GitHub Container Registry
+    image: ghcr.io/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY_NAME:latest
     restart: unless-stopped
     networks:
       - caddy_net

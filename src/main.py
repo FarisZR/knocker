@@ -12,7 +12,7 @@ def get_settings() -> Dict:
     Loads settings from the YAML file and caches the result.
     The path is relative to the project root where the app is run from.
     """
-    return config.load_config("knocker/knocker.yaml")
+    return config.load_config("knocker.yaml")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
