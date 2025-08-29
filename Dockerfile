@@ -5,21 +5,21 @@ FROM python:3.11.9-slim
 WORKDIR /app
 
 # Create a non-root user to run the application for better security
-# Using a fixed UID/GID is good practice for production environments
 RUN groupadd --gid 1001 appuser && \
     useradd --create-home --uid 1001 --gid 1001 appuser
 
-# Copy only the requirements file first to leverage Docker's layer caching
-COPY --chown=appuser:appuser src/requirements.txt .
-
-# Install dependencies as the non-root user
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-# Switch to the non-root user
-USER appuser
+# Copy requirements and install dependencies system-wide
+COPY src/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
-COPY --chown=appuser:appuser src/ .
+COPY src/ .
+
+# Create and change ownership of the data directory to the appuser
+RUN mkdir -p /data && chown appuser:appuser /data
+
+# Switch to the non-root user for running the application
+USER appuser
 
 # Expose the port the app runs on
 EXPOSE 8000
@@ -28,4 +28,4 @@ EXPOSE 8000
 # Uvicorn is run with --forwarded-allow-ips="*" to trust the X-Forwarded-For
 # header from any proxy within the Docker network. This is safe because
 # only Caddy is on the same network and can reach this container.
-CMD ["/home/appuser/.local/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--forwarded-allow-ips", "*"]
+CMD ["/usr/local/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--forwarded-allow-ips", "*"]

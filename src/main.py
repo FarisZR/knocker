@@ -4,7 +4,8 @@ from functools import lru_cache
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, status, Depends
 from fastapi.responses import JSONResponse
-from . import core, config
+import core
+import config
 
 @lru_cache()
 def get_settings() -> Dict:
@@ -12,7 +13,7 @@ def get_settings() -> Dict:
     Loads settings from the YAML file and caches the result.
     The path is relative to the project root where the app is run from.
     """
-    return config.load_config("knocker.yaml")
+    return config.load_config()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -92,8 +93,8 @@ async def knock(
         },
     )
 
-@app.get("/check")
-async def check(
+@app.get("/verify")
+async def verify(
     client_ip: str = Depends(get_client_ip),
     settings: dict = Depends(get_settings)
 ):
