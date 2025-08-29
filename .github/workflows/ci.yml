@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: pip install -r src/requirements.txt
+
+    - name: Run unit tests
+      run: python3 -m pytest
+
+    - name: Build Docker image for testing
+      run: docker build -t caddyknocker-ci .
+
+    - name: Create Caddyfile for integration test
+      run: |
+        cat <<EOF > ./Caddyfile
+        {
+          admin off
+        }
+        :80 {
+          route /knock* {
+            uri strip_prefix /knock
+            reverse_proxy knocker:8000
+          }
+          route /check* {
+            uri strip_prefix /check
+            reverse_proxy knocker:8000
+          }
+          route /protected* {
+            forward_auth knocker:8000 {
+              uri /check
+            }
+            respond "Success" 200
+          }
+        }
+        EOF
+
+    - name: Run docker-compose stack
+      run: docker-compose up -d
+
+    - name: Wait for services to be healthy
+      run: sleep 10 # Simple wait for services to start
+
+    - name: Run integration test
+      run: |
+        # 1. Try to access protected route (should fail with 401)
+        if curl -s -o /dev/null -w "%{http_code}" http://localhost/protected | grep -q "401"; then
+          echo "✅ Protected route correctly returned 401"
+        else
+          echo "❌ Protected route did not return 401"
+          exit 1
+        fi
+
+        # 2. Perform the knock
+        API_KEY=$(grep 'key:' ./knocker.example.yaml | head -n 1 | awk '{print $2}')
+        if curl -s -H "X-Api-Key: $API_KEY" -H "X-Forwarded-For: 127.0.0.1" http://localhost/knock | grep -q "whitelisted_entry"; then
+          echo "✅ Knock successful"
+        else
+          echo "❌ Knock failed"
+          exit 1
+        fi
+
+        # 3. Try to access protected route again (should succeed with 200)
+        if curl -s -o /dev/null -w "%{http_code}" http://localhost/protected | grep -q "200"; then
+          echo "✅ Protected route correctly returned 200 after knock"
+        else
+          echo "❌ Protected route did not return 200 after knock"
+          exit 1
+        fi
