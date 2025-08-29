@@ -45,7 +45,7 @@ jobs:
 
         # 2. Perform the knock
         API_KEY=$(grep 'key:' ./knocker.example.yaml | head -n 1 | awk '{print $2}')
-        if curl -s -H "X-Api-Key: $API_KEY" -H "X-Forwarded-For: 127.0.0.1" http://localhost/knock | grep -q "whitelisted_entry"; then
+        if curl -s -X POST -H "X-Api-Key: $API_KEY" -H "X-Forwarded-For: 127.0.0.1" http://localhost/knock | grep -q "whitelisted_entry"; then
           echo "✅ Knock successful"
         else
           echo "❌ Knock failed"
