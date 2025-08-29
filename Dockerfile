@@ -6,7 +6,8 @@ WORKDIR /app
 
 # Create a non-root user to run the application for better security
 # Using a fixed UID/GID is good practice for production environments
-RUN useradd --create-home --uid 1001 --gid 1001 appuser
+RUN groupadd --gid 1001 appuser && \
+    useradd --create-home --uid 1001 --gid 1001 appuser
 
 # Copy only the requirements file first to leverage Docker's layer caching
 COPY --chown=appuser:appuser src/requirements.txt .
