@@ -1,0 +1,52 @@
+{
+	# Disable the admin API for security in this simple setup
+	admin off
+}
+
+:80 {
+	# Route requests to different handlers based on the path
+	route {
+		# Handle the knock request by forwarding it directly to the knocker service.
+		@knock path /knock
+		handle @knock {
+			reverse_proxy knocker:8000
+		}
+
+		# For any other path, first attempt to authenticate.
+		handle {
+			# Use forward_auth to send a verification request to the knocker service.
+			# Caddy will copy the original request's method and headers.
+			forward_auth knocker:8000 {
+				uri /verify
+				copy_headers X-Forwarded-For X-Forwarded-Proto X-Forwarded-Host
+			}
+
+			# If authentication is successful (knocker returns 2xx),
+			# proxy the request to the actual backend service.
+			# For this demo, we'll just respond with a success message.
+			# In a real-world scenario, this would be your application.
+			respond "You have accessed the private area!" 200
+		}
+	}
+
+	# Log all requests to the console for debugging.
+	log {
+		output stdout
+		format console
+	}
+
+	# Define how to handle errors, especially authentication failures.
+	handle_errors {
+		# If forward_auth fails, knocker returns a 401/403.
+		# We catch that and return a clean 403 Forbidden to the client.
+		@auth_error expression `{http.error.status_code} == 401 || {http.error.status_code} == 403`
+		handle @auth_error {
+			respond "Forbidden" 403
+		}
+
+		# Provide a fallback for any other errors that might occur.
+		handle {
+			respond "{http.error.status_code} {http.error.status_text}" {http.error.status_code}
+		}
+	}
+}
