@@ -52,11 +52,11 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
 
 ---
 
-### 2. Check
+### 2. Verify
 
 This endpoint is used by Caddy's `forward_auth` directive to verify if a client's IP is currently whitelisted.
 
-*   **URL**: `/check`
+*   **URL**: `/verify`
 *   **Method**: `GET`
 *   **Headers**:
     *   `X-Forwarded-For` (string, **required**): The client's real IP address, set by the proxy.
@@ -64,7 +64,24 @@ This endpoint is used by Caddy's `forward_auth` directive to verify if a client'
 #### Responses
 
 *   **`200 OK`** (Success)
-    *   Returned if the client's IP is found in an active (non-expired) whitelist entry. The response has an empty body.
+    *   Returned if the client's IP is found in an active (non-expired) whitelist entry, is in the `always_allowed_ips` list, or if the request path is in the `excluded_paths` list. The response has an empty body.
 
 *   **`401 Unauthorized`**
-    *   Returned if the client's IP is not found in the whitelist or if its entry has expired. The response has an empty body.
+    *   Returned if the client's IP is not authorized. The response has an empty body.
+
+## Configuration (`knocker.yaml`)
+
+- **`server`** (object, required): Server settings.
+    - **`host`** (string, required): The host to bind to.
+    - **`port`** (integer, required): The port to listen on.
+    - **`trusted_proxies`** (array of strings, required): A list of trusted proxy IPs/CIDRs.
+- **`whitelist`** (object, required): Whitelist settings.
+    - **`storage_path`** (string, required): Path to the whitelist JSON file.
+- **`api_keys`** (array of objects, required): A list of API key configurations.
+    - **`name`** (string, required): A friendly name for the key.
+    - **`key`** (string, required): The secret API key.
+    - **`ttl`** (integer, required): The time-to-live for whitelisted IPs in seconds.
+    - **`allow_remote_whitelist`** (boolean, required): If `true`, the key can whitelist any IP/CIDR. If `false`, it can only whitelist the source IP of the request.
+- **`security`** (object, optional): Security-related settings.
+    - **`always_allowed_ips`** (array of strings, optional): A list of IPs or CIDR ranges that are always permitted by the `/verify` endpoint, bypassing the dynamic whitelist.
+    - **`excluded_paths`** (array of strings, optional): A list of URL paths (e.g., `/api/health`) that are exempt from any IP-based authentication at the `/verify` endpoint.

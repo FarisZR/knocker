@@ -42,7 +42,7 @@ def get_client_ip(request: Request) -> Optional[str]:
 
 # --- API Endpoints ---
 
-@app.post("/knock")
+@app.post("/knock", status_code=status.HTTP_200_OK)
 async def knock(
     request: Request,
     body: Optional[Dict] = None,
@@ -85,7 +85,6 @@ async def knock(
     core.add_ip_to_whitelist(ip_to_whitelist, expiry_time, settings)
 
     return JSONResponse(
-        status_code=status.HTTP_200_OK,
         content={
             "whitelisted_entry": ip_to_whitelist,
             "expires_at": expiry_time,
@@ -93,18 +92,27 @@ async def knock(
         },
     )
 
-@app.get("/verify")
+@app.get("/verify", status_code=status.HTTP_200_OK)
 async def verify(
+    request: Request,
     client_ip: str = Depends(get_client_ip),
     settings: dict = Depends(get_settings)
 ):
+    # 1. Check if the path is excluded from authentication
+    # Use the X-Forwarded-Uri header if present, which Caddy should send.
+    path_to_check = request.headers.get("x-forwarded-uri", request.url.path)
+    if core.is_path_excluded(path_to_check, settings):
+        return Response(status_code=status.HTTP_200_OK)
+
+    # 2. Proceed with standard IP check
     if not client_ip:
         return Response(status_code=status.HTTP_401_UNAUTHORIZED)
         
     core.cleanup_expired_ips(settings)
     whitelist = core.load_whitelist(settings) 
     
-    if not core.is_ip_whitelisted(client_ip, whitelist):
+    # 3. Check if IP is whitelisted (this now includes always-allowed)
+    if not core.is_ip_whitelisted(client_ip, whitelist, settings):
         return Response(status_code=status.HTTP_401_UNAUTHORIZED)
 
     return Response(status_code=status.HTTP_200_OK)

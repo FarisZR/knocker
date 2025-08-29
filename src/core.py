@@ -16,24 +16,46 @@ def is_valid_ip_or_cidr(address: str) -> bool:
 
 # --- Whitelist Management ---
 
-def is_ip_whitelisted(ip: str, whitelist: Dict[str, int]) -> bool:
-    """Checks if a given IP is contained within any of the whitelisted networks."""
+def is_ip_whitelisted(ip: str, whitelist: Dict[str, int], settings: Dict[str, Any]) -> bool:
+    """
+    Checks if a given IP is contained within the dynamic whitelist or the
+    always-allowed list from settings.
+    """
     try:
         client_ip_obj = ipaddress.ip_address(ip)
-        now = int(time.time())
-        
-        for entry, expiry in whitelist.items():
-            if expiry > now:
-                try:
-                    network = ipaddress.ip_network(entry, strict=False)
-                    if client_ip_obj in network:
-                        return True
-                except ValueError:
-                    # Ignore invalid entries in the whitelist file
-                    continue
     except ValueError:
         # The IP to check was invalid
         return False
+
+    # 1. Check always-allowed list first
+    always_allowed_ips = settings.get("security", {}).get("always_allowed_ips", [])
+    for entry in always_allowed_ips:
+        try:
+            network = ipaddress.ip_network(entry, strict=False)
+            if client_ip_obj in network:
+                return True
+        except ValueError:
+            continue # Ignore invalid entries
+
+    # 2. Check dynamic whitelist
+    now = int(time.time())
+    for entry, expiry in whitelist.items():
+        if expiry > now:
+            try:
+                network = ipaddress.ip_network(entry, strict=False)
+                if client_ip_obj in network:
+                    return True
+            except ValueError:
+                continue # Ignore invalid entries
+
+    return False
+
+def is_path_excluded(path: str, settings: Dict[str, Any]) -> bool:
+    """Checks if the request path matches any of the excluded paths."""
+    excluded_paths = settings.get("security", {}).get("excluded_paths", [])
+    for excluded_path in excluded_paths:
+        if path.startswith(excluded_path):
+            return True
     return False
 
 def load_whitelist(settings: Dict[str, Any]) -> Dict[str, int]:

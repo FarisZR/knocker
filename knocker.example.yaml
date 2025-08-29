@@ -9,6 +9,21 @@ server:
     - "172.29.238.0/24"
     - "fd00:dead:c0de::/64"
 
+security:
+  always_allowed_ips:
+    # These IPs/CIDRs are always allowed to pass through the /verify endpoint
+    # without needing to be dynamically whitelisted.
+    # It's recommended to include your reverse proxy's IP here.
+    - "172.29.238.0/24"
+    - "fd00:dead:c0de::/64"
+  excluded_paths:
+    # Request paths that start with any of these values will bypass
+    # the IP whitelist check entirely.
+    # Example:
+    # - "/api/v1/status"
+    # - "/metrics"
+    - "/knock"
+
 whitelist:
   # The path where the whitelist file will be stored.
   # This path is relative to the container's file system.

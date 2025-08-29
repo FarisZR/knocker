@@ -19,35 +19,60 @@ def test_is_valid_ip_or_cidr(address, expected):
 
 # --- Test Whitelist Logic ---
 
-def test_ip_is_whitelisted():
+def test_ip_is_whitelisted(mock_settings):
     """Tests if an IP is correctly identified within a whitelisted CIDR."""
     now = int(time.time())
     whitelist = {"192.168.1.0/24": now + 3600}
-    assert core.is_ip_whitelisted("192.168.1.100", whitelist) == True
+    assert core.is_ip_whitelisted("192.168.1.100", whitelist, mock_settings) == True
 
-def test_ip_is_not_whitelisted():
+def test_ip_is_not_whitelisted(mock_settings):
     """Tests if an IP outside a whitelisted CIDR is correctly rejected."""
     now = int(time.time())
     whitelist = {"192.168.1.0/24": now + 3600}
-    assert core.is_ip_whitelisted("10.10.10.10", whitelist) == False
+    assert core.is_ip_whitelisted("10.10.10.10", whitelist, mock_settings) == False
 
-def test_ipv6_is_whitelisted():
+def test_ipv6_is_whitelisted(mock_settings):
     """Tests if an IPv6 address is correctly identified within a whitelisted CIDR."""
     now = int(time.time())
     whitelist = {"2001:db8:abcd::/48": now + 3600}
-    assert core.is_ip_whitelisted("2001:db8:abcd:0001::1", whitelist) == True
+    assert core.is_ip_whitelisted("2001:db8:abcd:0001::1", whitelist, mock_settings) == True
 
-def test_expired_ip_is_not_whitelisted():
+def test_expired_ip_is_not_whitelisted(mock_settings):
     """Tests if an IP with an expired timestamp is correctly rejected."""
     now = int(time.time())
     whitelist = {"1.1.1.1/32": now - 100} # Expired
-    assert core.is_ip_whitelisted("1.1.1.1", whitelist) == False
+    assert core.is_ip_whitelisted("1.1.1.1", whitelist, mock_settings) == False
 
-def test_is_ip_whitelisted_with_invalid_ip_input():
+def test_is_ip_whitelisted_with_invalid_ip_input(mock_settings):
     """Tests that the function handles invalid IP input gracefully."""
     now = int(time.time())
     whitelist = {"192.168.1.0/24": now + 3600}
-    assert core.is_ip_whitelisted("not-a-real-ip", whitelist) == False
+    assert core.is_ip_whitelisted("not-a-real-ip", whitelist, mock_settings) == False
+
+def test_always_allowed_ip_is_whitelisted(mock_settings):
+    """Tests that an IP in the always-allowed list is always whitelisted."""
+    mock_settings["security"] = {"always_allowed_ips": ["10.20.30.40"]}
+    whitelist = {} # Empty dynamic whitelist
+    assert core.is_ip_whitelisted("10.20.30.40", whitelist, mock_settings) == True
+
+def test_always_allowed_cidr_is_whitelisted(mock_settings):
+    """Tests that an IP within an always-allowed CIDR is always whitelisted."""
+    mock_settings["security"] = {"always_allowed_ips": ["10.20.30.0/24"]}
+    whitelist = {}
+    assert core.is_ip_whitelisted("10.20.30.50", whitelist, mock_settings) == True
+
+# --- Test Path Exclusion ---
+
+def test_path_is_excluded(mock_settings):
+    """Tests that a path in the excluded list is correctly identified."""
+    mock_settings["security"] = {"excluded_paths": ["/api/health", "/metrics"]}
+    assert core.is_path_excluded("/api/health/check", mock_settings) == True
+    assert core.is_path_excluded("/metrics", mock_settings) == True
+
+def test_path_is_not_excluded(mock_settings):
+    """Tests that a path not in the excluded list is correctly rejected."""
+    mock_settings["security"] = {"excluded_paths": ["/api/health"]}
+    assert core.is_path_excluded("/api/v1/status", mock_settings) == False
 
 # --- Test Permissions & Key Helpers ---
 

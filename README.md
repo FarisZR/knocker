@@ -11,6 +11,8 @@ This is ideal for homelab environments where you want to expose services to the 
 *   **API Key Authentication**: Secure your knock endpoint with multiple, configurable API keys.
 *   **Configurable TTL**: Each API key can have its own Time-To-Live (TTL), defining how long a whitelisted IP remains active.
 *   **Remote Whitelisting**: Grant specific admin keys permission to whitelist any IP or CIDR range, not just their own.
+*   **Static IP/CIDR Whitelisting**: Always allow certain IP addresses or ranges to bypass the dynamic whitelist.
+*   **Path-Based Exclusion**: Exclude specific URL paths (like health checks or public APIs) from authentication entirely.
 *   **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
 *   **Secure by Default**: Built-in protection against IP spoofing via a trusted proxy mechanism.
 *   **Test-Driven Development**: A comprehensive test suite ensures code correctness and reliability.
@@ -72,6 +74,23 @@ The service is configured entirely through the `knocker.yaml` file.
     *   `ttl`: The duration in seconds that an IP will be whitelisted for.
     *   `allow_remote_whitelist`: A boolean (`true` or `false`). If `true`, this key can be used to whitelist any IP/CIDR passed in the request body. If `false`, it can only whitelist the IP of the device making the request.
 
+*   **`security`**:
+    *   `always_allowed_ips`: A list of IPv4 or IPv6 addresses or CIDR ranges that will always be allowed to pass the `/verify` endpoint, regardless of whether they are in the dynamic whitelist. This is useful for permanently allowing access to trusted IPs, such as the IP of a reverse proxy or an admin workstation.
+      ```yaml
+      security:
+        always_allowed_ips:
+          - "1.2.3.4"
+          - "192.168.1.0/24"
+          - "2001:db8::/32"
+      ```
+    *   `excluded_paths`: A list of URL paths that will bypass the IP whitelist check entirely. Any request whose path starts with one of these values will be allowed. This is useful for exposing health check endpoints or public API routes.
+      ```yaml
+      security:
+        excluded_paths:
+          - "/api/v1/status"
+          - "/metrics"
+      ```
+
 ## Caddy Integration
 
 To protect your services, you will use Caddy's `forward_auth` directive.
@@ -89,7 +108,7 @@ To protect your services, you will use Caddy's `forward_auth` directive.
 # It points to the knocker service using Docker's internal DNS.
 (knocker_auth) {
   forward_auth knocker:8000 {
-    uri /check
+    uri /verify
     copy_headers X-Forwarded-For
   }
 }
@@ -176,7 +195,7 @@ This endpoint validates an API key and whitelists an IP.
     }
     ```
 
-### `/check` (GET)
+### `/verify` (GET)
 
 This endpoint is used by Caddy's `forward_auth` to check if the client's IP is whitelisted. It returns `200 OK` on success and `401 Unauthorized` on failure.
 

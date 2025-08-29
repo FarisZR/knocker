@@ -15,7 +15,11 @@ def mock_settings():
             {"key": "ADMIN_KEY", "ttl": 3600, "allow_remote_whitelist": True},
             {"key": "USER_KEY_1", "ttl": 600, "allow_remote_whitelist": False},
         ],
-        "whitelist": {"storage_path": "./test_whitelist.json"}
+        "whitelist": {"storage_path": "./test_whitelist.json"},
+        "security": {
+            "always_allowed_ips": ["100.100.100.100", "2001:db8:cafe::/48"],
+            "excluded_paths": ["/healthz", "/api/v1/public"]
+        }
     }
 
 @pytest.fixture(autouse=True)
@@ -103,3 +107,23 @@ def test_verify_fail_non_whitelisted_ip():
     """A non-whitelisted IP should fail the /verify endpoint."""
     response = client.get("/verify", headers={"X-Forwarded-For": "9.10.11.12"})
     assert response.status_code == 401
+
+def test_verify_success_always_allowed_ip():
+    """An IP in the always-allowed list should pass /verify without a knock."""
+    response = client.get("/verify", headers={"X-Forwarded-For": "100.100.100.100"})
+    assert response.status_code == 200
+
+def test_verify_success_always_allowed_cidr():
+    """An IP within an always-allowed CIDR should pass /verify."""
+    response = client.get("/verify", headers={"X-Forwarded-For": "2001:db8:cafe:1234::1"})
+    assert response.status_code == 200
+
+def test_verify_success_excluded_path():
+    """A request to an excluded path should pass /verify regardless of IP."""
+    response = client.get("/verify", headers={"X-Forwarded-For": "9.9.9.9", "X-Forwarded-Uri": "/healthz"})
+    assert response.status_code == 200
+
+def test_verify_success_excluded_path_prefix():
+    """A request to a path that starts with an excluded prefix should pass."""
+    response = client.get("/verify", headers={"X-Forwarded-For": "9.9.9.9", "X-Forwarded-Uri": "/api/v1/public/status"})
+    assert response.status_code == 200
