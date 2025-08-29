@@ -50,7 +50,7 @@ For a formal API specification and a summary of the architectural choices, pleas
 
 4.  **Run the Service**:
     ```bash
-    docker-compose up -d
+    docker compose up -d
     ```
     This will pull the pre-built `knocker` image and start both the `knocker` and `caddy` services.
 

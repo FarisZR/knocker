@@ -24,6 +24,9 @@ jobs:
     - name: Run unit tests
       run: python3 -m pytest
 
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
     - name: Build Docker image for testing
       run: docker build -t caddyknocker-ci .
 
@@ -51,8 +54,8 @@ jobs:
         }
         EOF
 
-    - name: Run docker-compose stack
-      run: docker-compose up -d
+    - name: Run docker compose stack
+      run: docker compose up -d
 
     - name: Wait for services to be healthy
       run: sleep 10 # Simple wait for services to start
