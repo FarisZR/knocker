@@ -6,10 +6,8 @@ server:
   trusted_proxies:
     # Trust the default Docker IPv4 and IPv6 subnets.
     # Adjust these to match your specific Docker network configuration if you've customized it.
-    - "172.16.0.0/12"
-    - "192.168.0.0/16"
-    - "10.0.0.0/8"
-    - "fc00::/7"
+    - "172.16.238.0/24"
+    - "fd00:dead:beef::/64"
 
 whitelist:
   # The path where the whitelist file will be stored.

@@ -40,7 +40,7 @@ networks:
         # Define subnets for both IPv4 and IPv6.
         # Your 'trusted_proxies' in knocker.yaml should include these.
         - subnet: 172.16.238.0/24
-        - subnet: fc00:cddy::/64
+        - subnet: fd00:dead:beef::/64
 
 volumes:
   caddy_data:
