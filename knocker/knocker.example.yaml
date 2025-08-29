@@ -1,0 +1,34 @@
+# knocker.example.yaml
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  trusted_proxies:
+    # Trust the default Docker IPv4 and IPv6 subnets.
+    # Adjust these to match your specific Docker network configuration if you've customized it.
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "10.0.0.0/8"
+    - "fc00::/7"
+
+whitelist:
+  # The path where the whitelist file will be stored.
+  # This path is relative to the container's file system.
+  # The docker-compose.yml file will mount a volume to this location.
+  storage_path: "/data/whitelist.json"
+
+api_keys:
+  - name: "admin-key-for-remote-whitelisting"
+    key: "CHANGE_ME_SUPER_SECRET_ADMIN_KEY"
+    ttl: 3600 # Whitelist IPs for 1 hour (in seconds)
+    allow_remote_whitelist: true # This key CAN whitelist other IPs/CIDRs
+
+  - name: "personal-phone"
+    key: "CHANGE_ME_SECRET_PHONE_KEY"
+    ttl: 14400 # Whitelist IPs for 4 hours
+    allow_remote_whitelist: false # This key can ONLY whitelist its own IP
+
+  - name: "guest-access"
+    key: "CHANGE_ME_TEMPORARY_GUEST_KEY"
+    ttl: 600 # Whitelist IPs for 10 minutes
+    allow_remote_whitelist: false

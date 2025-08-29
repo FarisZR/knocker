@@ -1,0 +1,48 @@
+version: '3.9'
+
+services:
+  caddy:
+    image: caddy:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # For HTTP/3
+    networks:
+      - caddy_net
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./knocker.yaml:/app/knocker.yaml
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - knocker
+
+  knocker:
+    build: .
+    restart: unless-stopped
+    networks:
+      - caddy_net
+    volumes:
+      - ./knocker.yaml:/knocker.yaml
+      - knocker_data:/data
+    # The command is in the Dockerfile, but we could override it here if needed.
+    # The application will look for 'knocker.yaml' in its root directory.
+
+networks:
+  caddy_net:
+    # Enable IPv6 for this network
+    enable_ipv6: true
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        # Define subnets for both IPv4 and IPv6.
+        # Your 'trusted_proxies' in knocker.yaml should include these.
+        - subnet: 172.16.238.0/24
+        - subnet: fc00:cddy::/64
+
+volumes:
+  caddy_data:
+  caddy_config:
+  knocker_data:
