@@ -3,6 +3,8 @@ name: Docker Publish
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - src/**
 
 jobs:
   build-and-publish:
