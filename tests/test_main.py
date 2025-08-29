@@ -88,18 +88,18 @@ def test_knock_fail_invalid_ip_in_body():
     )
     assert response.status_code == 400
 
-# --- Test /check Endpoint ---
+# --- Test /verify Endpoint ---
 
-def test_check_success_whitelisted_ip():
-    """A whitelisted IP should pass the /check endpoint."""
+def test_verify_success_whitelisted_ip():
+    """A whitelisted IP should pass the /verify endpoint."""
     # First, knock to whitelist the IP
     client.post("/knock", headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "5.6.7.8"})
     
-    # Then, check it
-    response = client.get("/check", headers={"X-Forwarded-For": "5.6.7.8"})
+    # Then, verify it
+    response = client.get("/verify", headers={"X-Forwarded-For": "5.6.7.8"})
     assert response.status_code == 200
 
-def test_check_fail_non_whitelisted_ip():
-    """A non-whitelisted IP should fail the /check endpoint."""
-    response = client.get("/check", headers={"X-Forwarded-For": "9.10.11.12"})
+def test_verify_fail_non_whitelisted_ip():
+    """A non-whitelisted IP should fail the /verify endpoint."""
+    response = client.get("/verify", headers={"X-Forwarded-For": "9.10.11.12"})
     assert response.status_code == 401
