@@ -36,7 +36,7 @@ jobs:
     - name: Run integration test
       run: |
         # 1. Try to access protected route (should fail with 401)
-        if curl -s -o /dev/null -w "%{http_code}" http://localhost/private | grep -q "401"; then
+        if curl -s -o /dev/null -w "%{http_code}" -H "X-Forwarded-For: 1.1.1.1" http://localhost/private | grep -q "401"; then
           echo "✅ Protected route correctly returned 401"
         else
           echo "❌ Protected route did not return 401"
@@ -53,7 +53,7 @@ jobs:
         fi
 
         # 3. Try to access protected route again (should succeed with 200)
-        if curl -s -o /dev/null -w "%{http_code}" http://localhost/private | grep -q "200"; then
+        if curl -s -o /dev/null -w "%{http_code}" -H "X-Forwarded-For: 127.0.0.1" http://localhost/private | grep -q "200"; then
           echo "✅ Protected route correctly returned 200 after knock"
         else
           echo "❌ Protected route did not return 200 after knock"
