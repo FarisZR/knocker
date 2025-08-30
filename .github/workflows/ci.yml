@@ -33,39 +33,29 @@ jobs:
     - name: Wait for services to be healthy
       run: sleep 10 # Simple wait for services to start
 
-    - name: Display Docker logs
-      run: |
-        echo "--- Caddy Logs ---"
-        docker logs dev-caddy-1
-        echo "--- Knocker Logs ---"
-        docker logs dev-knocker-1
-
     - name: Run integration test
       run: |
-        echo "--- Testing Protected Route (should fail) ---"
-        RESPONSE_CODE=$(curl -v -o /dev/null -w "%{http_code}" -H "X-Forwarded-For: 1.1.1.1" http://localhost/private)
-        if [ "$RESPONSE_CODE" -eq 403 ]; then
+        # 1. Try to access protected route (should fail with 403)
+        if curl -s -o /dev/null -w "%{http_code}" -H "X-Forwarded-For: 1.1.1.1" http://localhost/private | grep -q "403"; then
           echo "✅ Protected route correctly returned 403"
         else
-          echo "❌ Protected route returned $RESPONSE_CODE instead of 403"
+          echo "❌ Protected route did not return 403"
           exit 1
         fi
 
-        echo "--- Performing Knock ---"
+        # 2. Perform the knock
         API_KEY=$(grep 'key: "CHANGE_ME_SUPER_SECRET_ADMIN_KEY"' ./knocker.example.yaml | awk -F '"' '{print $2}')
-        KNOCK_RESPONSE=$(curl -v -X POST -H "X-Api-Key: $API_KEY" -H "X-Forwarded-For: 1.1.1.1" http://localhost/knock)
-        if echo "$KNOCK_RESPONSE" | grep -q "whitelisted_entry"; then
+        if curl -s -X POST -H "X-Api-Key: $API_KEY" -H "X-Forwarded-For: 1.1.1.1" http://localhost/knock | grep -q "whitelisted_entry"; then
           echo "✅ Knock successful"
         else
-          echo "❌ Knock failed with response: $KNOCK_RESPONSE"
+          echo "❌ Knock failed"
           exit 1
         fi
 
-        echo "--- Testing Protected Route Again (should succeed) ---"
-        SUCCESS_RESPONSE_CODE=$(curl -v -o /dev/null -w "%{http_code}" -H "X-Forwarded-For: 1.1.1.1" http://localhost/private)
-        if [ "$SUCCESS_RESPONSE_CODE" -eq 200 ]; then
+        # 3. Try to access protected route again (should succeed with 200)
+        if curl -s -o /dev/null -w "%{http_code}" -H "X-Forwarded-For: 1.1.1.1" http://localhost/private | grep -q "200"; then
           echo "✅ Protected route correctly returned 200 after knock"
         else
-          echo "❌ Protected route returned $SUCCESS_RESPONSE_CODE instead of 200"
+          echo "❌ Protected route did not return 200 after knock"
           exit 1
         fi

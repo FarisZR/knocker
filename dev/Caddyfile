@@ -19,6 +19,7 @@
 			forward_auth knocker:8000 {
 				uri /verify
 				copy_headers X-Forwarded-For X-Forwarded-Proto X-Forwarded-Host
+				trusted_proxies private_ranges
 			}
 
 			# If authentication is successful (knocker returns 2xx),
