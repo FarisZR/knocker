@@ -31,10 +31,13 @@ app = FastAPI(lifespan=lifespan)
 # --- Dependency for getting the real client IP ---
 def get_client_ip(request: Request) -> Optional[str]:
     """
-    Returns the client's real IP address, trusting the X-Forwarded-For
-    header set by the reverse proxy (Caddy).
-    Uvicorn must be run with --forwarded-allow-ips to process this header.
+    Returns the client's real IP address.
+    Uvicorn must be run with --forwarded-allow-ips to trust the X-Forwarded-For header.
+    This function also manually checks the header to support the TestClient.
     """
+    if "x-forwarded-for" in request.headers:
+        # Take the first IP in case of a chain
+        return request.headers["x-forwarded-for"].split(",")[0].strip()
     return request.client.host if request.client else None
 
 # --- API Endpoints ---
