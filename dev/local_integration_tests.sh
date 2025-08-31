@@ -128,9 +128,22 @@ test_remote_whitelist_permission_denied() {
 # --- Main Execution ---
 main() {
     info "Starting integration tests..."
-    
+
     info "Waiting for services to be healthy..."
-    sleep 10 # Simple wait
+    retry_count=0
+    max_retries=30
+    retry_interval=2
+
+    until $(curl --output /dev/null --silent --fail "$BASE_URL/health"); do
+        if [ ${retry_count} -ge ${max_retries} ]; then
+            fail "Services did not become healthy in time."
+        fi
+        printf '.'
+        retry_count=$((retry_count+1))
+        sleep ${retry_interval}
+    done
+    echo # Newline after dots
+    success "Services are healthy!"
 
     run_test "Unauthorized Access" "test_unauthorized_access"
     run_test "Successful Knock" "test_successful_knock"

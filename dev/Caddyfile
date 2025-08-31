@@ -10,8 +10,15 @@
 		@knock path /knock
 		handle @knock {
 			reverse_proxy knocker:8000 {
-				header_up X-Forwarded-For {=http.request.header.X-Forwarded-For}
+				# Trust the proxy network to preserve the original X-Forwarded-For
+				trusted_proxies 172.29.238.0/24 fd00:dead:c0de::/64
 			}
+		}
+
+		# Handle health check requests
+		@health path /health
+		handle @health {
+			reverse_proxy knocker:8000
 		}
 
 		# For any other path, first attempt to authenticate.
@@ -29,29 +36,6 @@
 			# For this demo, we'll just respond with a success message.
 			# In a real-world scenario, this would be your application.
 			respond "You have accessed the private area!" 200
-		}
-
-		}
-	}
-
-	# Log all requests to the console for debugging.
-	log {
-		output stdout
-		format console
-	}
-
-	# Define how to handle errors, especially authentication failures.
-	handle_errors {
-		# If forward_auth fails, knocker returns a 401/403.
-		# We catch that and return a clean 403 Forbidden to the client.
-		@auth_error expression `{http.error.status_code} == 401 || {http.error.status_code} == 403`
-		handle @auth_error {
-			respond "Forbidden" 403
-		}
-
-		# Provide a fallback for any other errors that might occur.
-		handle {
-			respond "{http.error.status_code} {http.error.status_text}" {http.error.status_code}
 		}
 	}
 }
