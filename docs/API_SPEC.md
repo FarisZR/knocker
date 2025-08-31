@@ -69,6 +69,26 @@ This endpoint is used by Caddy's `forward_auth` directive to verify if a client'
 *   **`401 Unauthorized`**
     *   Returned if the client's IP is not authorized. The response has an empty body.
 
+---
+
+### 3. Health Check
+
+This endpoint is used to verify the operational status of the Knocker service.
+
+*   **URL**: `/health`
+*   **Method**: `GET`
+
+#### Responses
+
+*   **`200 OK`** (Success)
+    *   Returned if the service is running correctly.
+    *   **Body**:
+        ```json
+        {
+          "status": "ok"
+        }
+        ```
+
 ## Configuration (`knocker.yaml`)
 
 - **`server`** (object, required): Server settings.

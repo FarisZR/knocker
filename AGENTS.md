@@ -17,3 +17,5 @@ This file provides guidance to agents when working with code in this repository.
 - **Create Git Commits**: All work should be committed to Git.
 
 - github repo: FarisZR/knocker
+
+- **update documenation**: on any changes, you must update the documentation under the docs/ directory.
