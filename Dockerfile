@@ -31,4 +31,4 @@ EXPOSE 8000
 # Uvicorn is run with --forwarded-allow-ips="*" to trust the X-Forwarded-For
 # header from any proxy within the Docker network. This is safe because
 # only Caddy is on the same network and can reach this container.
-CMD ["/usr/local/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--forwarded-allow-ips", "*"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--forwarded-allow-ips", "*"]
