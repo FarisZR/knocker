@@ -30,6 +30,8 @@
 			# In a real-world scenario, this would be your application.
 			respond "You have accessed the private area!" 200
 		}
+
+		}
 	}
 
 	# Log all requests to the console for debugging.

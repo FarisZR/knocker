@@ -140,8 +140,18 @@ main() {
     run_test "Knock for Always-Allowed IP (Invalid Key)" "test_knock_for_always_allowed_ip_invalid_key"
     run_test "Remote Whitelist (Success)" "test_remote_whitelist_success"
     run_test "Remote Whitelist (Permission Denied)" "test_remote_whitelist_permission_denied"
+    run_test "Knock with Invalid Key" "test_knock_with_invalid_key"
 
     info "All integration tests passed!"
+}
+
+test_knock_with_invalid_key() {
+    response=$(curl -s -X POST -H "X-Api-Key: $INVALID_KEY" -H "X-Forwarded-For: $REGULAR_IP" $KNOCK_URL)
+    if echo "$response" | grep -q "Invalid or missing API key"; then
+        success "Knock with invalid key correctly failed"
+    else
+        fail "Knock with invalid key did not fail as expected. Response: $response"
+    fi
 }
 
 main
