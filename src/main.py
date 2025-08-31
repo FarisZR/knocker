@@ -92,6 +92,10 @@ async def knock(
         },
     )
 
+@app.get("/health", status_code=status.HTTP_200_OK)
+async def health_check():
+    return {"status": "ok"}
+
 @app.get("/verify", status_code=status.HTTP_200_OK)
 async def verify(
     request: Request,

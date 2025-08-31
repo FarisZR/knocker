@@ -10,7 +10,9 @@ RUN groupadd --gid 1001 appuser && \
 
 # Copy requirements and install dependencies system-wide
 COPY src/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update && apt-get install -y curl && \
+    pip install --no-cache-dir -r requirements.txt && \
+    apt-get clean
 
 # Copy the rest of the application code
 COPY src/ .
@@ -23,6 +25,7 @@ USER appuser
 
 # Expose the port the app runs on
 EXPOSE 8000
+
 
 # Define the command to run the application
 # Uvicorn is run with --forwarded-allow-ips="*" to trust the X-Forwarded-For
