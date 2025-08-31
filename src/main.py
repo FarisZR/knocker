@@ -1,4 +1,5 @@
 import time
+import logging
 from typing import Optional, Dict
 from functools import lru_cache
 from contextlib import asynccontextmanager
@@ -13,7 +14,9 @@ def get_settings() -> Dict:
     Loads settings from the YAML file and caches the result.
     The path is relative to the project root where the app is run from.
     """
-    return config.load_config()
+    settings = config.load_config()
+    config.setup_logging(settings)
+    return settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -21,10 +24,10 @@ async def lifespan(app: FastAPI):
     Application lifespan manager.
     On startup, it performs a cleanup of any expired IPs.
     """
-    print("Knocker service starting up...")
+    logging.info("Knocker service starting up...")
     core.cleanup_expired_ips(get_settings())
     yield
-    print("Knocker service shutting down.")
+    logging.info("Knocker service shutting down.")
 
 app = FastAPI(lifespan=lifespan)
 
@@ -52,12 +55,14 @@ async def knock(
     api_key = request.headers.get("X-Api-Key")
 
     if not client_ip:
+        logging.warning("Could not determine client IP.")
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"error": "Could not determine client IP."}
         )
 
     if not api_key or not core.is_valid_api_key(api_key, settings):
+        logging.warning(f"Invalid or missing API key provided by {client_ip}.")
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={"error": "Invalid or missing API key."}
@@ -66,6 +71,7 @@ async def knock(
     ip_to_whitelist = client_ip
     if body and "ip_address" in body:
         if not core.can_whitelist_remote(api_key, settings):
+            logging.warning(f"API key used by {client_ip} lacks remote whitelist permission.")
             return JSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"error": "API key lacks remote whitelist permission."}
@@ -73,6 +79,7 @@ async def knock(
         
         target_ip = body["ip_address"]
         if not core.is_valid_ip_or_cidr(target_ip):
+            logging.warning(f"Invalid IP address or CIDR notation '{target_ip}' in request body from {client_ip}.")
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={"error": "Invalid IP address or CIDR notation in request body."}
@@ -86,6 +93,7 @@ async def knock(
 
     if requested_ttl is not None:
         if not isinstance(requested_ttl, int) or requested_ttl <= 0:
+            logging.warning(f"Invalid TTL '{requested_ttl}' specified by {client_ip}.")
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={"error": "Invalid TTL specified. Must be a positive integer."}
@@ -95,6 +103,8 @@ async def knock(
     expiry_time = int(time.time()) + effective_ttl
     
     core.add_ip_to_whitelist(ip_to_whitelist, expiry_time, settings)
+    
+    logging.info(f"Successfully whitelisted {ip_to_whitelist} for {effective_ttl} seconds. Requested by {client_ip}.")
 
     return JSONResponse(
         content={
