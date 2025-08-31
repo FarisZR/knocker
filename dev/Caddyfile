@@ -9,7 +9,9 @@
 		# Handle the knock request by forwarding it directly to the knocker service.
 		@knock path /knock
 		handle @knock {
-			reverse_proxy knocker:8000
+			reverse_proxy knocker:8000 {
+				header_up X-Forwarded-For {=http.request.header.X-Forwarded-For}
+			}
 		}
 
 		# For any other path, first attempt to authenticate.
@@ -19,6 +21,7 @@
 			forward_auth knocker:8000 {
 				uri /verify
 				copy_headers X-Forwarded-For X-Forwarded-Proto X-Forwarded-Host
+				trusted_proxies 172.29.238.0/24 fd00:dead:c0de::/64
 			}
 
 			# If authentication is successful (knocker returns 2xx),

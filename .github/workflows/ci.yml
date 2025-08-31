@@ -33,29 +33,8 @@ jobs:
     - name: Wait for services to be healthy
       run: sleep 10 # Simple wait for services to start
 
-    - name: Run integration test
-      run: |
-        # 1. Try to access protected route (should fail with 401)
-        if curl -s -o /dev/null -w "%{http_code}" -H "X-Forwarded-For: 1.1.1.1" http://localhost/private | grep -q "401"; then
-          echo "✅ Protected route correctly returned 401"
-        else
-          echo "❌ Protected route did not return 401"
-          exit 1
-        fi
+    - name: Make integration test script executable
+      run: chmod +x dev/local_integration_tests.sh
 
-        # 2. Perform the knock
-        API_KEY=$(grep 'key: "CHANGE_ME_SUPER_SECRET_ADMIN_KEY"' ./knocker.example.yaml | awk -F '"' '{print $2}')
-        if curl -s -X POST -H "X-Api-Key: $API_KEY" -H "X-Forwarded-For: 127.0.0.1" http://localhost/knock | grep -q "whitelisted_entry"; then
-          echo "✅ Knock successful"
-        else
-          echo "❌ Knock failed"
-          exit 1
-        fi
-
-        # 3. Try to access protected route again (should succeed with 200)
-        if curl -s -o /dev/null -w "%{http_code}" -H "X-Forwarded-For: 127.0.0.1" http://localhost/private | grep -q "200"; then
-          echo "✅ Protected route correctly returned 200 after knock"
-        else
-          echo "❌ Protected route did not return 200 after knock"
-          exit 1
-        fi
+    - name: Run integration tests
+      run: ./dev/local_integration_tests.sh
