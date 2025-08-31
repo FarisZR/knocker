@@ -81,8 +81,8 @@ def mock_settings():
     """Provides a standard settings object for tests."""
     return {
         "api_keys": [
-            {"key": "admin_key", "ttl": 3600, "allow_remote_whitelist": True},
-            {"key": "user_key", "ttl": 600, "allow_remote_whitelist": False},
+            {"key": "admin_key", "max_ttl": 3600, "allow_remote_whitelist": True},
+            {"key": "user_key", "max_ttl": 600, "allow_remote_whitelist": False},
         ]
     }
 
@@ -98,14 +98,14 @@ def test_can_whitelist_remote_with_nonexistent_key(mock_settings):
     """Tests that a non-existent key returns False."""
     assert core.can_whitelist_remote("fake_key", mock_settings) == False
 
-def test_get_ttl_for_key(mock_settings):
-    """Tests that the correct TTL is returned for a given key."""
-    assert core.get_ttl_for_key("admin_key", mock_settings) == 3600
-    assert core.get_ttl_for_key("user_key", mock_settings) == 600
+def test_get_max_ttl_for_key(mock_settings):
+    """Tests that the correct max_ttl is returned for a given key."""
+    assert core.get_max_ttl_for_key("admin_key", mock_settings) == 3600
+    assert core.get_max_ttl_for_key("user_key", mock_settings) == 600
 
-def test_get_ttl_for_nonexistent_key(mock_settings):
-    """Tests that a non-existent key returns a TTL of 0."""
-    assert core.get_ttl_for_key("fake_key", mock_settings) == 0
+def test_get_max_ttl_for_nonexistent_key(mock_settings):
+    """Tests that a non-existent key returns a max_ttl of 0."""
+    assert core.get_max_ttl_for_key("fake_key", mock_settings) == 0
 
 def test_is_valid_api_key(mock_settings):
     """Tests that valid keys are recognized."""

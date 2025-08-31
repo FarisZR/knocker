@@ -12,8 +12,8 @@ def mock_settings():
             "trusted_proxies": ["127.0.0.1"]
         },
         "api_keys": [
-            {"key": "ADMIN_KEY", "ttl": 3600, "allow_remote_whitelist": True},
-            {"key": "USER_KEY_1", "ttl": 600, "allow_remote_whitelist": False},
+            {"key": "ADMIN_KEY", "max_ttl": 3600, "allow_remote_whitelist": True},
+            {"key": "USER_KEY_1", "max_ttl": 600, "allow_remote_whitelist": False},
         ],
         "whitelist": {"storage_path": "./test_whitelist.json"},
         "security": {
@@ -48,8 +48,8 @@ client = TestClient(app)
 
 # --- Test /knock Endpoint ---
 
-def test_knock_success_source_ip():
-    """A valid key should be able to whitelist its own IP."""
+def test_knock_success_source_ip_uses_default_ttl():
+    """A valid key should be able to whitelist its own IP and use the default max_ttl."""
     response = client.post(
         "/knock",
         headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"}
@@ -57,7 +57,7 @@ def test_knock_success_source_ip():
     assert response.status_code == 200
     data = response.json()
     assert data["whitelisted_entry"] == "1.2.3.4"
-    assert "expires_at" in data
+    assert data["expires_in_seconds"] == 600
 
 def test_knock_success_remote_ip_with_permission():
     """An admin key should be able to whitelist a remote IP."""
@@ -89,6 +89,44 @@ def test_knock_fail_invalid_ip_in_body():
         "/knock",
         headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"},
         json={"ip_address": "not-an-ip"}
+    )
+    assert response.status_code == 400
+
+def test_knock_with_custom_valid_ttl():
+    """A knock with a custom TTL lower than the max should be accepted."""
+    response = client.post(
+        "/knock",
+        headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"},
+        json={"ttl": 300}
+    )
+    assert response.status_code == 200
+    assert response.json()["expires_in_seconds"] == 300
+
+def test_knock_with_custom_ttl_exceeding_max():
+    """A knock with a custom TTL higher than the max should be capped at the max."""
+    response = client.post(
+        "/knock",
+        headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"},
+        json={"ttl": 9999}
+    )
+    assert response.status_code == 200
+    assert response.json()["expires_in_seconds"] == 600 # Capped at the key's max_ttl
+
+def test_knock_with_invalid_ttl_negative():
+    """A knock with a negative TTL should be rejected."""
+    response = client.post(
+        "/knock",
+        headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"},
+        json={"ttl": -100}
+    )
+    assert response.status_code == 400
+
+def test_knock_with_invalid_ttl_string():
+    """A knock with a non-integer TTL should be rejected."""
+    response = client.post(
+        "/knock",
+        headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"},
+        json={"ttl": "three hundred"}
     )
     assert response.status_code == 400
 

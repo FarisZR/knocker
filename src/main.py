@@ -79,8 +79,20 @@ async def knock(
             )
         ip_to_whitelist = target_ip
 
-    ttl = core.get_ttl_for_key(api_key, settings)
-    expiry_time = int(time.time()) + ttl
+    max_ttl = core.get_max_ttl_for_key(api_key, settings)
+    requested_ttl = body.get("ttl") if body else None
+    
+    effective_ttl = max_ttl
+
+    if requested_ttl is not None:
+        if not isinstance(requested_ttl, int) or requested_ttl <= 0:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "Invalid TTL specified. Must be a positive integer."}
+            )
+        effective_ttl = min(requested_ttl, max_ttl)
+
+    expiry_time = int(time.time()) + effective_ttl
     
     core.add_ip_to_whitelist(ip_to_whitelist, expiry_time, settings)
 
@@ -88,7 +100,7 @@ async def knock(
         content={
             "whitelisted_entry": ip_to_whitelist,
             "expires_at": expiry_time,
-            "expires_in_seconds": ttl,
+            "expires_in_seconds": effective_ttl,
         },
     )
 

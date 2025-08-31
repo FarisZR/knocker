@@ -14,13 +14,14 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
     *   `X-Api-Key` (string, **required**): The secret API key for authentication.
     *   `X-Forwarded-For` (string, **required**): The client's real IP address. This is expected to be set by a trusted proxy like Caddy.
 *   **Request Body** (optional, JSON):
-    *   To whitelist a specific IP or CIDR, the key must have `allow_remote_whitelist: true` permission.
     ```json
     {
-      "ip_address": "string"
+      "ip_address": "string",
+      "ttl": "integer"
     }
     ```
-    *   `ip_address` (string): The IPv4/IPv6 address or CIDR network to whitelist.
+    *   `ip_address` (string): The IPv4/IPv6 address or CIDR network to whitelist. If provided, the API key must have `allow_remote_whitelist: true` permission.
+    *   `ttl` (integer, optional): The desired time-to-live for the whitelist entry in seconds. If not provided, the key's default `max_ttl` will be used. If the provided TTL exceeds the key's `max_ttl`, the `max_ttl` will be used instead.
 
 #### Responses
 
@@ -36,7 +37,7 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
         ```
         *   `whitelisted_entry`: The IP or CIDR that was added to the whitelist.
         *   `expires_at`: The Unix timestamp when the whitelist entry will expire.
-        *   `expires_in_seconds`: The TTL (Time To Live) of the whitelist entry in seconds.
+        *   `expires_in_seconds`: The actual TTL (Time To Live) of the whitelist entry in seconds. This may be the value requested by the client or the capped maximum TTL allowed by the API key.
 
 *   **`400 Bad Request`**
     *   Returned if the client IP cannot be determined or if the `ip_address` in the request body is malformed.
@@ -100,7 +101,7 @@ This endpoint is used to verify the operational status of the Knocker service.
 - **`api_keys`** (array of objects, required): A list of API key configurations.
     - **`name`** (string, required): A friendly name for the key.
     - **`key`** (string, required): The secret API key.
-    - **`ttl`** (integer, required): The time-to-live for whitelisted IPs in seconds.
+    - **`max_ttl`** (integer, required): The maximum time-to-live for whitelisted IPs in seconds.
     - **`allow_remote_whitelist`** (boolean, required): If `true`, the key can whitelist any IP/CIDR. If `false`, it can only whitelist the source IP of the request.
 - **`security`** (object, optional): Security-related settings.
     - **`always_allowed_ips`** (array of strings, optional): A list of IPs or CIDR ranges that are always permitted by the `/verify` endpoint, bypassing the dynamic whitelist.

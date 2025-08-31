@@ -102,11 +102,11 @@ def can_whitelist_remote(api_key: str, settings: Dict[str, Any]) -> bool:
             return key_info.get('allow_remote_whitelist', False)
     return False
 
-def get_ttl_for_key(api_key: str, settings: Dict[str, Any]) -> int:
-    """Finds the TTL for a given API key."""
+def get_max_ttl_for_key(api_key: str, settings: Dict[str, Any]) -> int:
+    """Finds the maximum TTL for a given API key."""
     for key_info in settings.get('api_keys', []):
         if key_info.get('key') == api_key:
-            return key_info.get('ttl', 0)
+            return key_info.get('max_ttl', 0)
     return 0
 
 def is_valid_api_key(api_key: str, settings: Dict[str, Any]) -> bool:

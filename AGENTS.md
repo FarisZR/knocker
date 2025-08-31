@@ -8,7 +8,7 @@ This file provides guidance to agents when working with code in this repository.
 - **IP Spoofing Risk**: The service's security depends on the `trusted_proxies` list in `knocker.yaml`. If this is misconfigured, clients can easily spoof their IP address via the `X-Forwarded-For` header.
 - **Testing Requires `PYTHONPATH`**: Unit tests must be run with `PYTHONPATH=src python3 -m pytest`. Without this, imports will fail.
 - **Whitelist Persistence**: The IP whitelist is stored in a simple JSON file (`/data/whitelist.json` inside the container), not a database. The path is configured in `knocker.yaml`.
-- **API Key Permissions**: API keys have a non-obvious `allow_remote_whitelist` boolean permission. A key with this set to `false` can only whitelist its own source IP address.
+- **API Key Permissions**: API keys have two important properties: `allow_remote_whitelist` (boolean) and `max_ttl` (integer). A key with `allow_remote_whitelist: false` can only whitelist its own source IP. `max_ttl` defines the maximum duration in seconds an IP can be whitelisted for with that key.
 - **Development Environment**: The only reliable way to run the full stack for development is with `docker compose -f dev/docker-compose.yml up`. This includes the Caddy reverse proxy, which is essential for testing the full request flow.
 
 ## Workflow

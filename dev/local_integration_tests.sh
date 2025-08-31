@@ -31,6 +31,7 @@ REMOTE_WHITELIST_IP="8.8.8.8"
 VALID_ADMIN_KEY="CHANGE_ME_SUPER_SECRET_ADMIN_KEY"
 INVALID_KEY="INVALID_KEY"
 NO_REMOTE_KEY="CHANGE_ME_SECRET_PHONE_KEY"
+GUEST_KEY="CHANGE_ME_TEMPORARY_GUEST_KEY"
 
 # Global variable to store the whitelisted IP from a successful knock
 WHITELISTED_IP=""
@@ -154,6 +155,9 @@ main() {
     run_test "Remote Whitelist (Success)" "test_remote_whitelist_success"
     run_test "Remote Whitelist (Permission Denied)" "test_remote_whitelist_permission_denied"
     run_test "Knock with Invalid Key" "test_knock_with_invalid_key"
+    run_test "Knock with Custom TTL (Valid)" "test_knock_with_custom_ttl_valid"
+    run_test "Knock with Custom TTL (Capped)" "test_knock_with_custom_ttl_capped"
+    run_test "Knock with Custom TTL (Invalid)" "test_knock_with_custom_ttl_invalid"
 
     info "All integration tests passed!"
 }
@@ -164,6 +168,36 @@ test_knock_with_invalid_key() {
         success "Knock with invalid key correctly failed"
     else
         fail "Knock with invalid key did not fail as expected. Response: $response"
+    fi
+}
+
+test_knock_with_custom_ttl_valid() {
+    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "Content-Type: application/json" -d '{"ttl": 120}' $KNOCK_URL)
+    ttl=$(echo "$response" | sed -n 's/.*"expires_in_seconds":\([0-9]*\).*/\1/p')
+    if [ "$ttl" -eq 120 ]; then
+        success "Knock with valid custom TTL of 120s was successful"
+    else
+        fail "Knock with valid custom TTL failed. Expected 120, got $ttl. Response: $response"
+    fi
+}
+
+test_knock_with_custom_ttl_capped() {
+    # This key has a max_ttl of 600 in the config
+    response=$(curl -s -X POST -H "X-Api-Key: $GUEST_KEY" -H "X-Forwarded-For: $REGULAR_IP" -H "Content-Type: application/json" -d '{"ttl": 9999}' $KNOCK_URL)
+    ttl=$(echo "$response" | sed -n 's/.*"expires_in_seconds":\([0-9]*\).*/\1/p')
+    if [ "$ttl" -eq 600 ]; then
+        success "Knock with oversized TTL was correctly capped to 600s"
+    else
+        fail "Knock with oversized TTL was not capped correctly. Expected 600, got $ttl. Response: $response"
+    fi
+}
+
+test_knock_with_custom_ttl_invalid() {
+    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "Content-Type: application/json" -d '{"ttl": -50}' $KNOCK_URL)
+    if echo "$response" | grep -q "Invalid TTL specified"; then
+        success "Knock with invalid (negative) TTL correctly failed"
+    else
+        fail "Knock with invalid TTL did not fail as expected. Response: $response"
     fi
 }
 
