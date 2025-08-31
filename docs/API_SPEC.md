@@ -69,6 +69,7 @@ This endpoint is used by Caddy's `forward_auth` directive to verify if a client'
 
 *   **`401 Unauthorized`**
     *   Returned if the client's IP is not authorized. The response has an empty body.
+    *   **Note**: When using Caddy's `forward_auth` directive, this response bypasses Caddy's `handle_errors` directive. Custom error handling for unauthorized access must be implemented either in this service or through alternative Caddy configurations.
 
 ---
 
