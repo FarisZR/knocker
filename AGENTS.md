@@ -13,9 +13,9 @@ This file provides guidance to agents when working with code in this repository.
 
 ## Workflow
 
-- **Run All Tests After Changes**: After making any code changes, you must run both the local unit tests (`PYTHONPATH=src python3 -m pytest`) and the full Docker-based integration tests (`docker compose -f dev/docker-compose.yml up -d --build` followed by the `curl` commands in the `ci.yml`).
+- **Run All Tests After Changes**: After making any code changes, you must run both the local unit tests (`PYTHONPATH=src python3 -m pytest`) and the full Docker-based integration tests (`docker compose -f dev/docker-compose.yml up -d --build` followed by the scripts under dev.
 - **Create Git Commits**: All work should be committed to Git.
 
 - github repo: FarisZR/knocker
 
-- **update documenation**: on any changes, you must update the documentation under the docs/ directory.
+- **Update Documenation**: on any changes, you must update the documentation under the docs/ directory.
