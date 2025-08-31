@@ -13,6 +13,7 @@ services:
       - ../knocker.example.yaml:/app/knocker.yaml:ro
       - caddy_data:/data
       - caddy_config:/config
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--watch"]
     depends_on:
       - knocker
 
