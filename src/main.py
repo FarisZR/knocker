@@ -104,7 +104,10 @@ async def knock(
     
     core.add_ip_to_whitelist(ip_to_whitelist, expiry_time, settings)
     
-    logging.info(f"Successfully whitelisted {ip_to_whitelist} for {effective_ttl} seconds. Requested by {client_ip}.")
+    token_name = core.get_api_key_name(api_key, settings)
+    logging.getLogger("uvicorn.error").info(
+        f"Successfully whitelisted {ip_to_whitelist} for {effective_ttl} seconds using token '{token_name}'. Requested by {client_ip}."
+    )
 
     return JSONResponse(
         content={

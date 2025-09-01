@@ -114,3 +114,16 @@ def is_valid_api_key(api_key: str, settings: Dict[str, Any]) -> bool:
     if not api_key:
         return False
     return any(key_info.get('key') == api_key for key_info in settings.get('api_keys', []))
+
+
+def get_api_key_name(api_key: str, settings: Dict[str, Any]) -> str:
+    """
+    Returns the configured name for an API key, falling back to the key string
+    if no explicit name is provided. Returns an empty string if api_key is falsy.
+    """
+    if not api_key:
+        return ""
+    for key_info in settings.get('api_keys', []):
+        if key_info.get('key') == api_key:
+            return key_info.get('name') or key_info.get('key')
+    return api_key
