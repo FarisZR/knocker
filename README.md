@@ -126,45 +126,25 @@ jellyfin.your-domain.com {
 }
 ```
 
-### Handling Authorization Failures
+### Authorization Failures
 
-You can control what happens when a user is not whitelisted using Caddy's `handle_errors` directive.
+When a user is not whitelisted, Caddy's `forward_auth` directive will return a `401 Unauthorized` response with an empty body. 
 
-*   **Option 1: Default (Return HTTP 401)**
-    *   No extra configuration needed. Caddy will return a blank `401 Unauthorized` page.
+**Important Note**: Caddy's `handle_errors` directive does **not** work with `forward_auth` responses. The error response comes directly from the authentication service (knocker), not from Caddy itself, so `handle_errors` cannot intercept or modify these responses.
 
-*   **Option 2: Serve a Custom Error Page**
-    ```caddyfile
-    jellyfin.your-domain.com {
-      import knocker_auth
-      reverse_proxy jellyfin_service_name:8096
+If you need custom error pages for unauthorized access, you have a few alternatives:
 
-      handle_errors {
-        if {http.error.status_code} == 401 {
-          rewrite * /unauthorized.html
-          file_server {
-            root /path/to/your/error/pages
-          }
-        }
-      }
-    }
-    ```
+*   **Modify the knocker service**: Update the `/verify` endpoint to return custom HTML content in 401 responses (requires code changes).
+*   **Use a different approach**: Instead of `forward_auth`, you could implement authorization at the application level.
+*   **Accept the default**: Use the standard 401 response for unauthorized access.
 
-*   **Option 3: Redirect to an Info Page**
-    ```caddyfile
-    jellyfin.your-domain.com {
-      import knocker_auth
-      reverse_proxy jellyfin_service_name:8096
-
-      handle_errors {
-        if {http.error.status_code} == 401 {
-          respond "You are not authorized. Please see the guide." 302 {
-            header Location https://your-guide-url.com
-          }
-        }
-      }
-    }
-    ```
+**Example of the standard behavior**:
+```caddyfile
+jellyfin.your-domain.com {
+  import knocker_auth  # This will return empty 401 responses for unauthorized users
+  reverse_proxy jellyfin_service_name:8096
+}
+```
 
 ## API Usage
 
