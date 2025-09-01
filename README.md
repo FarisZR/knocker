@@ -125,6 +125,12 @@ jellyfin.your-domain.com {
   reverse_proxy jellyfin_service_name:8096
 }
 ```
+### Userland-proxy related issues
+
+If you are enabling knocking for IPs behind tailscale or other IPs, you may face issues due to how userland-proxy works, you may get different request IP from the actual ip address.
+
+Disabling Userland-proxy should fix it, but make sure to test your setup.
+You may also use host networking.
 
 ### Authorization Failures
 
