@@ -19,6 +19,9 @@ def mock_settings():
         "security": {
             "always_allowed_ips": ["100.100.100.100", "2001:db8:cafe::/48"],
             "excluded_paths": ["/healthz", "/api/v1/public"]
+        },
+        "cors": {
+            "allowed_origin": "*"
         }
     }
 
@@ -129,6 +132,23 @@ def test_knock_with_invalid_ttl_string():
         json={"ttl": "three hundred"}
     )
     assert response.status_code == 400
+
+def test_knock_options_cors():
+    """OPTIONS request to /knock should return 204 with CORS headers."""
+    response = client.options("/knock")
+    assert response.status_code == 204
+    assert response.headers["Access-Control-Allow-Origin"] == "*"
+    assert response.headers["Access-Control-Allow-Methods"] == "POST, OPTIONS"
+    assert response.headers["Access-Control-Allow-Headers"] == "X-Api-Key, Content-Type"
+
+def test_knock_post_cors_header():
+    """POST /knock should include Access-Control-Allow-Origin header."""
+    response = client.post(
+        "/knock",
+        headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"}
+    )
+    assert response.status_code == 200
+    assert response.headers["Access-Control-Allow-Origin"] == "*"
 
 # --- Test /verify Endpoint ---
 

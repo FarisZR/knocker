@@ -9,10 +9,10 @@ This document provides a formal specification for the Caddy Knocker API.
 This endpoint is used to authenticate and whitelist an IP address or CIDR network.
 
 *   **URL**: `/knock`
-*   **Method**: `POST`
+*   **Method**: `POST`, `OPTIONS`
 *   **Headers**:
-    *   `X-Api-Key` (string, **required**): The secret API key for authentication.
-    *   `X-Forwarded-For` (string, **required**): The client's real IP address. This is expected to be set by a trusted proxy like Caddy.
+    *   `X-Api-Key` (string, **required** for POST): The secret API key for authentication.
+    *   `X-Forwarded-For` (string, **required** for POST): The client's real IP address. This is expected to be set by a trusted proxy like Caddy.
 *   **Request Body** (optional, JSON):
     ```json
     {
@@ -27,6 +27,8 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
 
 *   **`200 OK`** (Success)
     *   Returned when the knock is successful.
+    *   **Headers**:
+        *   `Access-Control-Allow-Origin`: The configured allowed origin (or "*" for any).
     *   **Body**:
         ```json
         {
@@ -38,6 +40,13 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
         *   `whitelisted_entry`: The IP or CIDR that was added to the whitelist.
         *   `expires_at`: The Unix timestamp when the whitelist entry will expire.
         *   `expires_in_seconds`: The actual TTL (Time To Live) of the whitelist entry in seconds. This may be the value requested by the client or the capped maximum TTL allowed by the API key.
+
+*   **`204 No Content`** (OPTIONS)
+    *   Returned for CORS preflight OPTIONS requests.
+    *   **Headers**:
+        *   `Access-Control-Allow-Origin`: The configured allowed origin (or "*" for any).
+        *   `Access-Control-Allow-Methods`: "POST, OPTIONS"
+        *   `Access-Control-Allow-Headers`: "X-Api-Key, Content-Type"
 
 *   **`400 Bad Request`**
     *   Returned if the client IP cannot be determined or if the `ip_address` in the request body is malformed.
@@ -107,3 +116,5 @@ This endpoint is used to verify the operational status of the Knocker service.
 - **`security`** (object, optional): Security-related settings.
     - **`always_allowed_ips`** (array of strings, optional): A list of IPs or CIDR ranges that are always permitted by the `/verify` endpoint, bypassing the dynamic whitelist.
     - **`excluded_paths`** (array of strings, optional): A list of URL paths (e.g., `/api/health`) that are exempt from any IP-based authentication at the `/verify` endpoint.
+- **`cors`** (object, optional): CORS settings for the `/knock` endpoint.
+    - **`allowed_origin`** (string, optional): The allowed origin for CORS requests. Defaults to "*" (any origin). Set to your web app's origin (e.g., "https://your-web-app.com") for security.

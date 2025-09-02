@@ -45,6 +45,21 @@ def get_client_ip(request: Request) -> Optional[str]:
 
 # --- API Endpoints ---
 
+@app.options("/knock")
+async def knock_options(settings: dict = Depends(get_settings)):
+    """
+    Handles OPTIONS requests for CORS preflight.
+    """
+    allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT,
+        headers={
+            "Access-Control-Allow-Origin": allowed_origin,
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "X-Api-Key, Content-Type",
+        }
+    )
+
 @app.post("/knock", status_code=status.HTTP_200_OK)
 async def knock(
     request: Request,
@@ -109,12 +124,14 @@ async def knock(
         f"Successfully whitelisted {ip_to_whitelist} for {effective_ttl} seconds using token '{token_name}'. Requested by {client_ip}."
     )
 
+    allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
     return JSONResponse(
         content={
             "whitelisted_entry": ip_to_whitelist,
             "expires_at": expiry_time,
             "expires_in_seconds": effective_ttl,
         },
+        headers={"Access-Control-Allow-Origin": allowed_origin}
     )
 
 @app.get("/health", status_code=status.HTTP_200_OK)

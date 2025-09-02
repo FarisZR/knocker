@@ -9,6 +9,9 @@ server:
     - "172.29.238.0/24"
     - "fd00:dead:c0de::/64"
 
+cors:
+  allowed_origin: "*"  # Set to your web app's origin (e.g., "https://your-web-app.com") or "*" for any origin
+
 security:
   always_allowed_ips:
     # These IPs/CIDRs are always allowed to pass through the /verify endpoint
