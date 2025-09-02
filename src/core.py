@@ -2,7 +2,7 @@ import ipaddress
 import json
 import time
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # --- IP/CIDR Validation ---
 
@@ -13,6 +13,41 @@ def is_valid_ip_or_cidr(address: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def is_trusted_proxy(client_ip: str, settings: Dict[str, Any]) -> bool:
+    """
+    Checks if the given client IP is in the trusted_proxies list.
+    
+    Args:
+        client_ip: The IP address to check
+        settings: Configuration settings containing trusted_proxies
+        
+    Returns:
+        True if the IP is from a trusted proxy, False otherwise
+    """
+    if not client_ip:
+        return False
+        
+    try:
+        client_ip_obj = ipaddress.ip_address(client_ip)
+    except ValueError:
+        return False
+    
+    trusted_proxies = settings.get("server", {}).get("trusted_proxies", [])
+    
+    for proxy_entry in trusted_proxies:
+        if not proxy_entry:  # Skip empty/None entries
+            continue
+        try:
+            proxy_network = ipaddress.ip_network(proxy_entry, strict=False)
+            if client_ip_obj in proxy_network:
+                return True
+        except ValueError:
+            # Skip invalid proxy entries but don't fail completely
+            continue
+            
+    return False
 
 # --- Whitelist Management ---
 
@@ -51,11 +86,48 @@ def is_ip_whitelisted(ip: str, whitelist: Dict[str, int], settings: Dict[str, An
     return False
 
 def is_path_excluded(path: str, settings: Dict[str, Any]) -> bool:
-    """Checks if the request path matches any of the excluded paths."""
+    """
+    Checks if the request path matches any of the excluded paths.
+    Uses secure path comparison to prevent traversal attacks.
+    """
+    if not path:
+        return False
+        
+    # Normalize the path to prevent traversal attacks
+    import os.path
+    try:
+        # Normalize path separators and resolve . and .. components
+        normalized_path = os.path.normpath(path)
+        
+        # Ensure path starts with / and doesn't contain backwards traversal
+        if not normalized_path.startswith('/'):
+            normalized_path = '/' + normalized_path
+            
+        # Additional security: reject paths that try to escape the root
+        if '..' in normalized_path:
+            return False
+            
+    except (ValueError, TypeError):
+        return False
+    
     excluded_paths = settings.get("security", {}).get("excluded_paths", [])
+    
     for excluded_path in excluded_paths:
-        if path.startswith(excluded_path):
-            return True
+        if not excluded_path or not isinstance(excluded_path, str):
+            continue
+            
+        # Normalize the excluded path too
+        try:
+            normalized_excluded = os.path.normpath(excluded_path)
+            if not normalized_excluded.startswith('/'):
+                normalized_excluded = '/' + normalized_excluded
+                
+            # Use exact match or proper prefix match
+            if normalized_path == normalized_excluded or normalized_path.startswith(normalized_excluded + '/'):
+                return True
+        except (ValueError, TypeError):
+            continue
+            
     return False
 
 def load_whitelist(settings: Dict[str, Any]) -> Dict[str, int]:

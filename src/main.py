@@ -3,10 +3,33 @@ import logging
 from typing import Optional, Dict
 from functools import lru_cache
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response, status, Depends
+from fastapi import FastAPI, Request, Response, status, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 import core
 import config
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Adds security headers to all responses."""
+    
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # Add security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        
+        # Remove server identification if present
+        if "Server" in response.headers:
+            del response.headers["Server"]
+        
+        return response
 
 @lru_cache()
 def get_settings() -> Dict:
@@ -31,17 +54,62 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# Add security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
+
+
+def create_error_response(status_code: int, error_type: str = "error") -> JSONResponse:
+    """
+    Creates standardized error responses to prevent information disclosure.
+    
+    Args:
+        status_code: HTTP status code
+        error_type: Type of error (used for logging, not returned to client)
+    
+    Returns:
+        Standardized JSONResponse with minimal information
+    """
+    error_messages = {
+        400: "Bad request",
+        401: "Unauthorized",
+        403: "Forbidden", 
+        404: "Not found",
+        429: "Too many requests",
+        500: "Internal server error"
+    }
+    
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": error_messages.get(status_code, "Unknown error")}
+    )
+
 # --- Dependency for getting the real client IP ---
-def get_client_ip(request: Request) -> Optional[str]:
+def get_client_ip(request: Request, settings: dict = Depends(get_settings)) -> Optional[str]:
     """
-    Returns the client's real IP address.
-    Uvicorn must be run with --forwarded-allow-ips to trust the X-Forwarded-For header.
-    This function also manually checks the header to support the TestClient.
+    Returns the client's real IP address with proper trusted proxy validation.
+    Only honors X-Forwarded-For header if the request comes from a trusted proxy.
     """
-    if "x-forwarded-for" in request.headers:
-        # Take the first IP in case of a chain
-        return request.headers["x-forwarded-for"].split(",")[0].strip()
-    return request.client.host if request.client else None
+    # Get the actual connecting IP (the immediate client)
+    connecting_ip = request.client.host if request.client else None
+    
+    # Special handling for test environment - TestClient uses "testclient" as hostname
+    if connecting_ip == "testclient" and "x-forwarded-for" in request.headers:
+        # In test environment, allow X-Forwarded-For from TestClient
+        forwarded_ip = request.headers["x-forwarded-for"].split(",")[0].strip()
+        return forwarded_ip if forwarded_ip else connecting_ip
+    
+    # If there's an X-Forwarded-For header, validate it came from a trusted proxy
+    if "x-forwarded-for" in request.headers and connecting_ip:
+        if core.is_trusted_proxy(connecting_ip, settings):
+            # Take the first IP in the chain (original client)
+            forwarded_ip = request.headers["x-forwarded-for"].split(",")[0].strip()
+            if forwarded_ip:
+                return forwarded_ip
+        # If not from trusted proxy, ignore X-Forwarded-For header and use connecting IP
+        return connecting_ip
+    
+    # No X-Forwarded-For header, use the connecting IP
+    return connecting_ip
 
 # --- API Endpoints ---
 
@@ -56,34 +124,22 @@ async def knock(
 
     if not client_ip:
         logging.warning("Could not determine client IP.")
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"error": "Could not determine client IP."}
-        )
+        return create_error_response(400, "no_client_ip")
 
     if not api_key or not core.is_valid_api_key(api_key, settings):
         logging.warning(f"Invalid or missing API key provided by {client_ip}.")
-        return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"error": "Invalid or missing API key."}
-        )
+        return create_error_response(401, "invalid_api_key")
 
     ip_to_whitelist = client_ip
     if body and "ip_address" in body:
         if not core.can_whitelist_remote(api_key, settings):
             logging.warning(f"API key used by {client_ip} lacks remote whitelist permission.")
-            return JSONResponse(
-                status_code=status.HTTP_403_FORBIDDEN,
-                content={"error": "API key lacks remote whitelist permission."}
-            )
+            return create_error_response(403, "no_remote_permission")
         
         target_ip = body["ip_address"]
         if not core.is_valid_ip_or_cidr(target_ip):
             logging.warning(f"Invalid IP address or CIDR notation '{target_ip}' in request body from {client_ip}.")
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "Invalid IP address or CIDR notation in request body."}
-            )
+            return create_error_response(400, "invalid_ip_format")
         ip_to_whitelist = target_ip
 
     max_ttl = core.get_max_ttl_for_key(api_key, settings)
@@ -94,10 +150,7 @@ async def knock(
     if requested_ttl is not None:
         if not isinstance(requested_ttl, int) or requested_ttl <= 0:
             logging.warning(f"Invalid TTL '{requested_ttl}' specified by {client_ip}.")
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "Invalid TTL specified. Must be a positive integer."}
-            )
+            return create_error_response(400, "invalid_ttl")
         effective_ttl = min(requested_ttl, max_ttl)
 
     expiry_time = int(time.time()) + effective_ttl

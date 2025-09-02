@@ -14,7 +14,8 @@ This is ideal for homelab environments where you want to expose services to the 
 *   **Static IP/CIDR Whitelisting**: Always allow certain IP addresses or ranges to bypass the dynamic whitelist.
 *   **Path-Based Exclusion**: Exclude specific URL paths (like health checks or public APIs) from authentication entirely.
 *   **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
-*   **Secure by Default**: Built-in protection against IP spoofing via a trusted proxy mechanism.
+*   **Secure by Default**: Built-in protection against IP spoofing via a trusted proxy mechanism and path traversal attacks.
+*   **Security Headers**: Automatic security headers on all responses to protect against common web attacks.
 *   **Test-Driven Development**: A comprehensive test suite ensures code correctness and reliability.
 
 ## CI/CD
@@ -30,8 +31,9 @@ This project is designed to be deployed as a set of Docker containers using the 
 
 For a formal API specification and a summary of the architectural choices, please see:
 
-*   [**API Specification**](./API_SPEC.md)
-*   [**Design Decisions**](./DESIGN_DECISIONS.md)
+*   [**API Specification**](./docs/API_SPEC.md)
+*   [**Design Decisions**](./docs/DESIGN_DECISIONS.md)
+*   [**Security Audit Report**](./docs/SECURITY_AUDIT.md)
 
 ### 1. Prerequisites
     *   Docker and Docker Compose installed.
@@ -90,6 +92,58 @@ The service is configured entirely through the `knocker.yaml` file.
           - "/api/v1/status"
           - "/metrics"
       ```
+
+## Security Considerations
+
+### ⚠️ Critical Security Settings
+
+1. **Trusted Proxies Configuration**
+   ```yaml
+   server:
+     trusted_proxies:
+       - "172.29.238.0/24"  # Your actual proxy network
+       # ⚠️ DO NOT use: 0.0.0.0/0, ::/0, or overly broad ranges
+   ```
+   - **Only include your actual reverse proxy networks**
+   - Incorrect configuration allows IP spoofing attacks
+   - Validate your Docker network subnets match the configuration
+
+2. **API Key Security**
+   ```yaml
+   api_keys:
+     - key: "CHANGE_ME_SUPER_SECRET_ADMIN_KEY"  # ⚠️ Must be changed!
+   ```
+   - **Always change default API keys** before deployment
+   - Use strong, randomly generated keys (32+ characters)
+   - Limit `allow_remote_whitelist: true` to trusted admin keys only
+
+3. **Path Exclusions**
+   ```yaml
+   security:
+     excluded_paths:
+       - "/health"           # ✅ Good - specific path
+       - "/api/v1/public"    # ✅ Good - specific path
+       # ❌ Avoid: "/../../sensitive", "../admin" - path traversal risks
+   ```
+   - Be specific with excluded paths
+   - Avoid patterns that could enable path traversal
+   - Test excluded paths don't expose sensitive endpoints
+
+### 🛡️ Security Features
+
+- **IP Spoofing Protection**: Validates X-Forwarded-For headers only from trusted proxies
+- **Path Traversal Protection**: Blocks attempts to use `../` in excluded paths
+- **Security Headers**: Automatically adds security headers to all responses
+- **Input Validation**: Comprehensive validation of all configuration and request inputs
+- **Standardized Errors**: Prevents information disclosure through error messages
+
+### 📊 Security Audit
+
+This service has undergone a comprehensive security audit. See [Security Audit Report](./docs/SECURITY_AUDIT.md) for:
+- Identified vulnerabilities and fixes
+- Security test results
+- Deployment recommendations
+- Risk assessment
 
 ## Caddy Integration
 
