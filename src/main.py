@@ -58,13 +58,14 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(SecurityHeadersMiddleware)
 
 
-def create_error_response(status_code: int, error_type: str = "error") -> JSONResponse:
+def create_error_response(status_code: int, error_type: str = "error", cors_origin: str = None) -> JSONResponse:
     """
     Creates standardized error responses to prevent information disclosure.
     
     Args:
         status_code: HTTP status code
         error_type: Type of error (used for logging, not returned to client)
+        cors_origin: CORS origin to include in response headers
     
     Returns:
         Standardized JSONResponse with minimal information
@@ -78,9 +79,14 @@ def create_error_response(status_code: int, error_type: str = "error") -> JSONRe
         500: "Internal server error"
     }
     
+    headers = {}
+    if cors_origin:
+        headers["Access-Control-Allow-Origin"] = cors_origin
+    
     return JSONResponse(
         status_code=status_code,
-        content={"error": error_messages.get(status_code, "Unknown error")}
+        content={"error": error_messages.get(status_code, "Unknown error")},
+        headers=headers
     )
 
 # --- Dependency for getting the real client IP ---
@@ -113,6 +119,21 @@ def get_client_ip(request: Request, settings: dict = Depends(get_settings)) -> O
 
 # --- API Endpoints ---
 
+@app.options("/knock")
+async def knock_options(settings: dict = Depends(get_settings)):
+    """
+    Handles OPTIONS requests for CORS preflight.
+    """
+    allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT,
+        headers={
+            "Access-Control-Allow-Origin": allowed_origin,
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "X-Api-Key, Content-Type",
+        }
+    )
+
 @app.post("/knock", status_code=status.HTTP_200_OK)
 async def knock(
     request: Request,
@@ -121,25 +142,26 @@ async def knock(
     settings: dict = Depends(get_settings)
 ):
     api_key = request.headers.get("X-Api-Key")
+    allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
 
     if not client_ip:
         logging.warning("Could not determine client IP.")
-        return create_error_response(400, "no_client_ip")
+        return create_error_response(400, "no_client_ip", allowed_origin)
 
     if not api_key or not core.is_valid_api_key(api_key, settings):
         logging.warning(f"Invalid or missing API key provided by {client_ip}.")
-        return create_error_response(401, "invalid_api_key")
+        return create_error_response(401, "invalid_api_key", allowed_origin)
 
     ip_to_whitelist = client_ip
     if body and "ip_address" in body:
         if not core.can_whitelist_remote(api_key, settings):
             logging.warning(f"API key used by {client_ip} lacks remote whitelist permission.")
-            return create_error_response(403, "no_remote_permission")
+            return create_error_response(403, "no_remote_permission", allowed_origin)
         
         target_ip = body["ip_address"]
         if not core.is_valid_ip_or_cidr(target_ip):
             logging.warning(f"Invalid IP address or CIDR notation '{target_ip}' in request body from {client_ip}.")
-            return create_error_response(400, "invalid_ip_format")
+            return create_error_response(400, "invalid_ip_format", allowed_origin)
         ip_to_whitelist = target_ip
 
     max_ttl = core.get_max_ttl_for_key(api_key, settings)
@@ -150,7 +172,7 @@ async def knock(
     if requested_ttl is not None:
         if not isinstance(requested_ttl, int) or requested_ttl <= 0:
             logging.warning(f"Invalid TTL '{requested_ttl}' specified by {client_ip}.")
-            return create_error_response(400, "invalid_ttl")
+            return create_error_response(400, "invalid_ttl", allowed_origin)
         effective_ttl = min(requested_ttl, max_ttl)
 
     expiry_time = int(time.time()) + effective_ttl
@@ -168,6 +190,7 @@ async def knock(
             "expires_at": expiry_time,
             "expires_in_seconds": effective_ttl,
         },
+        headers={"Access-Control-Allow-Origin": allowed_origin}
     )
 
 @app.get("/health", status_code=status.HTTP_200_OK)
