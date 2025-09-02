@@ -101,7 +101,7 @@ test_knock_for_always_allowed_ip_valid_key() {
 
 test_knock_for_always_allowed_ip_invalid_key() {
     response=$(curl -s -X POST -H "X-Api-Key: $INVALID_KEY" -H "X-Forwarded-For: $ALWAYS_ALLOWED_IP" $KNOCK_URL)
-    if echo "$response" | grep -q "Invalid or missing API key"; then
+    if echo "$response" | grep -q "Unauthorized"; then
         success "Knock for always-allowed IP with invalid key correctly failed"
     else
         fail "Knock for always-allowed IP with invalid key did not fail as expected. Response: $response"
@@ -119,7 +119,7 @@ test_remote_whitelist_success() {
 
 test_remote_whitelist_permission_denied() {
     response=$(curl -s -X POST -H "X-Api-Key: $NO_REMOTE_KEY" -H "Content-Type: application/json" -d "{\"ip_address\": \"$REMOTE_WHITELIST_IP\"}" $KNOCK_URL)
-    if echo "$response" | grep -q "API key lacks remote whitelist permission"; then
+    if echo "$response" | grep -q "Forbidden"; then
         success "Remote whitelist with no-permission key correctly failed"
     else
         fail "Remote whitelist with no-permission key did not fail as expected. Response: $response"
@@ -164,7 +164,7 @@ main() {
 
 test_knock_with_invalid_key() {
     response=$(curl -s -X POST -H "X-Api-Key: $INVALID_KEY" -H "X-Forwarded-For: $REGULAR_IP" $KNOCK_URL)
-    if echo "$response" | grep -q "Invalid or missing API key"; then
+    if echo "$response" | grep -q "Unauthorized"; then
         success "Knock with invalid key correctly failed"
     else
         fail "Knock with invalid key did not fail as expected. Response: $response"
@@ -194,7 +194,7 @@ test_knock_with_custom_ttl_capped() {
 
 test_knock_with_custom_ttl_invalid() {
     response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "Content-Type: application/json" -d '{"ttl": -50}' $KNOCK_URL)
-    if echo "$response" | grep -q "Invalid TTL specified"; then
+    if echo "$response" | grep -q "Bad request"; then
         success "Knock with invalid (negative) TTL correctly failed"
     else
         fail "Knock with invalid TTL did not fail as expected. Response: $response"
