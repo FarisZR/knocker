@@ -68,19 +68,22 @@ async def knock(
     settings: dict = Depends(get_settings)
 ):
     api_key = request.headers.get("X-Api-Key")
+    allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
 
     if not client_ip:
         logging.warning("Could not determine client IP.")
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            content={"error": "Could not determine client IP."}
+            content={"error": "Could not determine client IP."},
+            headers={"Access-Control-Allow-Origin": allowed_origin}
         )
 
     if not api_key or not core.is_valid_api_key(api_key, settings):
         logging.warning(f"Invalid or missing API key provided by {client_ip}.")
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"error": "Invalid or missing API key."}
+            content={"error": "Invalid or missing API key."},
+            headers={"Access-Control-Allow-Origin": allowed_origin}
         )
 
     ip_to_whitelist = client_ip
@@ -89,7 +92,8 @@ async def knock(
             logging.warning(f"API key used by {client_ip} lacks remote whitelist permission.")
             return JSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
-                content={"error": "API key lacks remote whitelist permission."}
+                content={"error": "API key lacks remote whitelist permission."},
+                headers={"Access-Control-Allow-Origin": allowed_origin}
             )
         
         target_ip = body["ip_address"]
@@ -97,7 +101,8 @@ async def knock(
             logging.warning(f"Invalid IP address or CIDR notation '{target_ip}' in request body from {client_ip}.")
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "Invalid IP address or CIDR notation in request body."}
+                content={"error": "Invalid IP address or CIDR notation in request body."},
+                headers={"Access-Control-Allow-Origin": allowed_origin}
             )
         ip_to_whitelist = target_ip
 
@@ -111,7 +116,8 @@ async def knock(
             logging.warning(f"Invalid TTL '{requested_ttl}' specified by {client_ip}.")
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "Invalid TTL specified. Must be a positive integer."}
+                content={"error": "Invalid TTL specified. Must be a positive integer."},
+                headers={"Access-Control-Allow-Origin": allowed_origin}
             )
         effective_ttl = min(requested_ttl, max_ttl)
 
@@ -124,7 +130,6 @@ async def knock(
         f"Successfully whitelisted {ip_to_whitelist} for {effective_ttl} seconds using token '{token_name}'. Requested by {client_ip}."
     )
 
-    allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
     return JSONResponse(
         content={
             "whitelisted_entry": ip_to_whitelist,
