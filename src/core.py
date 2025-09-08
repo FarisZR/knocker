@@ -31,11 +31,11 @@ def is_safe_cidr_range(cidr: str, max_host_count: int = 65536) -> bool:
         # Special handling for IPv6 due to massive address space
         if isinstance(network, ipaddress.IPv6Network):
             # For IPv6, use prefix length as a safety check instead of address count
-            # /64 is very common but has 2^64 addresses, so we check prefix length
-            if network.prefixlen < 96:  # Less than /96 means > 4 billion addresses
+            # /64 is very common for home networks and should be allowed
+            if network.prefixlen < 64:  # Less than /64 is too broad
                 return False
-            # For /96 and higher, check actual count
-            return network.num_addresses <= max_host_count
+            # For /64 and higher, allow based on prefix length (no need to count addresses)
+            return True
         else:
             # For IPv4, check actual address count
             return network.num_addresses <= max_host_count
@@ -196,7 +196,7 @@ def save_whitelist(whitelist: Dict[str, int], settings: Dict[str, Any]):
             # Clean up temp file on error
             if temp_path.exists():
                 temp_path.unlink()
-            raise e
+            raise
 
 def add_ip_to_whitelist(ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]):
     """Adds an IP or CIDR to the whitelist and saves it."""

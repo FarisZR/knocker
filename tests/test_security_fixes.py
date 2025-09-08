@@ -2,6 +2,7 @@
 Tests to verify that security vulnerabilities have been fixed.
 """
 import pytest
+import logging
 from fastapi.testclient import TestClient
 from src.main import app, get_settings
 from src import core
@@ -54,12 +55,14 @@ client = TestClient(app)
 class TestTrustedProxyValidation:
     """Test that trusted proxy validation prevents IP spoofing."""
     
+    @pytest.mark.skip(reason="TestClient doesn't simulate network layers - requires network-level proxy behavior")
     def test_trusted_proxy_allows_forwarded_header(self):
         """Requests from trusted proxies should honor X-Forwarded-For."""
         # This test simulates a request from a trusted proxy
         # In real deployment, this would be enforced at the network level
         pass  # Skip for now as TestClient doesn't simulate network layers
     
+    @pytest.mark.skip(reason="TestClient doesn't simulate network layers - requires network-level proxy behavior")
     def test_untrusted_source_ignores_forwarded_header(self):
         """Requests from untrusted sources should ignore X-Forwarded-For."""
         # This test would require mocking the client.host to simulate untrusted IP
@@ -179,6 +182,7 @@ class TestInformationDisclosurePrevention:
     
     def test_api_key_names_not_in_logs(self, caplog):
         """API key names should not be logged in plaintext."""
+        caplog.set_level(logging.INFO)
         response = client.post(
             "/knock",
             headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"}
@@ -255,7 +259,10 @@ class TestCoreSecurityFunctions:
         assert core.is_safe_cidr_range("0.0.0.0/0") == False
         assert core.is_safe_cidr_range("10.0.0.0/8") == False
         assert core.is_safe_cidr_range("::/0") == False
-        assert core.is_safe_cidr_range("2001:db8::/64") == False  # Too broad IPv6
+        assert core.is_safe_cidr_range("2001:db8::/32") == False  # Too broad IPv6 (less restrictive than /64)
+        
+        # /64 should now be allowed for home networks
+        assert core.is_safe_cidr_range("2001:db8::/64") == True
         
         # Custom limits
         assert core.is_safe_cidr_range("192.168.0.0/16", max_host_count=1000) == False

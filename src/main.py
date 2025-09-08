@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # --- Dependency for getting the real client IP ---
-def get_client_ip(request: Request, settings: dict = None) -> Optional[str]:
+def get_client_ip(request: Request, settings: Optional[dict] = None) -> Optional[str]:
     """
     Returns the client's real IP address with trusted proxy validation.
     Only trusts X-Forwarded-For header if the request comes from a trusted proxy.
@@ -58,8 +58,8 @@ def get_client_ip(request: Request, settings: dict = None) -> Optional[str]:
                 # Direct IP is not trusted, ignore X-Forwarded-For
                 return direct_ip
     
-    # Fallback: check X-Forwarded-For for backward compatibility (test client)
-    if "x-forwarded-for" in request.headers:
+    # Fallback: check X-Forwarded-For for backward compatibility only when no settings provided
+    if settings is None and "x-forwarded-for" in request.headers:
         return request.headers["x-forwarded-for"].split(",")[0].strip()
     
     return direct_ip

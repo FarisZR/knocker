@@ -1,6 +1,7 @@
 """
-Security vulnerability tests for Caddy Knocker.
-These tests demonstrate security issues that need to be fixed.
+Security tests for Caddy Knocker.
+These tests verify that security vulnerabilities have been properly fixed.
+Tests pass when attacks are successfully blocked.
 """
 import pytest
 import time
@@ -91,52 +92,59 @@ class TestCIDRRangeAbuse:
     
     def test_whitelist_all_ipv4_addresses(self):
         """
-        VULNERABILITY: Attacker can whitelist all IPv4 addresses using 0.0.0.0/0.
+        SECURITY TEST: Verify that 0.0.0.0/0 CIDR range is rejected.
+        Test passes when the dangerous CIDR range is blocked.
         """
         response = client.post(
             "/knock",
             headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"},
             json={"ip_address": "0.0.0.0/0"}
         )
-        assert response.status_code == 200
-        assert response.json()["whitelisted_entry"] == "0.0.0.0/0"
-        
-        # Verify any IP is now whitelisted
-        response = client.get("/verify", headers={"X-Forwarded-For": "8.8.8.8"})
-        assert response.status_code == 200
+        # Should be blocked - test passes when attack fails
+        assert response.status_code == 400
     
     def test_whitelist_all_ipv6_addresses(self):
         """
-        VULNERABILITY: Attacker can whitelist all IPv6 addresses using ::/0.
+        SECURITY TEST: Verify that ::/0 CIDR range is rejected.
+        Test passes when the dangerous CIDR range is blocked.
         """
         response = client.post(
             "/knock",
             headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"},
             json={"ip_address": "::/0"}
         )
-        assert response.status_code == 200
-        assert response.json()["whitelisted_entry"] == "::/0"
-        
-        # Verify any IPv6 is now whitelisted
-        response = client.get("/verify", headers={"X-Forwarded-For": "2001:db8::1"})
-        assert response.status_code == 200
+        # Should be blocked - test passes when attack fails
+        assert response.status_code == 400
     
     def test_whitelist_large_cidr_ranges(self):
-        """Test that very large CIDR ranges can be whitelisted without restriction."""
-        large_ranges = [
-            "10.0.0.0/8",        # 16,777,216 IPs
-            "172.16.0.0/12",     # 1,048,576 IPs
-            "192.168.0.0/16",    # 65,536 IPs
+        """
+        SECURITY TEST: Verify that dangerously large CIDR ranges are rejected.
+        Test passes when overly broad CIDR ranges are blocked.
+        """
+        dangerous_ranges = [
+            "10.0.0.0/8",        # 16,777,216 IPs - should be blocked
+            "172.16.0.0/12",     # 1,048,576 IPs - should be blocked
         ]
+        acceptable_range = "192.168.0.0/16"  # 65,536 IPs - at the limit, should be allowed
         
-        for cidr_range in large_ranges:
+        # Test dangerous ranges are blocked
+        for cidr_range in dangerous_ranges:
             response = client.post(
                 "/knock",
                 headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"},
                 json={"ip_address": cidr_range}
             )
-            assert response.status_code == 200
-            assert response.json()["whitelisted_entry"] == cidr_range
+            # Should be blocked - test passes when attack fails
+            assert response.status_code == 400
+        
+        # Test that reasonable ranges are still allowed
+        response = client.post(
+            "/knock",
+            headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"},
+            json={"ip_address": acceptable_range}
+        )
+        # This should be allowed
+        assert response.status_code == 200
 
 
 class TestPathTraversalVulnerability:
@@ -144,9 +152,8 @@ class TestPathTraversalVulnerability:
     
     def test_path_traversal_attack(self):
         """
-        POTENTIAL VULNERABILITY: Path traversal in excluded paths.
-        While this specific case doesn't work due to URL encoding,
-        it demonstrates the vulnerability pattern.
+        SECURITY TEST: Verify that path traversal attacks are blocked.
+        Test passes when path traversal attempt is denied.
         """
         # Attempt path traversal in excluded path
         response = client.get(
@@ -156,19 +163,26 @@ class TestPathTraversalVulnerability:
                 "X-Forwarded-Uri": "/api/status/../../../etc/passwd"
             }
         )
-        # This currently passes because it starts with "/api/status"
-        assert response.status_code == 200
+        # Should be blocked - test passes when attack fails
+        assert response.status_code == 401
     
     def test_excluded_path_bypass_variations(self):
-        """Test various ways to bypass excluded path restrictions."""
-        bypass_attempts = [
-            "/api/status/../secret",
-            "/api/status/../../admin",
-            "/api/status%2E%2E/secret",  # URL encoded
-            "/api/status/./secret",
+        """
+        SECURITY TEST: Verify that path traversal bypass attempts are blocked.
+        Test passes when path traversal attempts are denied but legitimate sub-paths are allowed.
+        """
+        # These should be blocked (path traversal attempts)
+        blocked_attempts = [
+            "/api/status/../secret",      # Normalizes to /api/secret (not excluded)
+            "/api/status/../../admin",    # Normalizes to /admin (not excluded)
+            "/api/status%2E%2E/secret",   # URL encoded .. (not normalized by our logic)
         ]
         
-        for path in bypass_attempts:
+        # This should be allowed (legitimate sub-path)
+        allowed_path = "/api/status/./secret"  # Normalizes to /api/status/secret (excluded)
+        
+        # Test that path traversal attempts are blocked
+        for path in blocked_attempts:
             response = client.get(
                 "/verify",
                 headers={
@@ -176,8 +190,19 @@ class TestPathTraversalVulnerability:
                     "X-Forwarded-Uri": path
                 }
             )
-            # All currently pass due to startswith() check
-            assert response.status_code == 200
+            # Should be blocked - test passes when attack fails
+            assert response.status_code == 401
+        
+        # Test that legitimate sub-paths are still allowed
+        response = client.get(
+            "/verify",
+            headers={
+                "X-Forwarded-For": "8.8.8.8",
+                "X-Forwarded-Uri": allowed_path
+            }
+        )
+        # This should be allowed as it's a legitimate sub-path
+        assert response.status_code == 200
 
 
 class TestInformationDisclosure:
