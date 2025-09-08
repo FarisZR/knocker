@@ -146,22 +146,40 @@ async def knock(
 
     if not client_ip:
         logging.warning("Could not determine client IP.")
-        return create_error_response(400, "no_client_ip", allowed_origin)
+
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": "Could not determine client IP."},
+            headers={"Access-Control-Allow-Origin": allowed_origin}
+        )
 
     if not api_key or not core.is_valid_api_key(api_key, settings):
         logging.warning(f"Invalid or missing API key provided by {client_ip}.")
-        return create_error_response(401, "invalid_api_key", allowed_origin)
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"error": "Invalid or missing API key."},
+            headers={"Access-Control-Allow-Origin": allowed_origin}
+        )
 
     ip_to_whitelist = client_ip
     if body and "ip_address" in body:
         if not core.can_whitelist_remote(api_key, settings):
             logging.warning(f"API key used by {client_ip} lacks remote whitelist permission.")
-            return create_error_response(403, "no_remote_permission", allowed_origin)
+            
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"error": "API key lacks remote whitelist permission."},
+                headers={"Access-Control-Allow-Origin": allowed_origin}
+            )
         
         target_ip = body["ip_address"]
         if not core.is_valid_ip_or_cidr(target_ip):
             logging.warning(f"Invalid IP address or CIDR notation '{target_ip}' in request body from {client_ip}.")
-            return create_error_response(400, "invalid_ip_format", allowed_origin)
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "Invalid IP address or CIDR notation in request body."},
+                headers={"Access-Control-Allow-Origin": allowed_origin}
+            )
         ip_to_whitelist = target_ip
 
     max_ttl = core.get_max_ttl_for_key(api_key, settings)
@@ -172,7 +190,12 @@ async def knock(
     if requested_ttl is not None:
         if not isinstance(requested_ttl, int) or requested_ttl <= 0:
             logging.warning(f"Invalid TTL '{requested_ttl}' specified by {client_ip}.")
-            return create_error_response(400, "invalid_ttl", allowed_origin)
+
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "Invalid TTL specified. Must be a positive integer."},
+                headers={"Access-Control-Allow-Origin": allowed_origin}
+            )
         effective_ttl = min(requested_ttl, max_ttl)
 
     expiry_time = int(time.time()) + effective_ttl
