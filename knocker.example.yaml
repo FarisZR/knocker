@@ -10,7 +10,7 @@ server:
     - "fd00:dead:c0de::/64"
 
 cors:
-  allowed_origin: "*"  # Set to your web app's origin (e.g., "https://your-web-app.com") or "*" for any origin
+  allowed_origin: "*"  # SECURITY: Set to your web app's origin (e.g., "https://your-web-app.com") in production instead of "*"
 
 security:
   always_allowed_ips:
@@ -26,6 +26,8 @@ security:
     # - "/api/v1/status"
     # - "/metrics"
     - "/knock"
+  # Maximum number of entries in the whitelist (default: 10000)
+  max_whitelist_entries: 10000
 
 whitelist:
   # The path where the whitelist file will be stored.

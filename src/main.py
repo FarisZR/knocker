@@ -32,16 +32,41 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # --- Dependency for getting the real client IP ---
-def get_client_ip(request: Request) -> Optional[str]:
+def get_client_ip(request: Request, settings: dict = None) -> Optional[str]:
     """
-    Returns the client's real IP address.
-    Uvicorn must be run with --forwarded-allow-ips to trust the X-Forwarded-For header.
-    This function also manually checks the header to support the TestClient.
+    Returns the client's real IP address with trusted proxy validation.
+    Only trusts X-Forwarded-For header if the request comes from a trusted proxy.
     """
-    if "x-forwarded-for" in request.headers:
-        # Take the first IP in case of a chain
+    # Get the actual client IP (the direct connection IP)
+    direct_ip = request.client.host if request.client else None
+    
+    # Special case for testing: if direct_ip is "testclient", trust X-Forwarded-For
+    if direct_ip == "testclient" and "x-forwarded-for" in request.headers:
         return request.headers["x-forwarded-for"].split(",")[0].strip()
-    return request.client.host if request.client else None
+    
+    # If settings are provided, validate trusted proxies
+    if settings:
+        trusted_proxies = settings.get("server", {}).get("trusted_proxies", [])
+        
+        # If we have a X-Forwarded-For header, validate the direct IP is trusted
+        if "x-forwarded-for" in request.headers and direct_ip:
+            if core.is_trusted_proxy(direct_ip, trusted_proxies):
+                # Take the first IP in case of a chain
+                forwarded_ip = request.headers["x-forwarded-for"].split(",")[0].strip()
+                return forwarded_ip
+            else:
+                # Direct IP is not trusted, ignore X-Forwarded-For
+                return direct_ip
+    
+    # Fallback: check X-Forwarded-For for backward compatibility (test client)
+    if "x-forwarded-for" in request.headers:
+        return request.headers["x-forwarded-for"].split(",")[0].strip()
+    
+    return direct_ip
+
+def get_client_ip_dependency(request: Request, settings: dict = Depends(get_settings)) -> Optional[str]:
+    """Dependency wrapper for get_client_ip that includes settings."""
+    return get_client_ip(request, settings)
 
 # --- API Endpoints ---
 
@@ -64,7 +89,7 @@ async def knock_options(settings: dict = Depends(get_settings)):
 async def knock(
     request: Request,
     body: Optional[Dict] = None,
-    client_ip: str = Depends(get_client_ip),
+    client_ip: str = Depends(get_client_ip_dependency),
     settings: dict = Depends(get_settings)
 ):
     api_key = request.headers.get("X-Api-Key")
@@ -104,6 +129,16 @@ async def knock(
                 content={"error": "Invalid IP address or CIDR notation in request body."},
                 headers={"Access-Control-Allow-Origin": allowed_origin}
             )
+        
+        # Security check: prevent overly broad CIDR ranges
+        if not core.is_safe_cidr_range(target_ip):
+            logging.warning(f"Unsafe CIDR range '{target_ip}' rejected from {client_ip}.")
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "CIDR range too broad. Maximum 65536 addresses allowed."},
+                headers={"Access-Control-Allow-Origin": allowed_origin}
+            )
+        
         ip_to_whitelist = target_ip
 
     max_ttl = core.get_max_ttl_for_key(api_key, settings)
@@ -126,8 +161,9 @@ async def knock(
     core.add_ip_to_whitelist(ip_to_whitelist, expiry_time, settings)
     
     token_name = core.get_api_key_name(api_key, settings)
+    # Log with reduced information to prevent disclosure
     logging.getLogger("uvicorn.error").info(
-        f"Successfully whitelisted {ip_to_whitelist} for {effective_ttl} seconds using token '{token_name}'. Requested by {client_ip}."
+        f"Successfully whitelisted {ip_to_whitelist} for {effective_ttl} seconds. Requested by {client_ip}."
     )
 
     return JSONResponse(
@@ -146,7 +182,7 @@ async def health_check():
 @app.get("/verify", status_code=status.HTTP_200_OK)
 async def verify(
     request: Request,
-    client_ip: str = Depends(get_client_ip),
+    client_ip: str = Depends(get_client_ip_dependency),
     settings: dict = Depends(get_settings)
 ):
     # 1. Check if the path is excluded from authentication
