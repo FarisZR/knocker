@@ -205,7 +205,7 @@ def add_ip_to_whitelist(ip_or_cidr: str, expiry_time: int, settings: Dict[str, A
     save_whitelist(whitelist, settings)
 
 def cleanup_expired_ips(settings: Dict[str, Any]):
-    """Removes expired entries from the whitelist file."""
+    """Removes expired entries from the whitelist file and firewalld rules."""
     whitelist = load_whitelist(settings)
     now = int(time.time())
     
@@ -214,6 +214,13 @@ def cleanup_expired_ips(settings: Dict[str, Any]):
     
     if len(fresh_whitelist) < len(whitelist):
         save_whitelist(fresh_whitelist, settings)
+    
+    # Also cleanup firewalld rules
+    try:
+        from firewalld_integration import cleanup_firewalld_rules
+        cleanup_firewalld_rules()
+    except Exception as e:
+        logging.warning(f"Failed to cleanup firewalld rules: {e}")
 
 # --- Permissions & Key Helpers ---
 

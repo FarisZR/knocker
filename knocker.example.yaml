@@ -35,6 +35,25 @@ whitelist:
   # The docker-compose.yml file will mount a volume to this location.
   storage_path: "/data/whitelist.json"
 
+firewalld:
+  # Enable/disable firewalld integration for dynamic firewall rules
+  enabled: false # Set to true to enable firewalld integration
+  
+  # List of ports to monitor and protect with firewalld rules
+  # These ports will have deny-all rules created, with allow rules added dynamically
+  monitored_ports:
+    - 80
+    - 443
+    - 8080
+    - 8443
+  
+  # Name of the firewalld zone to create for knocker rules
+  zone_name: "KNOCKER"
+  
+  # Priority for the KNOCKER zone (higher numbers = higher priority)
+  # Should be higher than default zones to ensure knocker rules take precedence
+  priority: 100
+
 api_keys:
   - name: "admin-key-for-remote-whitelisting"
     key: "CHANGE_ME_SUPER_SECRET_ADMIN_KEY"

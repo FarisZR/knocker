@@ -3,3 +3,5 @@ uvicorn
 pyyaml
 pytest
 httpx
+PyGObject
+dbus-python

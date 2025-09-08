@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, Response, status, Depends
 from fastapi.responses import JSONResponse
 import core
 import config
+from firewalld_integration import initialize_firewalld, get_firewalld_manager, cleanup_firewalld_rules
 
 @lru_cache()
 def get_settings() -> Dict:
@@ -23,12 +24,35 @@ def get_settings() -> Dict:
 async def lifespan(app: FastAPI):
     """
     Application lifespan manager.
-    On startup, it performs a cleanup of any expired IPs.
+    On startup, it performs a cleanup of any expired IPs and initializes firewalld.
     """
     logging.info("Knocker service starting up...")
-    core.cleanup_expired_ips(get_settings())
+    settings = get_settings()
+    
+    # Initialize firewalld integration
+    try:
+        initialize_firewalld(settings)
+        firewalld_manager = get_firewalld_manager()
+        if firewalld_manager and firewalld_manager.enabled:
+            logging.info("Firewalld integration initialized successfully")
+            firewalld_manager.synchronize_on_startup()
+        else:
+            logging.info("Firewalld integration is disabled")
+    except Exception as e:
+        logging.error(f"Failed to initialize firewalld integration: {e}")
+    
+    # Cleanup expired IPs
+    core.cleanup_expired_ips(settings)
+    
     yield
+    
     logging.info("Knocker service shutting down.")
+    
+    # Cleanup firewalld rules on shutdown
+    try:
+        cleanup_firewalld_rules()
+    except Exception as e:
+        logging.warning(f"Error during firewalld cleanup: {e}")
 
 app = FastAPI(lifespan=lifespan)
 
@@ -165,7 +189,17 @@ async def knock(
 
     expiry_time = int(time.time()) + effective_ttl
     
+    # Add to JSON whitelist
     core.add_ip_to_whitelist(ip_to_whitelist, expiry_time, settings)
+    
+    # Add firewalld rule if enabled
+    try:
+        from firewalld_integration import add_firewalld_rule
+        firewalld_rule_id = add_firewalld_rule(ip_to_whitelist, effective_ttl)
+        if firewalld_rule_id:
+            logging.info(f"Added firewalld rule {firewalld_rule_id} for {ip_to_whitelist}")
+    except Exception as e:
+        logging.warning(f"Failed to add firewalld rule for {ip_to_whitelist}: {e}")
     
     # Log with reduced information to prevent disclosure
     logging.getLogger("uvicorn.error").info(
