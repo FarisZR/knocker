@@ -67,10 +67,10 @@ def test_knock_success_remote_ip_with_permission():
     response = client.post(
         "/knock",
         headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"},
-        json={"ip_address": "2001:db8::/64"}
+        json={"ip_address": "2001:db8::/120"}
     )
     assert response.status_code == 200
-    assert response.json()["whitelisted_entry"] == "2001:db8::/64"
+    assert response.json()["whitelisted_entry"] == "2001:db8::/120"
 
 def test_knock_fail_remote_ip_without_permission():
     """A standard user key should NOT be able to whitelist a remote IP."""
