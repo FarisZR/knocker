@@ -1,5 +1,6 @@
 import time
 import logging
+import ipaddress
 from typing import Optional, Dict
 from functools import lru_cache
 from contextlib import asynccontextmanager
@@ -53,7 +54,13 @@ def get_client_ip(request: Request, settings: Optional[dict] = None) -> Optional
             if core.is_trusted_proxy(direct_ip, trusted_proxies):
                 # Take the first IP in case of a chain
                 forwarded_ip = request.headers["x-forwarded-for"].split(",")[0].strip()
-                return forwarded_ip
+                # Validate the forwarded IP
+                try:
+                    ipaddress.ip_address(forwarded_ip)
+                    return forwarded_ip
+                except ValueError:
+                    # Invalid IP, fall back to direct_ip
+                    return direct_ip
             else:
                 # Direct IP is not trusted, ignore X-Forwarded-For
                 return direct_ip
@@ -160,7 +167,6 @@ async def knock(
     
     core.add_ip_to_whitelist(ip_to_whitelist, expiry_time, settings)
     
-    token_name = core.get_api_key_name(api_key, settings)
     # Log with reduced information to prevent disclosure
     logging.getLogger("uvicorn.error").info(
         f"Successfully whitelisted {ip_to_whitelist} for {effective_ttl} seconds. Requested by {client_ip}."

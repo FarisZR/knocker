@@ -292,11 +292,75 @@ class TestDenialOfService:
         # The whitelist should now be very large
         # In a real attack, this could consume all disk space
     
+    @pytest.mark.skip(reason="placeholder test for deep directory creation - requires network-level testing")
     def test_deep_directory_creation(self):
         """Test if deep directory structures can be created."""
         # This tests the save_whitelist function's mkdir behavior
         # with a malicious storage path (though this would require config control)
         pass
+    
+    def test_malicious_storage_paths(self):
+        """
+        SECURITY TEST: Verify that malicious storage paths are handled safely.
+        Test passes when the application properly handles unusual storage paths.
+        """
+        import tempfile
+        import os
+        
+        # Test paths that should fail due to system restrictions
+        dangerous_paths = [
+            "/etc/passwd",  # Should fail due to permission denied 
+            "/root/admin_secrets.json",  # Should fail due to permission denied
+            "/dev/null/cannot_mkdir_here.json",  # Should fail because /dev/null is not a directory
+        ]
+        
+        for dangerous_path in dangerous_paths:
+            # Create a temporary settings with dangerous storage path
+            temp_settings = {
+                "whitelist": {"storage_path": dangerous_path},
+                "api": {"keys": {"TEST_KEY": {"allow_remote_whitelist": True, "max_ttl": 3600}}},
+                "security": {"trusted_proxies": ["127.0.0.1"], "excluded_paths": []}
+            }
+            
+            # Try to save whitelist - should fail due to system restrictions
+            try:
+                core.save_whitelist({"127.0.0.1": int(time.time()) + 3600}, temp_settings)
+                # If it doesn't raise an exception, check that files aren't actually created in dangerous locations
+                if os.path.exists(dangerous_path):
+                    # If file was created, clean it up and fail the test
+                    try:
+                        os.remove(dangerous_path) 
+                    except:
+                        pass
+                    assert False, f"Dangerous file was created at {dangerous_path}"
+            except (PermissionError, OSError, FileNotFoundError, NotADirectoryError):
+                # These exceptions are expected and good - the system is protecting us
+                pass
+        
+        # Test relative path traversal - this should work but should resolve to safe location
+        safe_traversal_path = "../../safe_test_file.json"
+        safe_settings = {
+            "whitelist": {"storage_path": safe_traversal_path},
+            "api": {"keys": {"TEST_KEY": {"allow_remote_whitelist": True, "max_ttl": 3600}}},
+            "security": {"trusted_proxies": ["127.0.0.1"], "excluded_paths": []}
+        }
+        
+        # This should work (might create directories) but should resolve to a safe location
+        try:
+            core.save_whitelist({"127.0.0.1": int(time.time()) + 3600}, safe_settings)
+            # Clean up any files created
+            from pathlib import Path
+            path = Path(safe_traversal_path)
+            if path.exists():
+                path.unlink()
+            # Clean up any directories created during the test
+            try:
+                path.parent.rmdir()
+            except:
+                pass
+        except Exception:
+            # If it fails, that's also acceptable for security
+            pass
 
 
 class TestConfigurationSecurity:

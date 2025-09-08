@@ -182,7 +182,7 @@ class TestInformationDisclosurePrevention:
     
     def test_api_key_names_not_in_logs(self, caplog):
         """API key names should not be logged in plaintext."""
-        caplog.set_level(logging.INFO)
+        caplog.set_level(logging.INFO, logger="uvicorn.error")
         response = client.post(
             "/knock",
             headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"}
@@ -192,7 +192,7 @@ class TestInformationDisclosurePrevention:
         # Check that sensitive information is not in logs
         log_messages = [record.message for record in caplog.records]
         sensitive_logged = any("admin" in msg.lower() for msg in log_messages)
-        assert not sensitive_logged or len(log_messages) == 0
+        assert not sensitive_logged
     
     def test_generic_error_messages(self):
         """Error messages should be generic and not leak system details."""
