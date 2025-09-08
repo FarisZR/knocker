@@ -1,0 +1,85 @@
+# Dockerfile for knocker with firewalld support
+FROM python:3.11.9-slim
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Install system dependencies needed for firewalld and D-Bus
+RUN apt-get update && apt-get install -y \
+    curl \
+    firewalld \
+    dbus \
+    systemd \
+    python3-gi \
+    python3-dbus \
+    gir1.2-glib-2.0 \
+    build-essential \
+    libcairo2-dev \
+    libgirepository1.0-dev \
+    pkg-config \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user to run the application
+RUN groupadd --gid 1001 appuser && \
+    useradd --create-home --uid 1001 --gid 1001 appuser
+
+# Copy requirements and install Python dependencies
+COPY src/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the application code
+COPY src/ .
+
+# Create and setup data directory
+RUN mkdir -p /data && chown appuser:appuser /data
+
+# Create a startup script to handle firewalld initialization
+COPY <<EOF /app/start-with-firewalld.sh
+#!/bin/bash
+set -e
+
+# Start D-Bus if not running
+if ! pgrep -x "dbus-daemon" > /dev/null; then
+    echo "Starting D-Bus..."
+    dbus-daemon --config-file=/usr/share/dbus-1/system.conf --fork
+fi
+
+# Start firewalld
+echo "Starting firewalld..."
+firewalld --nofork --nopid &
+FIREWALLD_PID=\$!
+
+# Wait for firewalld to be ready
+echo "Waiting for firewalld to be ready..."
+timeout=30
+counter=0
+while ! firewall-cmd --state > /dev/null 2>&1; do
+    if [ \$counter -ge \$timeout ]; then
+        echo "Firewalld failed to start within \$timeout seconds"
+        exit 1
+    fi
+    sleep 1
+    counter=\$((counter + 1))
+done
+
+echo "Firewalld is ready"
+
+# Switch to appuser and start knocker
+echo "Starting knocker service..."
+exec gosu appuser uvicorn main:app --host 0.0.0.0 --port 8000 --forwarded-allow-ips "*"
+EOF
+
+# Install gosu for proper user switching
+RUN curl -o /usr/local/bin/gosu -SL "https://github.com/tianon/gosu/releases/download/1.14/gosu-$(dpkg --print-architecture)" \
+    && chmod +x /usr/local/bin/gosu
+
+# Make startup script executable
+RUN chmod +x /app/start-with-firewalld.sh
+
+# Expose the port the app runs on
+EXPOSE 8000
+
+# Run with proper capabilities for firewalld
+# Note: This container needs to run with --privileged or specific capabilities
+CMD ["/app/start-with-firewalld.sh"]

@@ -15,6 +15,7 @@ This is ideal for homelab environments where you want to expose services to the 
 *   **Path-Based Exclusion**: Exclude specific URL paths (like health checks or public APIs) from authentication entirely.
 *   **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
 *   **Secure by Default**: Built-in protection against IP spoofing via a trusted proxy mechanism.
+*   **Firewalld Integration**: Optional integration with firewalld for OS-level firewall rule management with automatic rule expiry.
 *   **Test-Driven Development**: A comprehensive test suite ensures code correctness and reliability.
 
 ## CI/CD
@@ -89,6 +90,22 @@ The service is configured entirely through the `knocker.yaml` file.
         excluded_paths:
           - "/api/v1/status"
           - "/metrics"
+      ```
+
+*   **`firewalld`** (Optional): Configuration for firewalld integration to manage OS-level firewall rules.
+    *   `enabled`: Boolean flag to enable/disable firewalld integration (default: false).
+    *   `monitored_ports`: List of TCP ports to protect with firewalld rules.
+    *   `zone_name`: Name of the firewalld zone to create for Knocker rules (default: "KNOCKER").
+    *   `priority`: Zone priority - higher values take precedence (default: 100).
+      ```yaml
+      firewalld:
+        enabled: true
+        monitored_ports:
+          - 80
+          - 443
+          - 8080
+        zone_name: "KNOCKER"
+        priority: 100
       ```
 
 ## Caddy Integration
@@ -196,4 +213,55 @@ The project includes a full test suite. To run the tests locally:
 
 2.  **Run Pytest**:
     ```bash
-    python3 -m pytest
+    PYTHONPATH=src python3 -m pytest
+    ```
+
+## Firewalld Integration
+
+Knocker supports optional integration with firewalld for OS-level firewall rule management. When enabled, Knocker will automatically:
+
+- Create a dedicated firewalld zone with high priority
+- Set up deny rules for monitored ports
+- Add allow rules for always-allowed IPs  
+- Create timed allow rules for successful knock requests
+- Automatically clean up expired rules
+
+### Setup
+
+1. **Install firewalld**:
+   ```bash
+   # RHEL/CentOS/Fedora
+   sudo dnf install firewalld
+   sudo systemctl enable --now firewalld
+   
+   # Ubuntu/Debian  
+   sudo apt install firewalld
+   sudo systemctl enable --now firewalld
+   ```
+
+2. **Enable in configuration**:
+   ```yaml
+   firewalld:
+     enabled: true
+     monitored_ports: [80, 443, 8080]
+   ```
+
+3. **For Docker deployments**: Use host networking or privileged mode with D-Bus socket mounted:
+   ```yaml
+   services:
+     knocker:
+       network_mode: "host"  # Recommended for firewalld
+       volumes:
+         - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+   ```
+
+For detailed setup instructions and troubleshooting, see [docs/FIREWALLD_INTEGRATION.md](docs/FIREWALLD_INTEGRATION.md).
+
+## Docker and Firewalld
+
+When using firewalld with Docker, be aware of how Docker's packet filtering interacts with firewalld. See the [Docker firewall documentation](https://docs.docker.com/engine/network/packet-filtering-firewalls/) for details.
+
+For Knocker with firewalld in Docker:
+- Use host networking for best compatibility
+- Ensure proper D-Bus access
+- Consider security implications of privileged containers
