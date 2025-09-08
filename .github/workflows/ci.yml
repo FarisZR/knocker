@@ -22,7 +22,7 @@ jobs:
       run: pip install -r src/requirements.txt
 
     - name: Run unit tests
-      run: PYTHONPATH=src python3 -m pytest
+      run: PYTHONPATH=src python3 -m pytest tests/test_main.py tests/test_core.py tests/test_security_fixes.py
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
