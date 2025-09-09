@@ -9,9 +9,9 @@ RUN groupadd --gid 1001 appuser && \
     useradd --create-home --uid 1001 --gid 1001 appuser
 
 # Copy requirements and install dependencies system-wide
-COPY src/requirements.txt .
+COPY src/requirements-base.txt .
 RUN apt-get update && apt-get install -y curl && \
-    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -r requirements-base.txt && \
     apt-get clean
 
 # Copy the rest of the application code

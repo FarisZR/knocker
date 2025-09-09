@@ -1,7 +1,7 @@
-fastapi
-uvicorn
-pyyaml
-pytest
-httpx
-PyGObject
-dbus-python
+# Base requirements for core functionality
+-r requirements-base.txt
+
+# Optional firewalld integration dependencies
+# Comment out or remove the following line if you don't need firewalld support
+# or if you're having Docker build issues
+# -r requirements-firewalld.txt

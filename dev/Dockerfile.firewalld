@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
     libcairo2-dev \
     libgirepository1.0-dev \
     pkg-config \
+    git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -25,8 +26,9 @@ RUN groupadd --gid 1001 appuser && \
     useradd --create-home --uid 1001 --gid 1001 appuser
 
 # Copy requirements and install Python dependencies
-COPY src/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY src/requirements-base.txt .
+COPY src/requirements-firewalld.txt .
+RUN pip install --no-cache-dir -r requirements-base.txt -r requirements-firewalld.txt
 
 # Copy the rest of the application code
 COPY src/ .

@@ -1,0 +1,4 @@
+# Firewalld integration dependencies
+# These require system packages to build: build-essential, libcairo2-dev, libgirepository1.0-dev, pkg-config
+PyGObject
+dbus-python

@@ -19,7 +19,7 @@ jobs:
         python-version: '3.11'
 
     - name: Install dependencies
-      run: pip install -r src/requirements.txt
+      run: pip install -r src/requirements-base.txt
 
     - name: Run unit tests
       run: PYTHONPATH=src python3 -m pytest
