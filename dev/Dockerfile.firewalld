@@ -26,9 +26,13 @@ RUN groupadd --gid 1001 appuser && \
     useradd --create-home --uid 1001 --gid 1001 appuser
 
 # Copy requirements and install Python dependencies
+# First install base requirements, then try firewalld dependencies
 COPY src/requirements-base.txt .
-COPY src/requirements-firewalld.txt .
-RUN pip install --no-cache-dir -r requirements-base.txt -r requirements-firewalld.txt
+RUN pip install --no-cache-dir -r requirements-base.txt
+
+# For firewalld dependencies, use system packages instead of pip to avoid build issues
+# The system packages are already installed above (python3-gi, python3-dbus)
+# Skip pip installation of firewalld requirements since we use system packages
 
 # Copy the rest of the application code
 COPY src/ .
