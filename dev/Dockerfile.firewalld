@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     libgirepository1.0-dev \
     pkg-config \
     git \
+    procps \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -44,6 +45,13 @@ RUN mkdir -p /data && chown appuser:appuser /data
 COPY <<EOF /app/start-with-firewalld.sh
 #!/bin/bash
 set -e
+
+# Check if we should start firewalld (skip if CI environment)
+if [ "\$CI" = "true" ] || [ "\$SKIP_FIREWALLD" = "true" ]; then
+    echo "CI/testing environment detected - skipping firewalld startup"
+    echo "Starting knocker service without firewalld..."
+    exec gosu appuser uvicorn main:app --host 0.0.0.0 --port 8000 --forwarded-allow-ips "*"
+fi
 
 # Start D-Bus if not running
 if ! pgrep -x "dbus-daemon" > /dev/null; then

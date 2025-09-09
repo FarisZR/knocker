@@ -27,14 +27,33 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Run docker compose stack
+    # Test base functionality (without firewalld)
+    - name: Run base docker compose stack
       run: docker compose -f dev/docker-compose.yml up -d --build
 
-    - name: Wait for services to be healthy
-      run: sleep 10 # Simple wait for services to start
+    - name: Wait for base services to be healthy
+      run: sleep 10
 
-    - name: Make integration test script executable
-      run: chmod +x dev/local_integration_tests.sh
+    - name: Make integration test scripts executable
+      run: chmod +x dev/local_integration_tests.sh dev/firewalld_integration_tests.sh
 
-    - name: Run integration tests
+    - name: Run base integration tests
       run: ./dev/local_integration_tests.sh
+
+    - name: Stop base docker compose stack
+      run: docker compose -f dev/docker-compose.yml down
+
+    # Test firewalld functionality
+    - name: Run firewalld docker compose stack
+      run: docker compose -f dev/docker-compose-firewalld.yml up -d --build
+      env:
+        CI: true
+
+    - name: Wait for firewalld services to be healthy
+      run: sleep 15 # Shorter wait since we skip firewalld startup in CI
+
+    - name: Run firewalld integration tests
+      run: ./dev/firewalld_integration_tests.sh
+
+    - name: Stop firewalld docker compose stack
+      run: docker compose -f dev/docker-compose-firewalld.yml down

@@ -15,9 +15,9 @@ services:
       - caddy_config:/config
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--watch"]
     depends_on:
-      - knocker-firewalld
+      - knocker
 
-  knocker-firewalld:
+  knocker:
     build:
       context: ..
       dockerfile: dev/Dockerfile.firewalld
@@ -27,6 +27,7 @@ services:
       - caddy_net
     environment:
       - KNOCKER_CONFIG_PATH=/app/knocker.yaml
+      - CI=${CI:-false}
     volumes:
       - ../knocker-firewalld.yaml:/app/knocker.yaml:ro
       - knocker_data:/data
