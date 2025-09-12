@@ -20,7 +20,7 @@ fail() {
 }
 
 # --- Configuration ---
-BASE_URL="http://localhost:8001"  # knocker-firewall instance
+BASE_URL="http://localhost:8000"  # knocker instance (host-exposed)
 KNOCK_URL="$BASE_URL/knock"
 HEALTH_URL="$BASE_URL/health"
 
@@ -187,7 +187,7 @@ main() {
     fi
     
     # Wait for knocker-firewall service to be ready
-    info "Waiting for knocker-firewall service..."
+    info "Waiting for knocker service..."
     retry_count=0
     max_retries=30
     retry_interval=2
@@ -202,7 +202,7 @@ main() {
     done
     echo
     
-    success "knocker-firewall service is ready!"
+    success "knocker service is ready!"
     
     # Run tests
     test_service_health

@@ -26,57 +26,24 @@ services:
       - caddy_net
     environment:
       - KNOCKER_CONFIG_PATH=/app/knocker.yaml
+      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
     volumes:
       - ../knocker.example.yaml:/app/knocker.yaml:ro
       - ../knocker-firewall.example.yaml:/app/knocker-firewall.yaml:ro
       - knocker_data:/data
+      - /var/run/dbus:/var/run/dbus:ro
+    ports:
+      - "8000:8000"
     # The command is in the Dockerfile, but we could override it here if needed.
     # The application will look for 'knocker.yaml' in its root directory.
 
-  # Firewalld container for testing firewall integration
-  # This runs firewalld in a privileged container to simulate host firewall
-  firewalld:
-    image: fedora:latest
-    privileged: true
-    restart: unless-stopped
-    networks:
-      - caddy_net
-    volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
-      - firewalld_config:/etc/firewalld
-    command: >
-      bash -c "
-        dnf install -y firewalld python3-firewall systemd &&
-        systemctl enable firewalld &&
-        exec /usr/sbin/init
-      "
-    healthcheck:
-      test: ["CMD", "firewall-cmd", "--state"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+  # Firewalld container removed — use host firewalld and host DBus socket.
+  # The knocker service mounts the host /var/run/dbus and sets DBUS_SYSTEM_BUS_ADDRESS
+  # so it can talk to the host's firewalld via the host DBus socket when running real integration tests.
 
-  # Knocker instance with firewall integration enabled for testing
-  knocker-firewall:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    privileged: true  # Required for firewall access
-    network_mode: host  # Required for firewall integration
-    environment:
-      - KNOCKER_CONFIG_PATH=/app/knocker-firewall.yaml
-      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
-    volumes:
-      - ../knocker-firewall.example.yaml:/app/knocker-firewall.yaml:ro
-      - knocker_firewall_data:/data
-      - /var/run/dbus:/var/run/dbus:ro
-      - /sys/fs/cgroup:/sys/fs/cgroup:ro
-    depends_on:
-      firewalld:
-        condition: service_healthy
-    ports:
-      - "8001:8000"  # Different port to avoid conflict
+  # knocker-firewall service removed — use host firewalld and expose DBus socket to the knocker container.
+  # To run real integration tests, start the knocker service (above) which now mounts /var/run/dbus
+  # and sets DBUS_SYSTEM_BUS_ADDRESS so it talks to the host firewalld via the host DBus socket.
 
 networks:
   caddy_net:
