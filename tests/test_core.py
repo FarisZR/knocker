@@ -1,6 +1,7 @@
 import pytest
 import time
 from src import core
+from unittest.mock import patch, Mock
 
 # --- Test IP/CIDR Validation ---
 
@@ -115,3 +116,48 @@ def test_is_valid_api_key(mock_settings):
 def test_is_invalid_api_key(mock_settings):
     """Tests that an invalid key is rejected."""
     assert core.is_valid_api_key("fake_key", mock_settings) == False
+
+# --- Test Firewall Integration ---
+
+@patch('src.core.firewall.add_ip_to_firewall')
+def test_add_ip_to_whitelist_calls_firewall(mock_firewall_add, mock_settings, tmp_path):
+    """Test that adding IP to whitelist also calls firewall integration."""
+    # Update settings to use temporary path
+    test_settings = mock_settings.copy()
+    test_settings['whitelist'] = {'storage_path': str(tmp_path / "test_whitelist.json")}
+    
+    expiry_time = int(time.time()) + 3600
+    core.add_ip_to_whitelist("192.168.1.100", expiry_time, test_settings)
+    
+    # Verify firewall function was called
+    mock_firewall_add.assert_called_once_with("192.168.1.100", expiry_time, test_settings)
+
+@patch('src.core.firewall.remove_ip_from_firewall')
+@patch('src.core.firewall.cleanup_expired_firewall_rules')
+def test_cleanup_expired_ips_calls_firewall(mock_firewall_cleanup, mock_firewall_remove, mock_settings, tmp_path):
+    """Test that cleanup expired IPs also calls firewall cleanup."""
+    # Update settings to use temporary path
+    test_settings = mock_settings.copy()
+    test_settings['whitelist'] = {'storage_path': str(tmp_path / "test_whitelist.json")}
+    
+    # Create a whitelist with expired and non-expired entries
+    now = int(time.time())
+    whitelist = {
+        "192.168.1.100": now - 100,  # Expired
+        "192.168.1.101": now + 3600,  # Not expired
+        "10.0.0.1": now - 50  # Also expired
+    }
+    
+    # Save the whitelist
+    core.save_whitelist(whitelist, test_settings)
+    
+    # Run cleanup
+    core.cleanup_expired_ips(test_settings)
+    
+    # Verify expired IPs were removed from firewall
+    assert mock_firewall_remove.call_count == 2
+    mock_firewall_remove.assert_any_call("192.168.1.100", test_settings)
+    mock_firewall_remove.assert_any_call("10.0.0.1", test_settings)
+    
+    # Verify firewall cleanup was called
+    mock_firewall_cleanup.assert_called_once_with(test_settings)

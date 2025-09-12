@@ -9,6 +9,19 @@ from fastapi.responses import JSONResponse
 import core
 import config
 
+# Import firewall module - handle import gracefully
+try:
+    from . import firewall
+except ImportError:
+    try:
+        import firewall
+    except ImportError:
+        # Firewall not available, create dummy
+        class DummyFirewall:
+            def initialize_firewall(self, *args, **kwargs):
+                return False
+        firewall = DummyFirewall()
+
 @lru_cache()
 def get_settings() -> Dict:
     """
@@ -23,10 +36,17 @@ def get_settings() -> Dict:
 async def lifespan(app: FastAPI):
     """
     Application lifespan manager.
-    On startup, it performs a cleanup of any expired IPs.
+    On startup, it performs a cleanup of any expired IPs and initializes firewall.
     """
     logging.info("Knocker service starting up...")
-    core.cleanup_expired_ips(get_settings())
+    settings = get_settings()
+    
+    # Initialize firewall integration
+    firewall.initialize_firewall(settings)
+    
+    # Cleanup expired IPs (this will also sync firewall rules)
+    core.cleanup_expired_ips(settings)
+    
     yield
     logging.info("Knocker service shutting down.")
 

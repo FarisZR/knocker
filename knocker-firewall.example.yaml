@@ -1,0 +1,54 @@
+# knocker-firewall.example.yaml
+# Example configuration with firewall integration enabled
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  trusted_proxies:
+    # Trust localhost and common Docker networks
+    - "127.0.0.1/32"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "10.0.0.0/8"
+
+cors:
+  allowed_origin: "*"
+
+security:
+  always_allowed_ips:
+    # Allow localhost and local networks
+    - "127.0.0.1/32"
+    - "192.168.0.0/16"
+    - "10.0.0.0/8"
+  excluded_paths:
+    - "/knock"
+    - "/health"
+  max_whitelist_entries: 10000
+
+whitelist:
+  storage_path: "/data/whitelist.json"
+
+# Firewall Integration - ENABLED for testing
+firewall:
+  enabled: true
+  monitored_ports:
+    - "80/tcp"
+    - "443/tcp"
+    - "22/tcp"
+    - "8080/tcp"
+
+api_keys:
+  - name: "admin-key-for-testing"
+    key: "TEST_ADMIN_KEY_12345"
+    max_ttl: 3600
+    allow_remote_whitelist: true
+
+  - name: "test-phone"
+    key: "TEST_PHONE_KEY_67890"
+    max_ttl: 1800
+    allow_remote_whitelist: false
+
+  - name: "guest-access"
+    key: "TEST_GUEST_KEY_ABCDE"
+    max_ttl: 300
+    allow_remote_whitelist: false

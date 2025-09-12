@@ -35,6 +35,18 @@ whitelist:
   # The docker-compose.yml file will mount a volume to this location.
   storage_path: "/data/whitelist.json"
 
+# Firewall Integration (Optional)
+# Uncomment and configure this section to enable firewalld integration
+# firewall:
+#   enabled: true
+#   monitored_ports:
+#     # List of ports that should be protected by firewall rules
+#     # Format: "port" or "port/protocol" (default protocol is tcp)
+#     - "80/tcp"
+#     - "443/tcp"
+#     - "22/tcp"
+#     - "8080"
+
 api_keys:
   - name: "admin-key-for-remote-whitelisting"
     key: "CHANGE_ME_SUPER_SECRET_ADMIN_KEY"

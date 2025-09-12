@@ -28,9 +28,55 @@ services:
       - KNOCKER_CONFIG_PATH=/app/knocker.yaml
     volumes:
       - ../knocker.example.yaml:/app/knocker.yaml:ro
+      - ../knocker-firewall.example.yaml:/app/knocker-firewall.yaml:ro
       - knocker_data:/data
     # The command is in the Dockerfile, but we could override it here if needed.
     # The application will look for 'knocker.yaml' in its root directory.
+
+  # Firewalld container for testing firewall integration
+  # This runs firewalld in a privileged container to simulate host firewall
+  firewalld:
+    image: fedora:latest
+    privileged: true
+    restart: unless-stopped
+    networks:
+      - caddy_net
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - firewalld_config:/etc/firewalld
+    command: >
+      bash -c "
+        dnf install -y firewalld python3-firewall systemd &&
+        systemctl enable firewalld &&
+        exec /usr/sbin/init
+      "
+    healthcheck:
+      test: ["CMD", "firewall-cmd", "--state"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Knocker instance with firewall integration enabled for testing
+  knocker-firewall:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    privileged: true  # Required for firewall access
+    network_mode: host  # Required for firewall integration
+    environment:
+      - KNOCKER_CONFIG_PATH=/app/knocker-firewall.yaml
+      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
+    volumes:
+      - ../knocker-firewall.example.yaml:/app/knocker-firewall.yaml:ro
+      - knocker_firewall_data:/data
+      - /var/run/dbus:/var/run/dbus:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    depends_on:
+      firewalld:
+        condition: service_healthy
+    ports:
+      - "8001:8000"  # Different port to avoid conflict
 
 networks:
   caddy_net:
@@ -49,3 +95,5 @@ volumes:
   caddy_data:
   caddy_config:
   knocker_data:
+  knocker_firewall_data:
+  firewalld_config:

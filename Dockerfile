@@ -8,11 +8,19 @@ WORKDIR /app
 RUN groupadd --gid 1001 appuser && \
     useradd --create-home --uid 1001 --gid 1001 appuser
 
+# Install system dependencies for firewalld integration
+# Note: python3-firewall is the D-Bus client library for firewalld
+RUN apt-get update && apt-get install -y \
+    curl \
+    python3-firewall \
+    python3-dbus \
+    dbus \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy requirements and install dependencies system-wide
 COPY src/requirements.txt .
-RUN apt-get update && apt-get install -y curl && \
-    pip install --no-cache-dir -r requirements.txt && \
-    apt-get clean
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
 COPY src/ .
@@ -25,7 +33,6 @@ USER appuser
 
 # Expose the port the app runs on
 EXPOSE 8000
-
 
 # Define the command to run the application
 # Uvicorn is run with --forwarded-allow-ips="*" to trust the X-Forwarded-For
