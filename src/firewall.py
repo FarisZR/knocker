@@ -161,32 +161,49 @@ def _zone_exists(zone_name: str) -> bool:
 
 def _create_knocker_zone(zone_name: str, monitored_ports: List[str], settings: Dict[str, Any]):
     """Create the KNOCKER firewalld zone with base configuration."""
-    # Create the zone
-    _fw.config().addZone(zone_name, {
-        'version': '1.0',
-        'short': 'Knocker Dynamic Access',
-        'description': 'Zone for knocker dynamic IP access rules',
-        'target': 'DROP',  # Default deny
-        'interfaces': [],
-        'sources': [],
-        'services': [],
-        'ports': [],
-        'protocols': [],
-        'masquerade': False,
-        'forward_ports': [],
-        'source_ports': [],
-        'icmp_blocks': [],
-        'rich_rules': []
-    })
-    
-    # Set highest priority (lower number = higher priority)
-    _fw.config().getZoneByName(zone_name).setPriority(-1)
+    try:
+        # Create the zone with basic configuration
+        zone_config = _fw.config().addZone2(zone_name, {
+            'version': '1.0',
+            'short': 'Knocker Dynamic Access',
+            'description': 'Zone for knocker dynamic IP access rules',
+            'target': 'DROP',  # Default deny
+            'interfaces': [],
+            'sources': [],
+            'services': [],
+            'ports': [],
+            'protocols': [],
+            'masquerade': False,
+            'forward_ports': [],
+            'source_ports': [],
+            'icmp_blocks': [],
+            'rich_rules': []
+        })
+        
+        # Set highest priority (lower number = higher priority)
+        zone_config.setPriority(-1)
+        
+    except Exception as e:
+        # Fallback: try simpler zone creation method
+        logging.warning(f"Advanced zone creation failed, trying simple method: {e}")
+        try:
+            _fw.config().addZone(zone_name)
+            # Get the zone and configure it
+            zone_obj = _fw.config().getZoneByName(zone_name)
+            zone_obj.setTarget('DROP')
+            zone_obj.setPriority(-1)
+        except Exception as e2:
+            logging.error(f"Failed to create zone with fallback method: {e2}")
+            raise
     
     # Add always allowed IPs to the zone
     always_allowed_ips = settings.get("security", {}).get("always_allowed_ips", [])
     for ip in always_allowed_ips:
         for port in monitored_ports:
-            _add_rich_rule_for_ip_port(zone_name, ip, port, None)  # No expiry for always allowed
+            try:
+                _add_rich_rule_for_ip_port(zone_name, ip, port, None)  # No expiry for always allowed
+            except Exception as e:
+                logging.warning(f"Failed to add always allowed rule for {ip}:{port}: {e}")
 
 def _add_rich_rule_for_ip_port(zone_name: str, ip_or_cidr: str, port: str, expiry_time: Optional[int]):
     """Add a rich rule to allow IP/CIDR access to a specific port."""
@@ -227,7 +244,11 @@ def _remove_rich_rule_for_ip_port(zone_name: str, ip_or_cidr: str, port: str):
 
 def _sync_firewall_rules_with_whitelist(settings: Dict[str, Any]):
     """Sync firewall rules with the current whitelist state."""
-    from . import core  # Import here to avoid circular imports
+    # Import here to avoid circular imports
+    try:
+        from . import core
+    except ImportError:
+        import core
     
     zone_name = get_knocker_zone_name()
     monitored_ports = get_monitored_ports(settings)

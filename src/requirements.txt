@@ -3,4 +3,3 @@ uvicorn
 pyyaml
 pytest
 httpx
-python3-firewall
