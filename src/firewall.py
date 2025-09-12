@@ -23,8 +23,71 @@ def _check_firewalld_availability() -> bool:
     
     try:
         # Try to import firewall.client from python3-firewall package
-        import firewall.client
-        _fw = firewall.client.FirewallClient()
+        try:
+            import firewall.client
+            _fw = firewall.client.FirewallClient()
+        except Exception:
+            # The local module `src/firewall.py` can shadow the system `firewall` package.
+            # Temporarily adjust sys.path to prefer site-packages and retry importing.
+            import importlib
+            import sys
+            import os
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+            original_sys_path = sys.path[:]
+            try:
+                sys.path = [p for p in sys.path if p and os.path.abspath(p) != project_root and os.path.abspath(p) != os.getcwd()]
+                _fw = importlib.import_module('firewall.client').FirewallClient()
+            finally:
+                sys.path = original_sys_path
+
+        # If python3-firewall is not installed, fall back to a small DBus-based shim
+        # that talks directly to the org.fedoraproject.FirewallD1 interface. This
+        # allows CI/local dbusmock tests to run without installing the full
+        # python3-firewall package.
+        if _fw is None:
+            try:
+                import dbus
+                from dbus import Interface
+
+                class _DBusFirewallClient:
+                    def __init__(self):
+                        # Connect to the system bus (dbusmock may provide a private system bus)
+                        self.bus = dbus.SystemBus()
+                        self.obj = self.bus.get_object('org.fedoraproject.FirewallD1', '/org/fedoraproject/FirewallD1')
+                        # Use the raw interface; method signatures are proxied by dbus-python
+                        self.iface = Interface(self.obj, dbus_interface='org.fedoraproject.FirewallD1')
+
+                    def getDefaultZone(self):
+                        return str(self.iface.getDefaultZone())
+
+                    def getZones(self):
+                        zones = self.iface.getZones()
+                        return [str(z) for z in zones]
+
+                    def addRichRule(self, zone, rule):
+                        return self.iface.addRichRule(zone, rule)
+
+                    def removeRichRule(self, zone, rule):
+                        return self.iface.removeRichRule(zone, rule)
+
+                    def getRichRules(self, zone):
+                        rules = self.iface.getRichRules(zone)
+                        return [str(r) for r in rules]
+
+                    def config(self):
+                        # Full config methods are not needed by the dbusmock test (the
+                        # test ensures the zone already exists). Provide a stub to raise
+                        # a clear error if used.
+                        raise NotImplementedError("config() is not implemented in DBus fallback")
+
+                _fw = _DBusFirewallClient()
+            except Exception:
+                # Leave _fw as None and continue to raise an informative error below.
+                _fw = None
+
+        if _fw is None:
+            raise ImportError("python3-firewall package not available and DBus fallback failed")
+
         _fw.getDefaultZone()  # Test connection
         _firewalld_available = True
         logging.info("Firewalld is available and accessible")

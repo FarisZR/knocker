@@ -288,3 +288,35 @@ The firewall integration is transparent to API users:
 4. **Backup Configuration**: Ensure firewall configuration is backed up
 5. **Test Thoroughly**: Always test firewall integration in a development environment first
 6. **Log Analysis**: Monitor logs for firewall-related errors or warnings
+
+## CI Mocking with python3-dbusmock
+
+CI systems (like GitHub Actions) do not permit privileged containers or system services such as firewalld on shared runners. To allow CI to validate the firewalld integration without requiring a real firewalld service, the project uses python-dbusmock to emulate the minimal D-Bus surface that the `src/firewall.py` module needs.
+
+How it works in CI:
+- The workflow installs the required system packages (python3-dbusmock, python3-dbus, python3-firewall, dbus) on the runner.
+- A small pytest integration test starts a python-dbusmock server on a private system bus and registers minimal methods used by the code:
+  - getDefaultZone()
+  - getZones()
+  - addRichRule(zone, rich_rule)
+  - removeRichRule(zone, rich_rule)
+  - getRichRules(zone)
+- The unit/integration test triggers the firewall code paths (initialize_firewall, add_ip_to_firewall) against the mock. The mock logs method calls to stdout, which the test asserts on to ensure the expected D-Bus calls were made.
+
+Running the CI-style mock locally:
+1. Install system dependencies (Debian/Ubuntu):
+   sudo apt-get update
+   sudo apt-get install -y python3-dbusmock python3-dbus python3-firewall dbus
+2. Run the specific pytest integration test:
+   PYTHONPATH=src python3 -m pytest tests/integration/test_firewalld_dbusmock.py -q
+
+Running real firewalld integration tests locally:
+- The repository still includes the Docker compose setup and the script `dev/firewall_integration_tests.sh` to run tests against a real firewalld instance inside a privileged container. These are intentionally gated behind a compose "firewalld" profile so CI will not start them by default.
+- To run the real-firewalld tests locally:
+  cd dev
+  docker compose --profile firewalld up -d --build
+  ./firewall_integration_tests.sh
+
+Notes:
+- The python-dbusmock-based test verifies that the application makes the correct D-Bus calls but does not exercise the host firewall. Use the dockerized real-firewalld test for end-to-end validation when you have a host or CI runner with the necessary privileges.
+- Keep both test modes to ensure CI coverage while retaining the option for full integration testing when needed.
