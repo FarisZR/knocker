@@ -14,6 +14,7 @@ This is ideal for homelab environments where you want to expose services to the 
 *   **Static IP/CIDR Whitelisting**: Always allow certain IP addresses or ranges to bypass the dynamic whitelist.
 *   **Path-Based Exclusion**: Exclude specific URL paths (like health checks or public APIs) from authentication entirely.
 *   **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
+*   **Firewall Integration**: Optional integration with firewalld to create timed firewall rules that automatically sync with the IP whitelist.
 *   **Secure by Default**: Built-in protection against IP spoofing via a trusted proxy mechanism.
 *   **Test-Driven Development**: A comprehensive test suite ensures code correctness and reliability.
 
@@ -90,6 +91,63 @@ The service is configured entirely through the `knocker.yaml` file.
           - "/api/v1/status"
           - "/metrics"
       ```
+
+## Firewall Integration (Optional)
+
+Knocker supports optional integration with firewalld to automatically create timed firewall rules that sync with the IP whitelist. When enabled, successful knock requests will create firewall rules that automatically expire based on the TTL.
+
+### Enabling Firewall Integration
+
+Add the following section to your `knocker.yaml`:
+
+```yaml
+firewall:
+  enabled: true
+  monitored_ports:
+    - "80/tcp"    # HTTP
+    - "443/tcp"   # HTTPS
+    - "22/tcp"    # SSH
+    - "8080"      # Custom port (defaults to tcp)
+```
+
+### Docker Setup for Firewall Integration
+
+The firewall integration requires special Docker configuration:
+
+```yaml
+services:
+  knocker-firewall:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    privileged: true              # Required for firewall access
+    network_mode: host           # Required for proper firewall integration
+    environment:
+      - KNOCKER_CONFIG_PATH=/app/knocker.yaml
+      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
+    volumes:
+      - ./knocker.yaml:/app/knocker.yaml:ro
+      - knocker_data:/data
+      - /var/run/dbus:/var/run/dbus:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    ports:
+      - "8000:8000"
+```
+
+### Host Requirements
+
+- firewalld service running
+- python3-firewall package installed
+- D-Bus system service running
+
+### How It Works
+
+1. **Zone Creation**: Creates a dedicated `knocker` firewalld zone with highest priority
+2. **Dynamic Rules**: Adds firewall rules for each successful knock request
+3. **Automatic Expiration**: Rules expire automatically based on the TTL
+4. **Startup Recovery**: Syncs firewall rules with whitelist state on service restart
+
+For detailed setup instructions, troubleshooting, and advanced configuration, see [Firewall Integration Documentation](docs/FIREWALL_INTEGRATION.md).
 
 ## Caddy Integration
 

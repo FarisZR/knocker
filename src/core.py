@@ -9,6 +9,26 @@ from typing import Dict, Any, Optional
 # Thread lock for whitelist operations
 _whitelist_lock = threading.Lock()
 
+# Import firewall module - handle import gracefully for testing
+try:
+    from . import firewall
+except ImportError:
+    # For tests and standalone usage
+    try:
+        import firewall
+    except ImportError:
+        # Firewall module not available, create a dummy module
+        class DummyFirewall:
+            def add_ip_to_firewall(self, *args, **kwargs):
+                return False
+            def remove_ip_from_firewall(self, *args, **kwargs):
+                return False
+            def cleanup_expired_firewall_rules(self, *args, **kwargs):
+                return False
+            def initialize_firewall(self, *args, **kwargs):
+                return False
+        firewall = DummyFirewall()
+
 # --- IP/CIDR Validation ---
 
 def is_valid_ip_or_cidr(address: str) -> bool:
@@ -203,17 +223,36 @@ def add_ip_to_whitelist(ip_or_cidr: str, expiry_time: int, settings: Dict[str, A
     whitelist = load_whitelist(settings)
     whitelist[ip_or_cidr] = expiry_time
     save_whitelist(whitelist, settings)
+    
+    # Add to firewall if enabled
+    firewall.add_ip_to_firewall(ip_or_cidr, expiry_time, settings)
 
 def cleanup_expired_ips(settings: Dict[str, Any]):
     """Removes expired entries from the whitelist file."""
     whitelist = load_whitelist(settings)
     now = int(time.time())
     
-    # Create a new dict with only the non-expired entries
-    fresh_whitelist = {entry: expiry for entry, expiry in whitelist.items() if expiry > now}
+    # Track IPs being removed for firewall cleanup
+    expired_ips = []
     
+    # Create a new dict with only the non-expired entries
+    fresh_whitelist = {}
+    for entry, expiry in whitelist.items():
+        if expiry > now:
+            fresh_whitelist[entry] = expiry
+        else:
+            expired_ips.append(entry)
+    
+    # Save the cleaned whitelist
     if len(fresh_whitelist) < len(whitelist):
         save_whitelist(fresh_whitelist, settings)
+        
+        # Remove expired IPs from firewall
+        for ip in expired_ips:
+            firewall.remove_ip_from_firewall(ip, settings)
+    
+    # Also perform firewall cleanup
+    firewall.cleanup_expired_firewall_rules(settings)
 
 # --- Permissions & Key Helpers ---
 

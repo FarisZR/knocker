@@ -18,11 +18,19 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Install dependencies
+    - name: Install Python dependencies
       run: pip install -r src/requirements.txt
 
+    - name: Install system packages for dbusmock
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-dbusmock python3-dbus python3-firewall dbus
+
     - name: Run unit tests
-      run: PYTHONPATH=src python3 -m pytest
+      run: PYTHONPATH=src python3 -m pytest -q
+
+    - name: Run python-dbusmock integration test
+      run: PYTHONPATH=src python3 -m pytest tests/test_firewall.py::test_firewalld_dbusmock -q
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -36,5 +44,7 @@ jobs:
     - name: Make integration test script executable
       run: chmod +x dev/local_integration_tests.sh
 
-    - name: Run integration tests
+    - name: Run integration tests (real firewalld - optional)
+      # The dev/docker-compose.yml gates privileged firewalld services behind the "firewalld" profile.
+      # CI will not enable that profile by default. Use these scripts locally to run real-firewalld tests.
       run: ./dev/local_integration_tests.sh
