@@ -13,6 +13,7 @@ This is ideal for homelab environments where you want to expose services to the 
 *   **Remote Whitelisting**: Grant specific admin keys permission to whitelist any IP or CIDR range, not just their own.
 *   **Static IP/CIDR Whitelisting**: Always allow certain IP addresses or ranges to bypass the dynamic whitelist.
 *   **Path-Based Exclusion**: Exclude specific URL paths (like health checks or public APIs) from authentication entirely.
+*   **Firewalld Integration**: Optional automatic firewall rule management with TTL-based expiration (see [Firewalld Integration Guide](./docs/FIREWALLD_INTEGRATION.md)).
 *   **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
 *   **Secure by Default**: Built-in protection against IP spoofing via a trusted proxy mechanism.
 *   **Test-Driven Development**: A comprehensive test suite ensures code correctness and reliability.
@@ -89,6 +90,19 @@ The service is configured entirely through the `knocker.yaml` file.
         excluded_paths:
           - "/api/v1/status"
           - "/metrics"
+      ```
+    *   `firewalld`: Optional firewalld integration for automatic firewall rule management. When enabled, successful knocks will create firewall rules with TTL-based expiration. **Requires container to run as root and have access to D-Bus.** See [Firewalld Integration Guide](./docs/FIREWALLD_INTEGRATION.md) for detailed configuration and deployment instructions.
+      ```yaml
+      security:
+        firewalld:
+          enabled: true
+          zone_name: "knocker"
+          monitored_ports:
+            - "22/tcp"
+            - "443/tcp"
+          state_storage_path: "/data/firewalld_state.json"
+          reconcile_interval_seconds: 30
+          cleanup_on_exit: true
       ```
 
 ## Caddy Integration

@@ -22,13 +22,21 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Run as root for firewalld integration
+    # This is required when firewalld.enabled=true in configuration
+    user: root
     networks:
       - caddy_net
     environment:
       - KNOCKER_CONFIG_PATH=/app/knocker.yaml
+    # Mount host dbus for firewalld communication and config/data volumes
     volumes:
+      - /var/run/dbus:/var/run/dbus:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
       - ../knocker.example.yaml:/app/knocker.yaml:ro
       - knocker_data:/data
+    # Privileged mode may be required for full firewalld functionality
+    privileged: true
     # The command is in the Dockerfile, but we could override it here if needed.
     # The application will look for 'knocker.yaml' in its root directory.
 
