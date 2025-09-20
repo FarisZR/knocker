@@ -41,7 +41,14 @@ security:
       - "22/tcp"
       - "443/tcp"
     # Optional: Restrict firewalld rules to specific source CIDRs (empty = allow all)
-    monitored_sources: []
+    # Supports both IPv4 and IPv6 networks
+    monitored_sources: 
+      # Example IPv4 and IPv6 restrictions:
+      # - "192.168.0.0/16"     # Private IPv4 networks
+      # - "10.0.0.0/8"         # Private IPv4 networks  
+      # - "2001:db8::/32"      # IPv6 documentation range
+      # - "fe80::/10"          # IPv6 link-local addresses
+      []
     # Path to store firewalld rule metadata for state persistence
     state_storage_path: "/data/firewalld_state.json"
     # Background reconciliation interval in seconds

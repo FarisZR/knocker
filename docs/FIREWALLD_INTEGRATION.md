@@ -352,3 +352,42 @@ security:
     cleanup_on_exit: true   # Auto-cleanup for dev
     reconcile_interval_seconds: 10  # Frequent cleanup
 ```
+
+### IPv6 Support
+
+The firewalld integration provides full IPv6 support alongside IPv4:
+
+```yaml
+security:
+  firewalld:
+    enabled: true
+    zone_name: "knocker-ipv6"
+    monitored_ports:
+      - "22/tcp"
+      - "443/tcp"
+    monitored_sources:
+      - "2001:db8::/32"      # IPv6 network range
+      - "fe80::/10"          # Link-local addresses
+      - "192.168.0.0/16"     # Mixed IPv4/IPv6 is supported
+```
+
+When knocking with IPv6 addresses or CIDR ranges, the system automatically detects the IP family and creates appropriate rich rules:
+
+```bash
+# IPv6 address knock
+curl -X POST -H "X-Api-Key: your-key" \
+  -H "X-Forwarded-For: 2001:db8::1" \
+  https://knock.example.com/knock
+
+# IPv6 CIDR range knock (admin key required)
+curl -X POST -H "X-Api-Key: admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"ip_address": "2001:db8::/64"}' \
+  https://knock.example.com/knock
+```
+
+This creates firewalld rules like:
+```
+rule family="ipv6" source address="2001:db8::1" port port="22" protocol="tcp" accept
+rule family="ipv6" source address="2001:db8::/64" port port="443" protocol="tcp" accept
+```

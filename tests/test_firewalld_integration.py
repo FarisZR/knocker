@@ -205,6 +205,27 @@ class TestFirewalldRuleManagement:
         # Should find IPv6 rich rules
         assert any('family="ipv6"' in ' '.join(args) for args in rich_rule_calls)
 
+    @patch('src.firewalld_integration.subprocess.run')
+    def test_add_rule_ipv6_cidr(self, mock_run, firewalld_settings, mock_subprocess_success):
+        """Test rule addition for IPv6 CIDR ranges."""
+        mock_run.side_effect = mock_subprocess_success
+        
+        with patch.object(FirewalldIntegration, '_start_reconciliation_thread'):
+            integration = FirewalldIntegration(firewalld_settings)
+        
+        with patch.object(integration, '_update_state_metadata'):
+            # Test IPv6 CIDR range
+            result = integration.add_allow_rule("2001:db8::/64", 300)
+        
+        assert result is True
+        
+        # Check that IPv6 family was used in rich rules for CIDR
+        call_args_list = [call.args[0] for call in mock_run.call_args_list]
+        rich_rule_calls = [args for args in call_args_list if "--add-rich-rule" in args]
+        
+        # Should find IPv6 rich rules with CIDR notation
+        assert any('family="ipv6"' in ' '.join(args) and '2001:db8::/64' in ' '.join(args) for args in rich_rule_calls)
+
     def test_add_rule_disabled_integration(self, firewalld_disabled_settings):
         """Test that rule addition is no-op when integration is disabled."""
         integration = FirewalldIntegration(firewalld_disabled_settings)
