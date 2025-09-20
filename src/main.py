@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, Response, status, Depends
 from fastapi.responses import JSONResponse
 import core
 import config
+import firewalld_integration
 
 @lru_cache()
 def get_settings() -> Dict:
@@ -23,12 +24,24 @@ def get_settings() -> Dict:
 async def lifespan(app: FastAPI):
     """
     Application lifespan manager.
-    On startup, it performs a cleanup of any expired IPs.
+    On startup, it performs a cleanup of any expired IPs and initializes firewalld.
     """
     logging.info("Knocker service starting up...")
-    core.cleanup_expired_ips(get_settings())
+    settings = get_settings()
+    core.cleanup_expired_ips(settings)
+    
+    # Initialize firewalld integration
+    try:
+        firewalld_integration.initialize_firewalld(settings)
+    except Exception as e:
+        logging.error(f"Failed to initialize firewalld integration: {e}")
+        # Continue without firewalld if initialization fails
+    
     yield
+    
     logging.info("Knocker service shutting down.")
+    # Clean up firewalld resources
+    firewalld_integration.cleanup_firewalld()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -165,6 +178,19 @@ async def knock(
 
     expiry_time = int(time.time()) + effective_ttl
     
+    # Try to add firewalld rule first (if enabled)
+    firewalld_success = firewalld_integration.add_firewalld_rule(ip_to_whitelist, effective_ttl)
+    
+    if not firewalld_success:
+        # Firewalld integration failed - return 500 without updating whitelist
+        logging.error(f"Failed to add firewalld rule for {ip_to_whitelist}. Requested by {client_ip}.")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": "Failed to apply firewall rules. Please try again later."},
+            headers={"Access-Control-Allow-Origin": allowed_origin}
+        )
+    
+    # Firewalld succeeded (or is disabled), now update whitelist
     core.add_ip_to_whitelist(ip_to_whitelist, expiry_time, settings)
     
     # Log with reduced information to prevent disclosure

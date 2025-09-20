@@ -28,6 +28,25 @@ security:
     - "/knock"
   # Maximum number of entries in the whitelist (default: 10000)
   max_whitelist_entries: 10000
+  
+  # Firewalld integration (optional)
+  firewalld:
+    # Enable firewalld integration
+    enabled: false
+    # Name of the firewalld zone to create and manage
+    zone_name: "knocker"
+    # List of ports to protect with firewalld rules
+    monitored_ports:
+      - "22/tcp"
+      - "443/tcp"
+    # Optional: Restrict firewalld rules to specific source CIDRs (empty = allow all)
+    monitored_sources: []
+    # Path to store firewalld rule metadata for state persistence
+    state_storage_path: "/data/firewalld_state.json"
+    # Background reconciliation interval in seconds
+    reconcile_interval_seconds: 30
+    # Remove zone and rules when service shuts down (useful for dev/testing)
+    cleanup_on_exit: true
 
 whitelist:
   # The path where the whitelist file will be stored.
