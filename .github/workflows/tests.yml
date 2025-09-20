@@ -1,9 +1,10 @@
-name: CI
+name: Run Tests
 
 on:
   pull_request:
     branches: [ "main" ]
   push:
+    branches: [ "main" ]
 
 jobs:
   test:
@@ -16,7 +17,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.13'
 
     - name: Install dependencies
       run: pip install -r src/requirements.txt
