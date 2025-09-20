@@ -16,6 +16,7 @@ This is ideal for homelab environments where you want to expose services to the 
 *   **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
 *   **Secure by Default**: Built-in protection against IP spoofing via a trusted proxy mechanism.
 *   **Test-Driven Development**: A comprehensive test suite ensures code correctness and reliability.
+*   **Firewalld Integration**: Advanced firewall control with timed rules that automatically expire based on TTL. Creates dynamic firewall rules using firewalld rich rules for enhanced security. (Optional, requires root container access)
 
 ## CI/CD
 
@@ -30,17 +31,20 @@ This project is designed to be deployed as a set of Docker containers using the 
 
 For a formal API specification and a summary of the architectural choices, please see:
 
-*   [**API Specification**](./API_SPEC.md)
-*   [**Design Decisions**](./DESIGN_DECISIONS.md)
+*   [**API Specification**](./docs/API_SPEC.md)
+*   [**Design Decisions**](./docs/DESIGN_DECISIONS.md)  
+*   [**Firewalld Integration**](./docs/FIREWALLD_INTEGRATION.md) - Advanced firewall control with timed rules
 
 ### 1. Prerequisites
     *   Docker and Docker Compose installed.
     *   A public-facing server to run the containers.
+    *   (Optional) Firewalld installed and running on the host for advanced firewall integration.
 
 2.  **Configuration**:
     *   Rename `knocker.example.yaml` to `knocker.yaml`.
     *   **Crucially, change the default API keys** in `knocker.yaml` to your own secure, random strings.
     *   Review the `trusted_proxies` list in `knocker.yaml`. The defaults are suitable for most Docker setups, but you should verify they match your Docker network's subnets if you have a custom configuration.
+    *   (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
     *   Create a `Caddyfile` in the `knocker` directory. See the "Caddy Integration" section below for examples.
 
 3.  **Update `docker-compose.yml`**:
@@ -90,6 +94,14 @@ The service is configured entirely through the `knocker.yaml` file.
           - "/api/v1/status"
           - "/metrics"
       ```
+
+*   **`firewalld`** (Optional):
+    *   `enabled`: Set to `true` to enable firewalld integration for advanced firewall control
+    *   `zone_name`: Name of the firewalld zone to create (default: "knocker")
+    *   `zone_priority`: Zone priority, higher numbers have more priority (default: 100)
+    *   `monitored_ports`: List of ports to protect with firewall rules
+    *   `monitored_ips`: IP ranges the firewalld zone will apply to
+    *   **Note**: Requires container to run as root with system dbus access. See [Firewalld Integration](docs/FIREWALLD_INTEGRATION.md) for detailed setup.
 
 ## Caddy Integration
 

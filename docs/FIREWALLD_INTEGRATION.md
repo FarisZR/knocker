@@ -1,0 +1,341 @@
+# Firewalld Integration
+
+Knocker provides advanced firewall integration through firewalld, allowing for dynamic, time-based firewall rule management. This feature creates timed rules that automatically expire based on the TTL specified in knock requests.
+
+## Overview
+
+The firewalld integration works by:
+
+1. **Creating a dedicated firewalld zone** with highest priority and DROP target by default
+2. **Adding rich rules dynamically** for whitelisted IPs with automatic expiration
+3. **Recovering missing rules on startup** by comparing whitelist.json with active firewalld rules
+4. **Providing comprehensive error handling** with detailed logging and HTTP 500 responses on failures
+
+## Configuration
+
+Add the following section to your `knocker.yaml` configuration file:
+
+```yaml
+firewalld:
+  enabled: true  # Set to true to enable firewalld integration
+  zone_name: "knocker"  # Name of the firewalld zone to create
+  zone_priority: 100  # Zone priority (higher = more priority)
+  monitored_ports:
+    # Ports that will be protected by knocker firewall rules
+    # Only whitelisted IPs will be able to access these ports
+    - port: 80
+      protocol: tcp
+    - port: 443
+      protocol: tcp
+    - port: 22
+      protocol: tcp
+  monitored_ips:
+    # IP ranges that the firewalld zone will apply to
+    # Use 0.0.0.0/0 for all IPv4, ::/0 for all IPv6
+    - "0.0.0.0/0"
+    - "::/0"
+```
+
+### Configuration Options
+
+- **`enabled`**: Boolean flag to enable/disable firewalld integration
+- **`zone_name`**: Name of the firewalld zone to create (default: "knocker")
+- **`zone_priority`**: Priority of the zone (higher numbers = higher priority, default: 100)
+- **`monitored_ports`**: List of port/protocol combinations to protect
+- **`monitored_ips`**: List of IP ranges the zone will apply to
+
+## Docker Configuration
+
+When firewalld integration is enabled, the knocker container **must run as root** to access the system dbus.
+
+### Required Docker Configuration
+
+1. **Run as root user**:
+   ```yaml
+   services:
+     knocker:
+       user: "0:0"  # Run as root
+   ```
+
+2. **Mount system dbus**:
+   ```yaml
+   services:
+     knocker:
+       volumes:
+         - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+   ```
+
+3. **Add network capabilities**:
+   ```yaml
+   services:
+     knocker:
+       cap_add:
+         - NET_ADMIN
+   ```
+
+### Complete Docker Compose Example
+
+```yaml
+version: '3.8'
+
+services:
+  knocker:
+    image: your-knocker-image
+    user: "0:0"  # Required for firewalld access
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./knocker.yaml:/app/knocker.yaml:ro
+      - knocker_data:/data
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+    environment:
+      - KNOCKER_CONFIG_PATH=/app/knocker.yaml
+    networks:
+      - app_network
+
+volumes:
+  knocker_data:
+
+networks:
+  app_network:
+```
+
+## How It Works
+
+### Zone Creation
+
+On startup, knocker creates a firewalld zone with the following properties:
+
+- **Name**: Configurable (default: "knocker")
+- **Priority**: Configurable (default: 100, higher = more priority)
+- **Target**: DROP (blocks all traffic by default)
+- **Sources**: Configured IP ranges from `monitored_ips`
+
+### Dynamic Rule Creation
+
+When a successful knock request is made:
+
+1. **Firewalld rules are added first** using rich rules with timeout
+2. **Only after firewalld success** is `whitelist.json` updated
+3. **On firewalld failure**, the request returns HTTP 500 and `whitelist.json` is not modified
+
+Example rich rule created:
+```
+rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="80" accept
+```
+
+### Rule Expiration
+
+Rules automatically expire based on:
+
+- **TTL from knock request** (if specified and within API key limits)
+- **API key max_ttl** (if no TTL specified or TTL exceeds limit)
+- **Firewalld timeout mechanism** handles automatic rule removal
+
+### Startup Recovery
+
+On container startup, knocker:
+
+1. **Loads existing whitelist** from `whitelist.json`
+2. **Queries active firewalld rules** in the knocker zone
+3. **Compares and identifies missing rules** for non-expired whitelist entries
+4. **Restores missing rules** with remaining TTL
+
+This ensures rules are preserved across:
+- Container restarts
+- Firewalld daemon restarts
+- System reboots
+
+## Security Considerations
+
+### Running as Root
+
+The firewalld integration requires the container to run as root for dbus system access. This introduces security considerations:
+
+**Risks:**
+- Increased attack surface if container is compromised
+- Potential for privilege escalation
+- Access to host system dbus
+
+**Mitigations:**
+1. **Enable firewalld only when necessary**
+2. **Use read-only filesystem** where possible
+3. **Limit container capabilities** to only what's needed
+4. **Monitor container activity** for suspicious behavior
+5. **Keep firewalld and container updated**
+6. **Use network segmentation** to limit blast radius
+
+### Firewall Priority
+
+The knocker zone is created with high priority to ensure it takes precedence over other firewalld zones. Verify this doesn't conflict with your security policies.
+
+### Input Validation
+
+All IP addresses and ports are validated before being passed to firewall-cmd. However, always ensure your `monitored_ips` configuration is secure.
+
+## Error Handling
+
+### Firewalld Failures
+
+If firewalld operations fail:
+
+1. **HTTP 500 response** is returned to the client
+2. **Detailed error logged** with full context
+3. **whitelist.json is NOT updated** to maintain consistency
+4. **Subsequent requests can retry** the operation
+
+### Common Issues and Solutions
+
+**Issue**: Container cannot access firewalld
+```
+ERROR: Failed to setup firewalld zone - firewalld integration may not work properly
+```
+**Solution**: Ensure system dbus is mounted and container runs as root
+
+**Issue**: Zone creation fails
+```
+ERROR: Failed to create zone knocker: ZONE_ALREADY_EXISTS
+```
+**Solution**: This is normal on restart - the zone already exists
+
+**Issue**: Rich rule creation fails
+```
+ERROR: Failed to add firewalld rule for 192.168.1.100:80/tcp: INVALID_RULE
+```
+**Solution**: Check IP address format and firewalld configuration
+
+## Monitoring and Logging
+
+### Log Messages
+
+Firewalld integration produces detailed logs:
+
+```
+INFO: Firewalld integration is enabled
+INFO: Firewalld zone setup completed successfully
+INFO: Added firewalld rule for 192.168.1.100:80/tcp
+ERROR: Failed to add firewalld rules for 192.168.1.100. Request from 10.0.0.1 rejected.
+```
+
+### Monitoring Rules
+
+Query active rules:
+```bash
+# List all zones
+firewall-cmd --list-all-zones
+
+# List knocker zone rules
+firewall-cmd --zone=knocker --list-rich-rules
+
+# Monitor rule changes
+journalctl -u firewalld -f
+```
+
+### Health Checks
+
+The `/health` endpoint can be used to verify the service is running, but it doesn't specifically check firewalld status. Consider adding monitoring for:
+
+- Firewalld daemon status
+- Knocker zone existence
+- Rule count consistency
+
+## Testing
+
+### Unit Tests
+
+Run the comprehensive firewalld test suite:
+
+```bash
+PYTHONPATH=src python3 -m pytest tests/test_firewalld.py -v
+```
+
+### Integration Tests
+
+Test with real firewalld daemon:
+
+```bash
+# Start test environment
+cd dev/
+./firewalld_integration_test.sh
+```
+
+### Manual Testing
+
+1. **Enable firewalld integration** in configuration
+2. **Start knocker with proper permissions**
+3. **Perform knock request**
+4. **Verify rules created**:
+   ```bash
+   firewall-cmd --zone=knocker --list-rich-rules
+   ```
+5. **Wait for expiration and verify cleanup**
+
+## Troubleshooting
+
+### Debug Mode
+
+Enable debug logging in your configuration:
+
+```yaml
+logging:
+  level: DEBUG
+```
+
+### Common Commands
+
+```bash
+# Check firewalld status
+systemctl status firewalld
+
+# List all zones
+firewall-cmd --list-all-zones
+
+# Check knocker zone
+firewall-cmd --zone=knocker --list-all
+
+# Remove knocker zone (if needed)
+firewall-cmd --permanent --delete-zone=knocker
+firewall-cmd --reload
+
+# Check dbus permissions
+docker exec knocker-container firewall-cmd --state
+```
+
+### Performance Considerations
+
+- **Rule creation**: Each knock creates N rules (where N = number of monitored ports)
+- **Rule expiration**: Handled by firewalld's timeout mechanism
+- **Startup recovery**: May take longer with many whitelist entries
+- **Memory usage**: Proportional to number of active rules
+
+## Best Practices
+
+1. **Limit monitored ports** to only what's necessary
+2. **Use appropriate TTL values** to balance security and usability
+3. **Monitor firewalld logs** for anomalies
+4. **Test backup/restore procedures** with firewalld integration
+5. **Document firewall changes** for compliance
+6. **Use network monitoring** to verify rule effectiveness
+
+## Migration Guide
+
+### Enabling on Existing Installation
+
+1. **Update configuration** to include firewalld section
+2. **Modify docker-compose.yml** for root access and dbus mount
+3. **Restart containers** with new configuration
+4. **Verify zone creation** and rule functionality
+5. **Test knock operations** thoroughly
+
+### Disabling Firewalld Integration
+
+1. **Set `enabled: false`** in configuration
+2. **Restart knocker** service
+3. **Optionally remove knocker zone**:
+   ```bash
+   firewall-cmd --permanent --delete-zone=knocker
+   firewall-cmd --reload
+   ```
+4. **Revert docker configuration** to non-root if desired
+
+The firewalld integration is designed to be non-destructive and can be safely enabled/disabled as needed.
