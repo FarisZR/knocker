@@ -5,10 +5,11 @@ import time
 import dbus
 import dbusmock
 import pytest
+import logging
 
-from src import firewall
+from src import fw_integration as firewall
 
-def test_firewalld_dbusmock():
+def test_firewalld_dbusmock(caplog):
     """
     CI-friendly integration test that uses python-dbusmock to emulate the
     minimal firewalld D-Bus surface used by src/firewall.py.
@@ -60,6 +61,18 @@ def test_firewalld_dbusmock():
         # Ensure firewall module will reconnect to the (mocked) system bus
         firewall._firewalld_available = None
         firewall._fw = None
+
+        # Capture preflight log and assert it contains client_path
+        caplog.set_level(logging.INFO)
+        firewall.firewall_preflight(settings)
+        # Ensure preflight emitted the structured log line
+        preflight_found = any("FIREWALL_PRECHECK" in rec.getMessage() for rec in caplog.records)
+        assert preflight_found, "Expected FIREWALL_PRECHECK log line in preflight"
+
+        # Also check status metadata includes client_path
+        status = firewall.get_firewall_status()
+        assert "client_path" in status
+        assert isinstance(status["client_path"], str)
 
         # Initialize firewall -> should succeed because mock reports 'knocker' zone exists
         assert firewall.initialize_firewall(settings) is True

@@ -1,385 +1,46 @@
 """
-Firewalld integration module for knocker.
+Deprecated compatibility module.
 
-This module provides functionality to create timed firewall rules that sync with
-the IP whitelist. It uses firewalld's D-Bus interface via python3-firewall bindings.
+This file previously acted as a compatibility shim. It now re-exports the
+public API from the renamed compatibility module `firewall_compat` using an
+absolute import to avoid executing package-relative imports when this file
+is loaded as a top-level module (which previously caused "attempted relative
+import with no known parent package" errors during import probing).
+
+Avoid keeping a top-level module named `firewall` in the project long-term:
+it shadows the system `firewall` package and prevents importing
+`firewall.client`. This shim exists only for temporary backwards
+compatibility and should be removed once callers migrate to `src.fw_integration`.
 """
 
-import logging
-import time
-import ipaddress
-from typing import Dict, List, Optional, Set, Any
-
-# Global flag to track if firewalld is available
-_firewalld_available = None
-_fw = None
-
-def _check_firewalld_availability() -> bool:
-    """Check if firewalld is available and can be used."""
-    global _firewalld_available, _fw
-    
-    if _firewalld_available is not None:
-        return _firewalld_available
-    
-    try:
-        # Always start clean for detection logic
-        global _fw
-        _fw = None
-
-        # First attempt: python3-firewall standard import
-        try:
-            import firewall.client  # type: ignore
-            _fw = firewall.client.FirewallClient()  # type: ignore[attr-defined]
-        except Exception:
-            # Second attempt: adjust sys.path to avoid this project shadowing system package
-            try:
-                import importlib, sys, os
-                project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-                original_sys_path = sys.path[:]
-                try:
-                    sys.path = [
-                        p for p in sys.path
-                        if p
-                        and os.path.abspath(p) != project_root
-                        and os.path.abspath(p) != os.getcwd()
-                    ]
-                    try:
-                        _fw = importlib.import_module('firewall.client').FirewallClient()
-                    except Exception:
-                        _fw = None
-                finally:
-                    sys.path = original_sys_path
-            except Exception:
-                _fw = None
-
-        # Fallback: DBus lightweight client (works with dbusmock in CI)
-        if _fw is None:
-            try:
-                import dbus
-                from dbus import Interface
-
-                class _DBusFirewallClient:
-                    def __init__(self):
-                        self.bus = dbus.SystemBus()
-                        self.obj = self.bus.get_object(
-                            'org.fedoraproject.FirewallD1',
-                            '/org/fedoraproject/FirewallD1'
-                        )
-                        self.iface = Interface(
-                            self.obj,
-                            dbus_interface='org.fedoraproject.FirewallD1'
-                        )
-
-                    def getDefaultZone(self):
-                        return str(self.iface.getDefaultZone())
-
-                    def getZones(self):
-                        zones = self.iface.getZones()
-                        return [str(z) for z in zones]
-
-                    def addRichRule(self, zone, rule):
-                        return self.iface.addRichRule(zone, rule)
-
-                    def removeRichRule(self, zone, rule):
-                        return self.iface.removeRichRule(zone, rule)
-
-                    def getRichRules(self, zone):
-                        rules = self.iface.getRichRules(zone)
-                        return [str(r) for r in rules]
-
-                    def config(self):
-                        raise NotImplementedError(
-                            "config() is not implemented in DBus fallback"
-                        )
-
-                _fw = _DBusFirewallClient()
-            except Exception as dbus_err:
-                logging.debug(f"DBus fallback initialization failed: {dbus_err}")
-                _fw = None
-
-        if _fw is None:
-            raise ImportError(
-                "firewalld client not available (python3-firewall import + dbus fallback failed)"
-            )
-
-        # Smoke test connection
-        _fw.getDefaultZone()
-        _firewalld_available = True
-        logging.info("Firewalld is available and accessible")
-        return True
-    except ImportError as e:
-        _firewalld_available = False
-        logging.warning(f"Firewalld client is not available: {e}")
+# Use absolute import to avoid relative import execution when this file is
+# loaded as a top-level module during import probes.
+try:
+    # This will import the sibling module file /app/src/firewall_compat.py
+    from firewall_compat import (  # type: ignore
+        initialize_firewall,
+        add_ip_to_firewall,
+        remove_ip_from_firewall,
+        cleanup_expired_firewall_rules,
+        is_firewalld_enabled,
+        get_firewall_status,
+        firewall_preflight,
+    )
+except Exception:
+    # Fail softly: do not perform package-relative operations here that could
+    # raise during import probing. Provide minimal fallbacks so importing
+    # 'firewall' doesn't crash the runtime import machinery.
+    def initialize_firewall(*args, **kwargs):
         return False
-    except Exception as e:
-        _firewalld_available = False
-        logging.warning(f"Firewalld is not available: {e}")
+    def add_ip_to_firewall(*args, **kwargs):
         return False
-
-def is_firewalld_enabled(settings: Dict[str, Any]) -> bool:
-    """Check if firewall integration is enabled in configuration."""
-    firewall_config = settings.get("firewall", {})
-    return firewall_config.get("enabled", False)
-
-def get_monitored_ports(settings: Dict[str, Any]) -> List[str]:
-    """Get the list of monitored ports from configuration."""
-    firewall_config = settings.get("firewall", {})
-    return firewall_config.get("monitored_ports", [])
-
-def get_knocker_zone_name() -> str:
-    """Get the name of the KNOCKER firewalld zone."""
-    return "knocker"
-
-def initialize_firewall(settings: Dict[str, Any]) -> bool:
-    """
-    Initialize firewall integration.
-    
-    Creates the KNOCKER zone if it doesn't exist and sets up base rules.
-    Returns True if successful, False otherwise.
-    """
-    if not is_firewalld_enabled(settings):
-        logging.info("Firewall integration is disabled")
+    def remove_ip_from_firewall(*args, **kwargs):
         return False
-        
-    if not _check_firewalld_availability():
-        logging.error("Cannot initialize firewall: firewalld is not available")
+    def cleanup_expired_firewall_rules(*args, **kwargs):
         return False
-    
-    try:
-        zone_name = get_knocker_zone_name()
-        monitored_ports = get_monitored_ports(settings)
-        
-        # Create KNOCKER zone if it doesn't exist
-        if not _zone_exists(zone_name):
-            _create_knocker_zone(zone_name, monitored_ports, settings)
-            logging.info(f"Created firewall zone '{zone_name}'")
-        else:
-            logging.info(f"Firewall zone '{zone_name}' already exists")
-            
-        # Sync existing rules with whitelist
-        _sync_firewall_rules_with_whitelist(settings)
-        
-        return True
-        
-    except Exception as e:
-        logging.error(f"Failed to initialize firewall: {e}")
+    def is_firewalld_enabled(*args, **kwargs):
         return False
-
-def add_ip_to_firewall(ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]) -> bool:
-    """
-    Add an IP or CIDR to the firewall allow rules.
-    
-    Returns True if successful, False otherwise.
-    """
-    if not is_firewalld_enabled(settings) or not _check_firewalld_availability():
-        return False
-        
-    try:
-        zone_name = get_knocker_zone_name()
-        monitored_ports = get_monitored_ports(settings)
-        
-        for port in monitored_ports:
-            _add_rich_rule_for_ip_port(zone_name, ip_or_cidr, port, expiry_time)
-            
-        logging.info(f"Added firewall rules for {ip_or_cidr} until {expiry_time}")
-        return True
-        
-    except Exception as e:
-        logging.error(f"Failed to add firewall rules for {ip_or_cidr}: {e}")
-        return False
-
-def remove_ip_from_firewall(ip_or_cidr: str, settings: Dict[str, Any]) -> bool:
-    """
-    Remove an IP or CIDR from the firewall allow rules.
-    
-    Returns True if successful, False otherwise.
-    """
-    if not is_firewalld_enabled(settings) or not _check_firewalld_availability():
-        return False
-        
-    try:
-        zone_name = get_knocker_zone_name()
-        monitored_ports = get_monitored_ports(settings)
-        
-        for port in monitored_ports:
-            _remove_rich_rule_for_ip_port(zone_name, ip_or_cidr, port)
-            
-        logging.info(f"Removed firewall rules for {ip_or_cidr}")
-        return True
-        
-    except Exception as e:
-        logging.error(f"Failed to remove firewall rules for {ip_or_cidr}: {e}")
-        return False
-
-def cleanup_expired_firewall_rules(settings: Dict[str, Any]) -> bool:
-    """
-    Remove expired firewall rules and sync with current whitelist.
-    
-    Returns True if successful, False otherwise.
-    """
-    if not is_firewalld_enabled(settings) or not _check_firewalld_availability():
-        return False
-        
-    try:
-        _sync_firewall_rules_with_whitelist(settings)
-        return True
-    except Exception as e:
-        logging.error(f"Failed to cleanup expired firewall rules: {e}")
-        return False
-
-# Private helper functions
-
-def _zone_exists(zone_name: str) -> bool:
-    """Check if a firewalld zone exists."""
-    try:
-        zones = _fw.getZones()
-        return zone_name in zones
-    except Exception:
-        return False
-
-def _create_knocker_zone(zone_name: str, monitored_ports: List[str], settings: Dict[str, Any]):
-    """Create the KNOCKER firewalld zone with base configuration."""
-    try:
-        # Create the zone with basic configuration
-        zone_config = _fw.config().addZone2(zone_name, {
-            'version': '1.0',
-            'short': 'Knocker Dynamic Access',
-            'description': 'Zone for knocker dynamic IP access rules',
-            'target': 'DROP',  # Default deny
-            'interfaces': [],
-            'sources': [],
-            'services': [],
-            'ports': [],
-            'protocols': [],
-            'masquerade': False,
-            'forward_ports': [],
-            'source_ports': [],
-            'icmp_blocks': [],
-            'rich_rules': []
-        })
-        
-        # Set highest priority (lower number = higher priority)
-        zone_config.setPriority(-1)
-        
-    except Exception as e:
-        # Fallback: try simpler zone creation method
-        logging.warning(f"Advanced zone creation failed, trying simple method: {e}")
-        try:
-            _fw.config().addZone(zone_name)
-            # Get the zone and configure it
-            zone_obj = _fw.config().getZoneByName(zone_name)
-            zone_obj.setTarget('DROP')
-            zone_obj.setPriority(-1)
-        except Exception as e2:
-            logging.error(f"Failed to create zone with fallback method: {e2}")
-            raise
-    
-    # Add always allowed IPs to the zone
-    always_allowed_ips = settings.get("security", {}).get("always_allowed_ips", [])
-    for ip in always_allowed_ips:
-        for port in monitored_ports:
-            try:
-                _add_rich_rule_for_ip_port(zone_name, ip, port, None)  # No expiry for always allowed
-            except Exception as e:
-                logging.warning(f"Failed to add always allowed rule for {ip}:{port}: {e}")
-
-def _add_rich_rule_for_ip_port(zone_name: str, ip_or_cidr: str, port: str, expiry_time: Optional[int]):
-    """Add a rich rule to allow IP/CIDR access to a specific port."""
-    # Create rich rule syntax: rule family="ipv4" source address="x.x.x.x" port port="80" protocol="tcp" accept
-    family = "ipv6" if ":" in ip_or_cidr else "ipv4"
-    
-    # Parse port specification (e.g., "80/tcp", "443", etc.)
-    if "/" in port:
-        port_num, protocol = port.split("/", 1)
-    else:
-        port_num, protocol = port, "tcp"
-    
-    rich_rule = f'rule family="{family}" source address="{ip_or_cidr}" port port="{port_num}" protocol="{protocol}" accept'
-    
-    # Add rule to runtime (immediate effect)
-    _fw.addRichRule(zone_name, rich_rule)
-    
-    logging.debug(f"Added rich rule to zone {zone_name}: {rich_rule}")
-
-def _remove_rich_rule_for_ip_port(zone_name: str, ip_or_cidr: str, port: str):
-    """Remove a rich rule for IP/CIDR access to a specific port."""
-    family = "ipv6" if ":" in ip_or_cidr else "ipv4"
-    
-    if "/" in port:
-        port_num, protocol = port.split("/", 1)
-    else:
-        port_num, protocol = port, "tcp"
-    
-    rich_rule = f'rule family="{family}" source address="{ip_or_cidr}" port port="{port_num}" protocol="{protocol}" accept'
-    
-    try:
-        # Remove rule from runtime
-        _fw.removeRichRule(zone_name, rich_rule)
-        logging.debug(f"Removed rich rule from zone {zone_name}: {rich_rule}")
-    except Exception as e:
-        # Rule might not exist, which is OK
-        logging.debug(f"Could not remove rich rule (may not exist): {e}")
-
-def _sync_firewall_rules_with_whitelist(settings: Dict[str, Any]):
-    """Sync firewall rules with the current whitelist state."""
-    # Import here to avoid circular imports
-    try:
-        from . import core
-    except ImportError:
-        import core
-    
-    zone_name = get_knocker_zone_name()
-    monitored_ports = get_monitored_ports(settings)
-    
-    # Get current whitelist
-    whitelist = core.load_whitelist(settings)
-    now = int(time.time())
-    
-    # Get currently active IPs from whitelist
-    active_ips = set()
-    for ip, expiry in whitelist.items():
-        if expiry > now:
-            active_ips.add(ip)
-    
-    # Add always allowed IPs
-    always_allowed_ips = settings.get("security", {}).get("always_allowed_ips", [])
-    for ip in always_allowed_ips:
-        active_ips.add(ip)
-    
-    # Get existing firewall rules
-    existing_rules = _get_existing_firewall_rules(zone_name, monitored_ports)
-    
-    # Add missing rules
-    for ip in active_ips:
-        if ip not in existing_rules:
-            for port in monitored_ports:
-                _add_rich_rule_for_ip_port(zone_name, ip, port, None)
-    
-    # Remove orphaned rules (IPs that are in firewall but not in active whitelist)
-    for ip in existing_rules:
-        if ip not in active_ips:
-            for port in monitored_ports:
-                _remove_rich_rule_for_ip_port(zone_name, ip, port)
-
-def _get_existing_firewall_rules(zone_name: str, monitored_ports: List[str]) -> Set[str]:
-    """Get the set of IP addresses that currently have firewall rules."""
-    try:
-        rich_rules = _fw.getRichRules(zone_name)
-        active_ips = set()
-        
-        for rule in rich_rules:
-            # Parse rich rule to extract IP address
-            # Example: rule family="ipv4" source address="192.168.1.1" port port="80" protocol="tcp" accept
-            if 'source address=' in rule and ' accept' in rule:
-                # Extract IP address from rule
-                start = rule.find('source address="') + len('source address="')
-                end = rule.find('"', start)
-                if start > 0 and end > start:
-                    ip = rule[start:end]
-                    active_ips.add(ip)
-        
-        return active_ips
-        
-    except Exception as e:
-        logging.error(f"Failed to get existing firewall rules: {e}")
-        return set()
+    def get_firewall_status(*args, **kwargs):
+        return {"available": False, "reason": "SHIM_IMPORT_FAILED", "client_path": ""}
+    def firewall_preflight(*args, **kwargs):
+        return

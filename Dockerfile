@@ -22,8 +22,13 @@ RUN apt-get update && apt-get install -y \
 COPY src/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code
-COPY src/ .
+# Copy the application code into /app/src to avoid creating top-level modules
+# that could shadow system packages (e.g. a top-level 'firewall' module).
+COPY src/ src/
+
+# Ensure Python loads from /app (so package 'src' is imported as a package and
+# top-level module names inside the src/ directory do not shadow system packages)
+ENV PYTHONPATH=/app
 
 # Create and change ownership of the data directory to the appuser
 RUN mkdir -p /data && chown appuser:appuser /data
@@ -34,8 +39,6 @@ USER appuser
 # Expose the port the app runs on
 EXPOSE 8000
 
-# Define the command to run the application
-# Uvicorn is run with --forwarded-allow-ips="*" to trust the X-Forwarded-For
-# header from any proxy within the Docker network. This is safe because
-# only Caddy is on the same network and can reach this container.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--forwarded-allow-ips", "*"]
+# Define the command to run the application using package-qualified module path.
+# Uvicorn runs the ASGI app located at src.main:app so imports resolve against /app/src.
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--forwarded-allow-ips", "*"]

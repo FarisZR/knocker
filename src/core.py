@@ -22,13 +22,13 @@ except ImportError:
 # Thread lock for whitelist operations
 _whitelist_lock = threading.Lock()
 
-# Import firewall module - handle import gracefully for testing
+# Import firewall integration module - prefer fw_integration to avoid name shadowing
 try:
-    from . import firewall
+    from . import fw_integration as firewall
 except ImportError:
-    # For tests and standalone usage
+    # For tests and standalone usage, attempt top-level import
     try:
-        import firewall
+        import fw_integration as firewall  # type: ignore
     except ImportError:
         # Firewall module not available, create a dummy module
         class DummyFirewall:

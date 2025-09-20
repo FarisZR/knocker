@@ -5,7 +5,7 @@ Tests for the firewall module.
 import pytest
 import time
 from unittest.mock import Mock, patch, MagicMock
-from src import firewall
+from src import fw_integration as firewall
 
 # Test configuration fixtures
 
@@ -111,10 +111,10 @@ def test_check_firewalld_availability_cached_false():
 
 # Test Firewall Initialization
 
-@patch('src.firewall._check_firewalld_availability')
-@patch('src.firewall._zone_exists')
-@patch('src.firewall._create_knocker_zone')
-@patch('src.firewall._sync_firewall_rules_with_whitelist')
+@patch('src.fw_integration._check_firewalld_availability')
+@patch('src.fw_integration._zone_exists')
+@patch('src.fw_integration._create_knocker_zone')
+@patch('src.fw_integration._sync_firewall_rules_with_whitelist')
 def test_initialize_firewall_success(mock_sync, mock_create, mock_exists, mock_avail, firewall_enabled_settings):
     """Test successful firewall initialization."""
     mock_avail.return_value = True
@@ -128,7 +128,7 @@ def test_initialize_firewall_success(mock_sync, mock_create, mock_exists, mock_a
     mock_create.assert_called_once()
     mock_sync.assert_called_once_with(firewall_enabled_settings)
 
-@patch('src.firewall._check_firewalld_availability')
+@patch('src.fw_integration._check_firewalld_availability')
 def test_initialize_firewall_disabled(mock_avail, firewall_disabled_settings):
     """Test firewall initialization when disabled."""
     result = firewall.initialize_firewall(firewall_disabled_settings)
@@ -136,7 +136,7 @@ def test_initialize_firewall_disabled(mock_avail, firewall_disabled_settings):
     assert result == False
     mock_avail.assert_not_called()
 
-@patch('src.firewall._check_firewalld_availability')
+@patch('src.fw_integration._check_firewalld_availability')
 def test_initialize_firewall_unavailable(mock_avail, firewall_enabled_settings):
     """Test firewall initialization when firewalld is unavailable."""
     mock_avail.return_value = False
@@ -145,9 +145,9 @@ def test_initialize_firewall_unavailable(mock_avail, firewall_enabled_settings):
     
     assert result == False
 
-@patch('src.firewall._check_firewalld_availability')
-@patch('src.firewall._zone_exists')
-@patch('src.firewall._sync_firewall_rules_with_whitelist')
+@patch('src.fw_integration._check_firewalld_availability')
+@patch('src.fw_integration._zone_exists')
+@patch('src.fw_integration._sync_firewall_rules_with_whitelist')
 def test_initialize_firewall_existing_zone(mock_sync, mock_exists, mock_avail, firewall_enabled_settings):
     """Test firewall initialization with existing zone."""
     mock_avail.return_value = True
@@ -160,8 +160,8 @@ def test_initialize_firewall_existing_zone(mock_sync, mock_exists, mock_avail, f
 
 # Test Add IP to Firewall
 
-@patch('src.firewall._check_firewalld_availability')
-@patch('src.firewall._add_rich_rule_for_ip_port')
+@patch('src.fw_integration._check_firewalld_availability')
+@patch('src.fw_integration._add_rich_rule_for_ip_port')
 def test_add_ip_to_firewall_success(mock_add_rule, mock_avail, firewall_enabled_settings):
     """Test successfully adding IP to firewall."""
     mock_avail.return_value = True
@@ -175,7 +175,7 @@ def test_add_ip_to_firewall_success(mock_add_rule, mock_avail, firewall_enabled_
     mock_add_rule.assert_any_call("knocker", "192.168.1.100", "443/tcp", 1234567890)
     mock_add_rule.assert_any_call("knocker", "192.168.1.100", "22/tcp", 1234567890)
 
-@patch('src.firewall._check_firewalld_availability')
+@patch('src.fw_integration._check_firewalld_availability')
 def test_add_ip_to_firewall_disabled(mock_avail, firewall_disabled_settings):
     """Test adding IP when firewall is disabled."""
     result = firewall.add_ip_to_firewall("192.168.1.100", 1234567890, firewall_disabled_settings)
@@ -183,7 +183,7 @@ def test_add_ip_to_firewall_disabled(mock_avail, firewall_disabled_settings):
     assert result == False
     mock_avail.assert_not_called()
 
-@patch('src.firewall._check_firewalld_availability')
+@patch('src.fw_integration._check_firewalld_availability')
 def test_add_ip_to_firewall_unavailable(mock_avail, firewall_enabled_settings):
     """Test adding IP when firewalld is unavailable."""
     mock_avail.return_value = False
@@ -192,8 +192,8 @@ def test_add_ip_to_firewall_unavailable(mock_avail, firewall_enabled_settings):
     
     assert result == False
 
-@patch('src.firewall._check_firewalld_availability')
-@patch('src.firewall._add_rich_rule_for_ip_port')
+@patch('src.fw_integration._check_firewalld_availability')
+@patch('src.fw_integration._add_rich_rule_for_ip_port')
 def test_add_ip_to_firewall_exception(mock_add_rule, mock_avail, firewall_enabled_settings):
     """Test adding IP when rule creation fails."""
     mock_avail.return_value = True
@@ -205,8 +205,8 @@ def test_add_ip_to_firewall_exception(mock_add_rule, mock_avail, firewall_enable
 
 # Test Remove IP from Firewall
 
-@patch('src.firewall._check_firewalld_availability')
-@patch('src.firewall._remove_rich_rule_for_ip_port')
+@patch('src.fw_integration._check_firewalld_availability')
+@patch('src.fw_integration._remove_rich_rule_for_ip_port')
 def test_remove_ip_from_firewall_success(mock_remove_rule, mock_avail, firewall_enabled_settings):
     """Test successfully removing IP from firewall."""
     mock_avail.return_value = True
@@ -220,7 +220,7 @@ def test_remove_ip_from_firewall_success(mock_remove_rule, mock_avail, firewall_
     mock_remove_rule.assert_any_call("knocker", "192.168.1.100", "443/tcp")
     mock_remove_rule.assert_any_call("knocker", "192.168.1.100", "22/tcp")
 
-@patch('src.firewall._check_firewalld_availability')
+@patch('src.fw_integration._check_firewalld_availability')
 def test_remove_ip_from_firewall_disabled(mock_avail, firewall_disabled_settings):
     """Test removing IP when firewall is disabled."""
     result = firewall.remove_ip_from_firewall("192.168.1.100", firewall_disabled_settings)
@@ -229,8 +229,8 @@ def test_remove_ip_from_firewall_disabled(mock_avail, firewall_disabled_settings
 
 # Test Cleanup Expired Rules
 
-@patch('src.firewall._check_firewalld_availability')
-@patch('src.firewall._sync_firewall_rules_with_whitelist')
+@patch('src.fw_integration._check_firewalld_availability')
+@patch('src.fw_integration._sync_firewall_rules_with_whitelist')
 def test_cleanup_expired_firewall_rules_success(mock_sync, mock_avail, firewall_enabled_settings):
     """Test successful cleanup of expired rules."""
     mock_avail.return_value = True
@@ -240,7 +240,7 @@ def test_cleanup_expired_firewall_rules_success(mock_sync, mock_avail, firewall_
     assert result == True
     mock_sync.assert_called_once_with(firewall_enabled_settings)
 
-@patch('src.firewall._check_firewalld_availability')
+@patch('src.fw_integration._check_firewalld_availability')
 def test_cleanup_expired_firewall_rules_disabled(mock_avail, firewall_disabled_settings):
     """Test cleanup when firewall is disabled."""
     result = firewall.cleanup_expired_firewall_rules(firewall_disabled_settings)
@@ -351,8 +351,8 @@ def test_ipv6_cidr_support():
 
 # Test Error Handling
 
-@patch('src.firewall._check_firewalld_availability')
-@patch('src.firewall._add_rich_rule_for_ip_port')
+@patch('src.fw_integration._check_firewalld_availability')
+@patch('src.fw_integration._add_rich_rule_for_ip_port')
 def test_add_ip_partial_failure(mock_add_rule, mock_avail, firewall_enabled_settings):
     """Test adding IP when some rules fail to create."""
     mock_avail.return_value = True

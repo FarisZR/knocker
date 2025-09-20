@@ -23,12 +23,12 @@ except ImportError:
         class FirewallApplyError(Exception): ...
         class WhitelistPersistError(Exception): ...
 
-# Import firewall module - handle import gracefully
+# Import firewall integration module - prefer fw_integration to avoid name shadowing
 try:
-    from . import firewall
+    from . import fw_integration as firewall
 except ImportError:
     try:
-        import firewall
+        import fw_integration as firewall  # type: ignore
     except ImportError:
         # Firewall not available, create dummy
         class DummyFirewall:
@@ -54,10 +54,17 @@ async def lifespan(app: FastAPI):
     """
     logging.info("Knocker service starting up...")
     settings = get_settings()
-    
+
+    # Firewall preflight diagnostics (non-fatal)
+    try:
+        if hasattr(firewall, "firewall_preflight"):
+            firewall.firewall_preflight(settings)
+    except Exception as e:
+        logging.warning(f"Firewall preflight failed: {e}")
+
     # Initialize firewall integration
     firewall.initialize_firewall(settings)
-    
+
     # Cleanup expired IPs (this will also sync firewall rules)
     core.cleanup_expired_ips(settings)
     
