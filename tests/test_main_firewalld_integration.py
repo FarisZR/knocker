@@ -198,34 +198,37 @@ class TestEndpointFirewalldIntegration:
         try:
             os.environ["KNOCKER_CONFIG_PATH"] = config_path
             
+            # Mock firewalld integration that fails to add rules
+            mock_integration = Mock()
+            mock_integration.is_enabled.return_value = True
+            mock_integration.setup_knocker_zone.return_value = True
+            mock_integration.restore_missing_rules.return_value = True
+            mock_integration.add_whitelist_rule.return_value = False  # Simulate failure
+            
             with patch('src.firewalld.FirewalldIntegration') as mock_firewalld_class:
-                # Mock firewalld integration that fails to add rules
-                mock_integration = Mock()
-                mock_integration.is_enabled.return_value = True
-                mock_integration.setup_knocker_zone.return_value = True
-                mock_integration.restore_missing_rules.return_value = True
-                mock_integration.add_whitelist_rule.return_value = False  # Simulate failure
-                mock_firewalld_class.return_value = mock_integration
-                
-                import src.firewalld as firewalld_module
-                firewalld_module.firewalld_integration = mock_integration
-                
-                from src import main
-                
-                client = TestClient(main.app)
-                
-                # Test firewalld failure results in 500 error
-                response = client.post(
-                    "/knock",
-                    headers={
-                        "X-Api-Key": "test_key",
-                        "X-Forwarded-For": "192.168.1.100"
-                    }
-                )
-                
-                assert response.status_code == 500
-                data = response.json()
-                assert "firewall configuration failed" in data["error"]
+                with patch('firewalld.get_firewalld_integration') as mock_get_integration:
+                    mock_firewalld_class.return_value = mock_integration
+                    mock_get_integration.return_value = mock_integration
+                    
+                    import src.firewalld as firewalld_module
+                    firewalld_module.firewalld_integration = mock_integration
+                    
+                    from src import main
+                    
+                    client = TestClient(main.app)
+                    
+                    # Test firewalld failure results in 500 error
+                    response = client.post(
+                        "/knock",
+                        headers={
+                            "X-Api-Key": "test_key",
+                            "X-Forwarded-For": "192.168.1.100"
+                        }
+                    )
+                    
+                    assert response.status_code == 500
+                    data = response.json()
+                    assert "firewall configuration failed" in data["error"]
                 
         finally:
             if "KNOCKER_CONFIG_PATH" in os.environ:
