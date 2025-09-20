@@ -25,7 +25,7 @@ services:
     networks:
       - caddy_net
     environment:
-      - KNOCKER_CONFIG_PATH=/app/knocker.yaml
+      - KNOCKER_CONFIG_PATH=/app/knocker-firewall.yaml
       - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
     volumes:
       - ../knocker.example.yaml:/app/knocker.yaml:ro
