@@ -1,6 +1,6 @@
-# Caddy Knocker
+# Knocker
 
-Caddy Knocker is a secure, configurable, and self-hosted service that provides a "knock-knock" single-packet authorization (SPA) gateway for your Caddy v2 reverse proxy. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses.
+Knocker is a secure, configurable, and self-hosted service that provides a "knock-knock" single-packet authorization (SPA) gateway for your Caddy v2 reverse proxy. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses.
 
 This is ideal for homelab environments where you want to expose services to the internet without a persistent VPN connection, while minimizing your public-facing attack surface.
 
