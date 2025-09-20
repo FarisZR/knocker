@@ -204,6 +204,38 @@ def add_ip_to_whitelist(ip_or_cidr: str, expiry_time: int, settings: Dict[str, A
     whitelist[ip_or_cidr] = expiry_time
     save_whitelist(whitelist, settings)
 
+
+def add_ip_to_whitelist_with_firewalld(ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]) -> bool:
+    """
+    Adds an IP or CIDR to the whitelist with firewalld integration.
+    
+    Firewalld rules are added BEFORE updating whitelist.json to ensure
+    security. If firewalld fails, whitelist.json is not updated.
+    
+    Args:
+        ip_or_cidr: IP address or CIDR to whitelist
+        expiry_time: Unix timestamp when entry should expire
+        settings: Application settings
+        
+    Returns:
+        True if successful, False if firewalld integration failed
+    """
+    # Import here to avoid circular imports
+    import firewalld
+    
+    # Get firewalld integration instance
+    firewalld_integration = firewalld.get_firewalld_integration()
+    
+    if firewalld_integration and firewalld_integration.is_enabled():
+        # First, add firewalld rules
+        if not firewalld_integration.add_whitelist_rule(ip_or_cidr, expiry_time):
+            # Firewalld failed - do NOT update whitelist.json
+            return False
+    
+    # Firewalld succeeded (or is disabled), now update whitelist.json
+    add_ip_to_whitelist(ip_or_cidr, expiry_time, settings)
+    return True
+
 def cleanup_expired_ips(settings: Dict[str, Any]):
     """Removes expired entries from the whitelist file."""
     whitelist = load_whitelist(settings)

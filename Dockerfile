@@ -5,12 +5,14 @@ FROM python:3.13-slim
 WORKDIR /app
 
 # Create a non-root user to run the application for better security
+# NOTE: When firewalld integration is enabled, the container must run as root
+# to access the system dbus. This is configured in docker-compose.yml.
 RUN groupadd --gid 1001 appuser && \
     useradd --create-home --uid 1001 --gid 1001 appuser
 
 # Copy requirements and install dependencies system-wide
 COPY src/requirements.txt .
-RUN apt-get update && apt-get install -y curl && \
+RUN apt-get update && apt-get install -y curl firewalld && \
     pip install --no-cache-dir -r requirements.txt && \
     apt-get clean
 
