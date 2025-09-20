@@ -22,28 +22,37 @@ def _check_firewalld_availability() -> bool:
         return _firewalld_available
     
     try:
-        # Try to import firewall.client from python3-firewall package
-        try:
-            import firewall.client
-            _fw = firewall.client.FirewallClient()
-        except Exception:
-            # The local module `src/firewall.py` can shadow the system `firewall` package.
-            # Temporarily adjust sys.path to prefer site-packages and retry importing.
-            import importlib
-            import sys
-            import os
-            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-            original_sys_path = sys.path[:]
-            try:
-                sys.path = [p for p in sys.path if p and os.path.abspath(p) != project_root and os.path.abspath(p) != os.getcwd()]
-                _fw = importlib.import_module('firewall.client').FirewallClient()
-            finally:
-                sys.path = original_sys_path
+        # Always start clean for detection logic
+        global _fw
+        _fw = None
 
-        # If python3-firewall is not installed, fall back to a small DBus-based shim
-        # that talks directly to the org.fedoraproject.FirewallD1 interface. This
-        # allows CI/local dbusmock tests to run without installing the full
-        # python3-firewall package.
+        # First attempt: python3-firewall standard import
+        try:
+            import firewall.client  # type: ignore
+            _fw = firewall.client.FirewallClient()  # type: ignore[attr-defined]
+        except Exception:
+            # Second attempt: adjust sys.path to avoid this project shadowing system package
+            try:
+                import importlib, sys, os
+                project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+                original_sys_path = sys.path[:]
+                try:
+                    sys.path = [
+                        p for p in sys.path
+                        if p
+                        and os.path.abspath(p) != project_root
+                        and os.path.abspath(p) != os.getcwd()
+                    ]
+                    try:
+                        _fw = importlib.import_module('firewall.client').FirewallClient()
+                    except Exception:
+                        _fw = None
+                finally:
+                    sys.path = original_sys_path
+            except Exception:
+                _fw = None
+
+        # Fallback: DBus lightweight client (works with dbusmock in CI)
         if _fw is None:
             try:
                 import dbus
@@ -51,11 +60,15 @@ def _check_firewalld_availability() -> bool:
 
                 class _DBusFirewallClient:
                     def __init__(self):
-                        # Connect to the system bus (dbusmock may provide a private system bus)
                         self.bus = dbus.SystemBus()
-                        self.obj = self.bus.get_object('org.fedoraproject.FirewallD1', '/org/fedoraproject/FirewallD1')
-                        # Use the raw interface; method signatures are proxied by dbus-python
-                        self.iface = Interface(self.obj, dbus_interface='org.fedoraproject.FirewallD1')
+                        self.obj = self.bus.get_object(
+                            'org.fedoraproject.FirewallD1',
+                            '/org/fedoraproject/FirewallD1'
+                        )
+                        self.iface = Interface(
+                            self.obj,
+                            dbus_interface='org.fedoraproject.FirewallD1'
+                        )
 
                     def getDefaultZone(self):
                         return str(self.iface.getDefaultZone())
@@ -75,26 +88,28 @@ def _check_firewalld_availability() -> bool:
                         return [str(r) for r in rules]
 
                     def config(self):
-                        # Full config methods are not needed by the dbusmock test (the
-                        # test ensures the zone already exists). Provide a stub to raise
-                        # a clear error if used.
-                        raise NotImplementedError("config() is not implemented in DBus fallback")
+                        raise NotImplementedError(
+                            "config() is not implemented in DBus fallback"
+                        )
 
                 _fw = _DBusFirewallClient()
-            except Exception:
-                # Leave _fw as None and continue to raise an informative error below.
+            except Exception as dbus_err:
+                logging.debug(f"DBus fallback initialization failed: {dbus_err}")
                 _fw = None
 
         if _fw is None:
-            raise ImportError("python3-firewall package not available and DBus fallback failed")
+            raise ImportError(
+                "firewalld client not available (python3-firewall import + dbus fallback failed)"
+            )
 
-        _fw.getDefaultZone()  # Test connection
+        # Smoke test connection
+        _fw.getDefaultZone()
         _firewalld_available = True
         logging.info("Firewalld is available and accessible")
         return True
     except ImportError as e:
         _firewalld_available = False
-        logging.warning(f"Firewalld python3-firewall package is not available: {e}")
+        logging.warning(f"Firewalld client is not available: {e}")
         return False
     except Exception as e:
         _firewalld_available = False

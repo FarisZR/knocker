@@ -185,3 +185,57 @@ def test_verify_success_excluded_path_prefix():
     """A request to a path that starts with an excluded prefix should pass."""
     response = client.get("/verify", headers={"X-Forwarded-For": "9.9.9.9", "X-Forwarded-Uri": "/api/v1/public/status"})
     assert response.status_code == 200
+
+
+# --- New Internal Error Handling Tests ---
+
+def test_knock_firewall_internal_error(monkeypatch, mock_settings, tmp_path):
+    """If firewall application fails, endpoint should return 500 and not persist whitelist."""
+    # Enable firewall in settings
+    mock_settings['firewall'] = {'enabled': True, 'monitored_ports': []}
+    whitelist_path = tmp_path / "test_whitelist_main.json"
+    mock_settings['whitelist'] = {'storage_path': str(whitelist_path)}
+
+    from src.errors import FirewallApplyError
+
+    def fake_add_ip(*a, **k):
+        raise FirewallApplyError("1.2.3.4", detail="simulated firewall failure")
+
+    monkeypatch.setattr("src.core.add_ip_to_whitelist", fake_add_ip)
+
+    response = client.post(
+        "/knock",
+        headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"}
+    )
+    assert response.status_code == 500
+    assert response.json()["error"] == "Internal server error"
+    # Whitelist file should not exist
+    assert not whitelist_path.exists()
+
+
+def test_knock_whitelist_persist_internal_error(monkeypatch, mock_settings, tmp_path):
+    """If whitelist persistence fails after firewall success, endpoint returns 500."""
+    mock_settings['firewall'] = {'enabled': True, 'monitored_ports': []}
+    whitelist_path = tmp_path / "test_whitelist_main.json"
+    mock_settings['whitelist'] = {'storage_path': str(whitelist_path)}
+
+    class DummySeq:
+        called = False
+
+    def fake_add(ip, expiry, s):
+        return True
+
+    from src.errors import WhitelistPersistError
+
+    def fake_add_ip_to_whitelist(ip, expiry, s):
+        raise WhitelistPersistError(ip, detail="disk full")
+
+    monkeypatch.setattr("src.core.add_ip_to_whitelist", fake_add_ip_to_whitelist := fake_add_ip_to_whitelist)
+
+    response = client.post(
+        "/knock",
+        headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "5.5.5.5"}
+    )
+    assert response.status_code == 500
+    assert response.json()["error"] == "Internal server error"
+    assert not whitelist_path.exists()

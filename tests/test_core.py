@@ -121,43 +121,46 @@ def test_is_invalid_api_key(mock_settings):
 
 @patch('src.core.firewall.add_ip_to_firewall')
 def test_add_ip_to_whitelist_calls_firewall(mock_firewall_add, mock_settings, tmp_path):
-    """Test that adding IP to whitelist also calls firewall integration."""
-    # Update settings to use temporary path
+    """Firewall add is attempted before whitelist persistence."""
     test_settings = mock_settings.copy()
     test_settings['whitelist'] = {'storage_path': str(tmp_path / "test_whitelist.json")}
-    
-    expiry_time = int(time.time()) + 3600
-    core.add_ip_to_whitelist("192.168.1.100", expiry_time, test_settings)
-    
-    # Verify firewall function was called
-    mock_firewall_add.assert_called_once_with("192.168.1.100", expiry_time, test_settings)
+    test_settings['firewall'] = {'enabled': True, 'monitored_ports': []}
+
+    order = []
+    def fw_add(ip, expiry, s):
+        order.append("firewall_add")
+        return True
+    mock_firewall_add.side_effect = fw_add
+
+    orig_save = core.save_whitelist
+    def wrapped_save(wl, s):
+        order.append("save_whitelist")
+        return orig_save(wl, s)
+
+    # Monkeypatch save_whitelist ordering
+    with patch('src.core.save_whitelist', side_effect=wrapped_save):
+        expiry_time = int(time.time()) + 3600
+        core.add_ip_to_whitelist("192.168.1.100", expiry_time, test_settings)
+
+    assert order == ["firewall_add", "save_whitelist"]
+    mock_firewall_add.assert_called_once()
 
 @patch('src.core.firewall.remove_ip_from_firewall')
 @patch('src.core.firewall.cleanup_expired_firewall_rules')
 def test_cleanup_expired_ips_calls_firewall(mock_firewall_cleanup, mock_firewall_remove, mock_settings, tmp_path):
     """Test that cleanup expired IPs also calls firewall cleanup."""
-    # Update settings to use temporary path
     test_settings = mock_settings.copy()
     test_settings['whitelist'] = {'storage_path': str(tmp_path / "test_whitelist.json")}
-    
-    # Create a whitelist with expired and non-expired entries
+
     now = int(time.time())
     whitelist = {
-        "192.168.1.100": now - 100,  # Expired
-        "192.168.1.101": now + 3600,  # Not expired
-        "10.0.0.1": now - 50  # Also expired
+        "192.168.1.100": now - 100,
+        "192.168.1.101": now + 3600,
+        "10.0.0.1": now - 50
     }
-    
-    # Save the whitelist
     core.save_whitelist(whitelist, test_settings)
-    
-    # Run cleanup
     core.cleanup_expired_ips(test_settings)
-    
-    # Verify expired IPs were removed from firewall
     assert mock_firewall_remove.call_count == 2
     mock_firewall_remove.assert_any_call("192.168.1.100", test_settings)
     mock_firewall_remove.assert_any_call("10.0.0.1", test_settings)
-    
-    # Verify firewall cleanup was called
     mock_firewall_cleanup.assert_called_once_with(test_settings)

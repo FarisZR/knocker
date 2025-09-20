@@ -59,6 +59,17 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
 *   **`403 Forbidden`**
     *   Returned if an API key without `allow_remote_whitelist` permission attempts to whitelist a specific `ip_address`.
     *   **Body**: `{"error": "string"}`
+*   **`500 Internal Server Error`**
+    *   Returned if an internal failure occurs while processing the knock after initial validation succeeded.
+    *   This includes (but is not limited to):
+        * Failure to apply firewall rules (e.g. insufficient privileges, firewalld unavailable, D‑Bus errors)
+        * Failure to persist the whitelist file after firewall rules were applied (I/O error, permission denied, disk full)
+    *   The service guarantees atomic behavior:
+        * Firewall rules are applied first.
+        * The whitelist JSON file is updated only if firewall rule application succeeds.
+        * If whitelist persistence fails, previously added firewall rules are rolled back best‑effort before responding 500.
+        * The whitelist is never modified if firewall rule application fails.
+    *   **Body**: `{"error": "Internal server error"}`
 
 ---
 

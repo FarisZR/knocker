@@ -3,8 +3,21 @@ import json
 import time
 import fcntl
 import threading
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
+
+# Error classes for atomic firewall + whitelist operations
+try:
+    from .errors import FirewallApplyError, WhitelistPersistError
+except ImportError:
+    try:
+        from errors import FirewallApplyError, WhitelistPersistError
+    except ImportError:
+        class FirewallApplyError(Exception):
+            pass
+        class WhitelistPersistError(Exception):
+            pass
 
 # Thread lock for whitelist operations
 _whitelist_lock = threading.Lock()
@@ -219,13 +232,49 @@ def save_whitelist(whitelist: Dict[str, int], settings: Dict[str, Any]):
             raise
 
 def add_ip_to_whitelist(ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]):
-    """Adds an IP or CIDR to the whitelist and saves it."""
+    """
+    Adds an IP/CIDR to the whitelist with atomic firewall-before-persist ordering.
+
+    Ordering (when firewall integration enabled):
+      1. Attempt to apply firewall rules.
+      2. Persist whitelist entry.
+      3. On persistence failure, rollback firewall rules (best effort) and raise WhitelistPersistError.
+
+    If firewall integration is disabled, we only persist the whitelist (legacy behavior).
+    """
+    firewall_enabled = False
+    try:
+        firewall_enabled = bool(getattr(firewall, "is_firewalld_enabled", lambda _s: False)(settings))
+    except Exception:
+        firewall_enabled = False
+
+    # Step 1: Apply firewall rules first (if enabled)
+    if firewall_enabled:
+        logging.debug(f"[whitelist] Applying firewall rules for {ip_or_cidr} until {expiry_time}")
+        fw_ok = False
+        try:
+            fw_ok = firewall.add_ip_to_firewall(ip_or_cidr, expiry_time, settings)
+        except Exception as e:
+            logging.debug(f"[whitelist] Firewall add raised exception for {ip_or_cidr}: {e}")
+        if not fw_ok:
+            raise FirewallApplyError(ip_or_cidr, detail="firewall.add_ip_to_firewall returned False or raised")
+
+    # Step 2: Persist whitelist
     whitelist = load_whitelist(settings)
     whitelist[ip_or_cidr] = expiry_time
-    save_whitelist(whitelist, settings)
-    
-    # Add to firewall if enabled
-    firewall.add_ip_to_firewall(ip_or_cidr, expiry_time, settings)
+    try:
+        logging.debug(f"[whitelist] Persisting whitelist entry for {ip_or_cidr}")
+        save_whitelist(whitelist, settings)
+        logging.debug(f"[whitelist] Persisted whitelist entry for {ip_or_cidr}")
+    except Exception as e:
+        # Rollback firewall if previously applied
+        if firewall_enabled:
+            try:
+                firewall.remove_ip_from_firewall(ip_or_cidr, settings)
+                logging.warning(f"[whitelist] Rolled back firewall rules for {ip_or_cidr} after persistence failure: {e}")
+            except Exception as rb_err:
+                logging.error(f"[whitelist] Rollback firewall removal failed for {ip_or_cidr}: {rb_err}")
+        raise WhitelistPersistError(ip_or_cidr, detail=str(e))
 
 def cleanup_expired_ips(settings: Dict[str, Any]):
     """Removes expired entries from the whitelist file."""

@@ -6,8 +6,22 @@ from functools import lru_cache
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, status, Depends
 from fastapi.responses import JSONResponse
-import core
+# Ensure we import the same core module object that tests patch via 'src.core'
+try:
+    from . import core as core  # Package-relative import (preferred)
+except ImportError:
+    import core  # Fallback for execution contexts without package semantics
 import config
+
+# Import atomic operation errors
+try:
+    from .errors import FirewallApplyError, WhitelistPersistError
+except ImportError:
+    try:
+        from errors import FirewallApplyError, WhitelistPersistError
+    except ImportError:
+        class FirewallApplyError(Exception): ...
+        class WhitelistPersistError(Exception): ...
 
 # Import firewall module - handle import gracefully
 try:
@@ -185,8 +199,23 @@ async def knock(
 
     expiry_time = int(time.time()) + effective_ttl
     
-    core.add_ip_to_whitelist(ip_to_whitelist, expiry_time, settings)
-    
+    try:
+        core.add_ip_to_whitelist(ip_to_whitelist, expiry_time, settings)
+    except FirewallApplyError as e:
+        logging.error(f"Internal error applying firewall rules (generic): {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": "Internal server error"},
+            headers={"Access-Control-Allow-Origin": allowed_origin}
+        )
+    except WhitelistPersistError as e:
+        logging.error(f"Internal error persisting whitelist (generic): {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": "Internal server error"},
+            headers={"Access-Control-Allow-Origin": allowed_origin}
+        )
+
     # Log with reduced information to prevent disclosure
     logging.getLogger("uvicorn.error").info(
         f"Successfully whitelisted {ip_to_whitelist} for {effective_ttl} seconds. Requested by {client_ip}."

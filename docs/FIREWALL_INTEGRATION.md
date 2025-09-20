@@ -1,10 +1,10 @@
 # Firewall Integration
 
-Knocker supports integration with firewalld to provide automated, timed firewall rules that synchronize with the IP whitelist functionality. When enabled, successful knock requests will not only add IPs to the internal whitelist but also create corresponding firewall rules that automatically expire.
+Knocker supports integration with firewalld to provide automated, timed firewall rules that synchronize with the IP whitelist functionality. When enabled, a successful knock request applies all required firewall rules first; only after those rules are successfully added is the internal whitelist updated. This guarantees that an entry never appears in the whitelist without its corresponding firewall rules.
 
 ## Overview
 
-The firewall integration creates a dedicated `knocker` firewalld zone with the highest priority (-1) that manages access to specified monitored ports. When an IP is successfully whitelisted via the `/knock` endpoint, firewall rules are automatically created to allow that IP access to the monitored ports for the duration of the TTL.
+The firewall integration creates a dedicated `knocker` firewalld zone with the highest priority (-1) that manages access to specified monitored ports. During a `/knock` operation the firewall rules are created first for every monitored port; only then is the IP (or CIDR) persisted to the whitelist, ensuring atomic consistency.
 
 ### Key Features
 
@@ -92,14 +92,15 @@ On startup, if firewall integration is enabled, knocker:
 
 ### Dynamic Rule Management
 
-When an IP is whitelisted via `/knock`:
+When an IP is whitelisted via `/knock` (atomic sequence):
 
-1. The IP is added to the internal JSON whitelist
-2. For each monitored port, a rich rule is created in the `knocker` zone:
+1. Firewall rules are applied first for each monitored port in the `knocker` zone:
    ```
    rule family="ipv4" source address="192.168.1.100" port port="80" protocol="tcp" accept
    ```
-3. Rules are added to the runtime configuration (immediate effect)
+2. Only after all firewall rule applications succeed is the internal JSON whitelist updated.
+3. If whitelist persistence fails, previously added firewall rules are rolled back (best effort) to avoid desynchronization.
+4. Rules are added only to the runtime configuration (not permanent) to prevent stale accumulation.
 
 ### Rule Expiration
 

@@ -36,6 +36,7 @@ server:
 
 **Example**: `/api/status/../../../etc/passwd` is normalized to `/etc/passwd` and properly rejected.
 
+
 ### 4. Race Condition Prevention (Medium)
 
 **Issue**: Concurrent access to the whitelist file could cause data corruption or inconsistent state.
@@ -76,6 +77,30 @@ security:
 cors:
   allowed_origin: "https://your-trusted-domain.com"
 ```
+
+### 8. Atomic Firewall & Whitelist Consistency (Medium)
+
+**Issue**: Previously the whitelist JSON file could be updated even if firewall rule application failed (or vice‑versa on later failures), leading to desynchronization. This caused:
+- Whitelist entries without active firewall rules (false sense of access)
+- Firewall rules without persisted whitelist entries (orphaned network exposure)
+- Flaky integration tests (e.g. "Firewall rules not found for X.X.X.X")
+
+**Fix**: Enforced an atomic operation order in `core.add_ip_to_whitelist`:
+1. Apply all required firewall rich rules first.
+2. Persist the whitelist entry only if step 1 succeeds.
+3. On persistence failure, rollback (best effort) previously added firewall rules.
+4. Surface a generic HTTP 500 to clients while logging internal details at debug/error level.
+
+**Guarantee**: An entry will appear in the whitelist file only if corresponding firewall rules are (or were just successfully) active. No partial success states.
+
+**Operational Signals**:
+- `FirewallApplyError` -> No whitelist mutation occurred.
+- `WhitelistPersistError` -> Rollback attempted; investigate disk / permission / volume issues.
+
+**Security Impact**:
+- Eliminates inconsistent authorization state.
+- Prevents accidental long‑lived exposure from orphaned firewall rules.
+- Strengthens auditability: log trails now map 1:1 to applied state transitions.
 
 ## Security Best Practices
 
