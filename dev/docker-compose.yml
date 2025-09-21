@@ -10,7 +10,6 @@ services:
       - caddy_net
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
-      - ../knocker.example.yaml:/app/knocker.yaml:ro
       - caddy_data:/data
       - caddy_config:/config
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--watch"]
@@ -27,7 +26,7 @@ services:
     environment:
       - KNOCKER_CONFIG_PATH=/app/knocker.yaml
     volumes:
-      - ../knocker.example.yaml:/app/knocker.yaml:ro
+      - ./knocker.firewalld.yaml:/app/knocker.yaml:ro
       - knocker_data:/data
       # Mount system dbus for firewalld integration
       - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
