@@ -250,17 +250,19 @@ class TestWhitelistRules:
         mock_available.return_value = True
         mock_time.return_value = 1000
         
-        # Failure for one port, success for others
+        # Failure for one port, success for others, plus rollback calls
         mock_cmd.side_effect = [
             (True, "", ""),   # Port 80 success
             (False, "", "error"),  # Port 443 failure
-            (True, "", "")    # Port 22 success
+            (True, "", ""),   # Port 22 success
+            (True, "", ""),   # Rollback Port 80 success
+            (True, "", "")    # Rollback Port 22 success  
         ]
         
         result = firewalld_integration.add_whitelist_rule("192.168.1.100", 1600)
         
         assert result is False  # Should fail if not all rules added
-        assert mock_cmd.call_count == 3
+        assert mock_cmd.call_count == 5  # 3 adds + 2 rollbacks
     
     @patch.object(firewalld.FirewalldIntegration, 'is_firewalld_available')
     def test_add_whitelist_rule_firewalld_unavailable(self, mock_available, firewalld_integration):
@@ -412,6 +414,52 @@ rule family="ipv4" source address="10.0.0.50" port protocol="tcp" port="22" acce
         assert result is True  # Returns True when disabled (no-op)
 
 
+class TestRichRuleBuilder:
+    """Test the _build_rich_rule helper function."""
+    
+    def test_build_rich_rule_ipv4_single_host(self, firewalld_integration):
+        """Test building rich rule for IPv4 single host."""
+        rule = firewalld_integration._build_rich_rule("192.168.1.100", 80, "tcp")
+        expected = 'rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="80" accept'
+        assert rule == expected
+    
+    def test_build_rich_rule_ipv4_cidr(self, firewalld_integration):
+        """Test building rich rule for IPv4 CIDR."""
+        rule = firewalld_integration._build_rich_rule("192.168.1.0/24", 443, "tcp")
+        expected = 'rule family="ipv4" source address="192.168.1.0/24" port protocol="tcp" port="443" accept'
+        assert rule == expected
+    
+    def test_build_rich_rule_ipv6_single_host(self, firewalld_integration):
+        """Test building rich rule for IPv6 single host."""
+        rule = firewalld_integration._build_rich_rule("2001:db8::1", 22, "tcp")
+        expected = 'rule family="ipv6" source address="2001:db8::1" port protocol="tcp" port="22" accept'
+        assert rule == expected
+    
+    def test_build_rich_rule_ipv6_cidr(self, firewalld_integration):
+        """Test building rich rule for IPv6 CIDR."""
+        rule = firewalld_integration._build_rich_rule("2001:db8::/32", 8080, "udp")
+        expected = 'rule family="ipv6" source address="2001:db8::/32" port protocol="udp" port="8080" accept'
+        assert rule == expected
+    
+    def test_build_rich_rule_invalid_ip(self, firewalld_integration):
+        """Test building rich rule with invalid IP address."""
+        rule = firewalld_integration._build_rich_rule("not.an.ip", 80, "tcp")
+        assert rule is None
+    
+    def test_build_rich_rule_invalid_port(self, firewalld_integration):
+        """Test building rich rule with invalid port."""
+        rule = firewalld_integration._build_rich_rule("192.168.1.100", 70000, "tcp")
+        assert rule is None
+        
+        rule = firewalld_integration._build_rich_rule("192.168.1.100", 0, "tcp")
+        assert rule is None
+    
+    def test_build_rich_rule_invalid_protocol(self, firewalld_integration):
+        """Test building rich rule with invalid protocol."""
+        rule = firewalld_integration._build_rich_rule("192.168.1.100", 80, "invalid")
+        assert rule is None
+
+
 class TestEdgeCases:
     """Test edge cases and error conditions."""
     
@@ -482,7 +530,7 @@ class TestSecurityAndValidation:
     @patch.object(firewalld.FirewalldIntegration, '_run_firewall_cmd')
     @patch('time.time')
     def test_ip_injection_protection(self, mock_time, mock_cmd, mock_available, firewalld_integration):
-        """Test that malicious IP addresses are handled safely."""
+        """Test that malicious IP addresses are properly rejected."""
         mock_available.return_value = True
         mock_time.return_value = 1000
         mock_cmd.return_value = (True, "", "")
@@ -490,17 +538,21 @@ class TestSecurityAndValidation:
         # Test with potentially malicious IP (command injection attempt)
         malicious_ip = "192.168.1.1; rm -rf /"
         
-        firewalld_integration.add_whitelist_rule(malicious_ip, 1600)
+        result = firewalld_integration.add_whitelist_rule(malicious_ip, 1600)
         
-        # Verify the IP is passed as-is to firewall-cmd (subprocess handles escaping)
-        call_args = mock_cmd.call_args[0][0]
-        assert f'source address="{malicious_ip}"' in ' '.join(call_args)
+        # Verify that the malicious IP is rejected (result should be False)
+        assert result is False
+        
+        # Verify that _run_firewall_cmd was never called due to input validation
+        mock_cmd.assert_not_called()
     
     @patch.object(firewalld.FirewalldIntegration, 'is_firewalld_available')
     @patch.object(firewalld.FirewalldIntegration, '_run_firewall_cmd')
-    def test_zone_name_injection_protection(self, mock_cmd, mock_available):
-        """Test that malicious zone names are handled safely."""
+    @patch('time.time')
+    def test_zone_name_injection_protection(self, mock_time, mock_cmd, mock_available):
+        """Test that zone names are handled safely (passed as-is to subprocess)."""
         mock_available.return_value = True
+        mock_time.return_value = 1000
         mock_cmd.return_value = (True, "", "")
         
         # Create integration with potentially malicious zone name
@@ -513,7 +565,10 @@ class TestSecurityAndValidation:
         }
         
         integration = firewalld.FirewalldIntegration(malicious_settings)
-        integration.add_whitelist_rule("192.168.1.1", 1600)
+        result = integration.add_whitelist_rule("192.168.1.1", 1600)
+        
+        # Should succeed because valid IP and subprocess handles escaping
+        assert result is True
         
         # Verify zone name is passed as-is (subprocess handles escaping)
         call_args = mock_cmd.call_args[0][0]

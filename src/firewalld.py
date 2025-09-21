@@ -12,6 +12,7 @@ import logging
 import subprocess
 import json
 import time
+import ipaddress
 from typing import Dict, Any, List, Tuple, Optional
 from dataclasses import dataclass
 
@@ -73,6 +74,49 @@ class FirewalldIntegration:
         except Exception as e:
             self.logger.error(f"Unexpected error running firewall-cmd: {e}")
             return False, "", str(e)
+    
+    def _build_rich_rule(self, ip_address: str, port: int, protocol: str) -> Optional[str]:
+        """
+        Build a properly formatted rich rule for firewalld.
+        
+        Args:
+            ip_address: IP address or CIDR to whitelist
+            port: Port number
+            protocol: Protocol (tcp/udp)
+            
+        Returns:
+            Formatted rich rule string, or None if validation fails
+        """
+        try:
+            # Validate and normalize the IP address/CIDR
+            network = ipaddress.ip_network(ip_address, strict=False)
+            
+            # Determine IP family (ipv4 or ipv6)
+            family = "ipv4" if network.version == 4 else "ipv6"
+            
+            # Format source address - use with_prefixlen for CIDR, just the address for single hosts
+            if network.num_addresses == 1:
+                source_addr = str(network.network_address)
+            else:
+                source_addr = str(network)
+            
+            # Validate port
+            if not isinstance(port, int) or port < 1 or port > 65535:
+                self.logger.error(f"Invalid port number: {port}")
+                return None
+            
+            # Validate protocol
+            if protocol not in ["tcp", "udp"]:
+                self.logger.error(f"Invalid protocol: {protocol}")
+                return None
+            
+            # Build the rich rule
+            rich_rule = f'rule family="{family}" source address="{source_addr}" port protocol="{protocol}" port="{port}" accept'
+            return rich_rule
+            
+        except (ValueError, ipaddress.AddressValueError) as e:
+            self.logger.error(f"Invalid IP address or CIDR '{ip_address}': {e}")
+            return None
             
     def is_firewalld_available(self) -> bool:
         """Check if firewalld is available and running."""
@@ -171,24 +215,34 @@ class FirewalldIntegration:
         if not self.is_firewalld_available():
             self.logger.error("Firewalld not available for adding whitelist rule")
             return False
+
+        # Calculate timeout - ensure it's positive
+        timeout_seconds = expiry_time - int(time.time())
+        if timeout_seconds <= 0:
+            self.logger.error(f"Invalid timeout calculated: {timeout_seconds} seconds (expiry: {expiry_time}, current: {int(time.time())})")
+            return False
             
         success_count = 0
         total_rules = len(self.monitored_ports)
+        added_rules = []  # Track successfully added rules for potential rollback
         
         for port_config in self.monitored_ports:
             port = port_config.get("port")
             protocol = port_config.get("protocol", "tcp")
             
-            # Add rich rule to allow this IP to access the port
-            # Rich rules have higher precedence and can override zone target
-            rich_rule = f'rule family="ipv4" source address="{ip_address}" port protocol="{protocol}" port="{port}" accept'
+            # Build rich rule using helper function
+            rich_rule = self._build_rich_rule(ip_address, port, protocol)
+            if not rich_rule:
+                self.logger.error(f"Failed to build rich rule for {ip_address}:{port}/{protocol}")
+                continue
             
             success, stdout, stderr = self._run_firewall_cmd([
-                f"--zone={self.zone_name}", f"--add-rich-rule={rich_rule}", f"--timeout={expiry_time - int(time.time())}"
+                f"--zone={self.zone_name}", f"--add-rich-rule={rich_rule}", f"--timeout={timeout_seconds}"
             ])
             
             if success:
                 success_count += 1
+                added_rules.append(rich_rule)
                 self.logger.info(f"Added firewalld rule for {ip_address}:{port}/{protocol}")
             else:
                 self.logger.error(f"Failed to add firewalld rule for {ip_address}:{port}/{protocol}: {stderr}")
@@ -197,8 +251,20 @@ class FirewalldIntegration:
             self.logger.info(f"Successfully added all {total_rules} firewalld rules for {ip_address}")
             return True
         else:
+            # Partial failure - rollback added rules
             self.logger.error(f"Only {success_count}/{total_rules} firewalld rules added for {ip_address}")
+            self._rollback_rules(added_rules, ip_address)
             return False
+    
+    def _rollback_rules(self, rules: List[str], ip_address: str):
+        """Roll back successfully added rules on partial failure."""
+        self.logger.info(f"Rolling back {len(rules)} firewalld rules for {ip_address}")
+        for rule in rules:
+            success, stdout, stderr = self._run_firewall_cmd([
+                f"--zone={self.zone_name}", f"--remove-rich-rule={rule}"
+            ], check=False)
+            if not success:
+                self.logger.warning(f"Failed to rollback rule '{rule}': {stderr}")
     
     def remove_whitelist_rule(self, ip_address: str) -> bool:
         """
@@ -224,8 +290,11 @@ class FirewalldIntegration:
             port = port_config.get("port")
             protocol = port_config.get("protocol", "tcp")
             
-            # Remove rich rule
-            rich_rule = f'rule family="ipv4" source address="{ip_address}" port protocol="{protocol}" port="{port}" accept'
+            # Build rich rule using helper function
+            rich_rule = self._build_rich_rule(ip_address, port, protocol)
+            if not rich_rule:
+                self.logger.warning(f"Failed to build rich rule for removal: {ip_address}:{port}/{protocol}")
+                continue
             
             success, stdout, stderr = self._run_firewall_cmd([
                 f"--zone={self.zone_name}", f"--remove-rich-rule={rich_rule}"
@@ -347,7 +416,16 @@ class FirewalldIntegration:
     
     def _add_single_rule(self, ip_address: str, port: int, protocol: str, timeout_seconds: int) -> bool:
         """Add a single firewalld rule with timeout."""
-        rich_rule = f'rule family="ipv4" source address="{ip_address}" port protocol="{protocol}" port="{port}" accept'
+        # Validate timeout
+        if timeout_seconds <= 0:
+            self.logger.error(f"Invalid timeout for rule restoration: {timeout_seconds} seconds")
+            return False
+            
+        # Build rich rule using helper function
+        rich_rule = self._build_rich_rule(ip_address, port, protocol)
+        if not rich_rule:
+            self.logger.error(f"Failed to build rich rule for restoration: {ip_address}:{port}/{protocol}")
+            return False
         
         success, stdout, stderr = self._run_firewall_cmd([
             f"--zone={self.zone_name}", f"--add-rich-rule={rich_rule}", f"--timeout={timeout_seconds}"

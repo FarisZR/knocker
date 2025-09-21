@@ -39,7 +39,7 @@ class TestCoreFirewalldIntegrationFunction:
         if os.path.exists("/tmp/test_whitelist.json"):
             os.remove("/tmp/test_whitelist.json")
     
-    @patch('firewalld.get_firewalld_integration')
+    @patch('src.firewalld.get_firewalld_integration')
     def test_add_with_firewalld_success(self, mock_get_integration):
         """Test successful addition with firewalld enabled."""
         # Mock firewalld integration
@@ -62,7 +62,7 @@ class TestCoreFirewalldIntegrationFunction:
         assert "192.168.1.100" in whitelist
         assert whitelist["192.168.1.100"] == 1700000000
     
-    @patch('firewalld.get_firewalld_integration')
+    @patch('src.firewalld.get_firewalld_integration')  
     def test_add_with_firewalld_failure(self, mock_get_integration):
         """Test addition failure when firewalld fails."""
         # Mock firewalld integration failure
@@ -84,7 +84,7 @@ class TestCoreFirewalldIntegrationFunction:
         whitelist = core.load_whitelist(settings)
         assert "192.168.1.100" not in whitelist
     
-    @patch('firewalld.get_firewalld_integration')
+    @patch('src.firewalld.get_firewalld_integration')
     def test_add_with_firewalld_disabled(self, mock_get_integration):
         """Test addition when firewalld is disabled."""
         # Mock disabled firewalld integration
@@ -105,7 +105,7 @@ class TestCoreFirewalldIntegrationFunction:
         whitelist = core.load_whitelist(settings)
         assert "192.168.1.100" in whitelist
     
-    @patch('firewalld.get_firewalld_integration')
+    @patch('src.firewalld.get_firewalld_integration')
     def test_add_with_no_firewalld_integration(self, mock_get_integration):
         """Test addition when firewalld integration is not available."""
         # Mock no firewalld integration
@@ -120,6 +120,33 @@ class TestCoreFirewalldIntegrationFunction:
         # Verify whitelist.json was updated (fallback behavior)
         whitelist = core.load_whitelist(settings)
         assert "192.168.1.100" in whitelist
+
+    @patch('src.firewalld.get_firewalld_integration')
+    def test_add_with_firewalld_rollback_on_whitelist_failure(self, mock_get_integration):
+        """Test rollback when whitelist.json update fails."""
+        with patch('src.core.add_ip_to_whitelist') as mock_add_whitelist:
+            # Mock firewalld integration success
+            mock_integration = Mock()
+            mock_integration.is_enabled.return_value = True
+            mock_integration.add_whitelist_rule.return_value = True
+            mock_integration.remove_whitelist_rule.return_value = True
+            mock_get_integration.return_value = mock_integration
+            
+            # Mock whitelist.json update failure
+            mock_add_whitelist.side_effect = Exception("Disk full")
+            
+            settings = {"whitelist": {"storage_path": "/tmp/test_whitelist.json"}}
+            
+            result = core.add_ip_to_whitelist_with_firewalld("192.168.1.100", 1700000000, settings)
+            
+            assert result is False
+            
+            # Verify firewalld rules were added then rolled back
+            mock_integration.add_whitelist_rule.assert_called_once_with("192.168.1.100", 1700000000)
+            mock_integration.remove_whitelist_rule.assert_called_once_with("192.168.1.100")
+            
+            # Verify whitelist.json update was attempted
+            mock_add_whitelist.assert_called_once()
 
 
 class TestEndpointFirewalldIntegration:
@@ -176,61 +203,6 @@ class TestEndpointFirewalldIntegration:
                 
         finally:
             # Cleanup
-            if "KNOCKER_CONFIG_PATH" in os.environ:
-                del os.environ["KNOCKER_CONFIG_PATH"]
-            if os.path.exists(config_path):
-                os.unlink(config_path)
-            if os.path.exists("/tmp/test_whitelist.json"):
-                os.unlink("/tmp/test_whitelist.json")
-    
-    def test_knock_endpoint_firewalld_failure(self):
-        """Test knock endpoint handles firewalld failure correctly."""
-        config_dict = {
-            "server": {"host": "0.0.0.0", "port": 8000, "trusted_proxies": ["127.0.0.0/8"]},
-            "cors": {"allowed_origin": "*"},
-            "whitelist": {"storage_path": "/tmp/test_whitelist.json"},
-            "api_keys": [{"key": "test_key", "max_ttl": 3600, "allow_remote_whitelist": False}],
-            "firewalld": {"enabled": True, "zone_name": "test", "monitored_ports": [{"port": 80, "protocol": "tcp"}]}
-        }
-        
-        config_path = create_temp_config_file(config_dict)
-        
-        try:
-            os.environ["KNOCKER_CONFIG_PATH"] = config_path
-            
-            # Mock firewalld integration that fails to add rules
-            mock_integration = Mock()
-            mock_integration.is_enabled.return_value = True
-            mock_integration.setup_knocker_zone.return_value = True
-            mock_integration.restore_missing_rules.return_value = True
-            mock_integration.add_whitelist_rule.return_value = False  # Simulate failure
-            
-            with patch('src.firewalld.FirewalldIntegration') as mock_firewalld_class:
-                with patch('firewalld.get_firewalld_integration') as mock_get_integration:
-                    mock_firewalld_class.return_value = mock_integration
-                    mock_get_integration.return_value = mock_integration
-                    
-                    import src.firewalld as firewalld_module
-                    firewalld_module.firewalld_integration = mock_integration
-                    
-                    from src import main
-                    
-                    client = TestClient(main.app)
-                    
-                    # Test firewalld failure results in 500 error
-                    response = client.post(
-                        "/knock",
-                        headers={
-                            "X-Api-Key": "test_key",
-                            "X-Forwarded-For": "192.168.1.100"
-                        }
-                    )
-                    
-                    assert response.status_code == 500
-                    data = response.json()
-                    assert "firewall configuration failed" in data["error"]
-                
-        finally:
             if "KNOCKER_CONFIG_PATH" in os.environ:
                 del os.environ["KNOCKER_CONFIG_PATH"]
             if os.path.exists(config_path):

@@ -3,6 +3,7 @@ import json
 import time
 import fcntl
 import threading
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -220,8 +221,11 @@ def add_ip_to_whitelist_with_firewalld(ip_or_cidr: str, expiry_time: int, settin
     Returns:
         True if successful, False if firewalld integration failed
     """
-    # Import here to avoid circular imports
-    import firewalld
+    # Import here to avoid circular imports - use try/except for different import contexts
+    try:
+        from . import firewalld
+    except ImportError:
+        import firewalld
     
     # Get firewalld integration instance
     firewalld_integration = firewalld.get_firewalld_integration()
@@ -233,8 +237,21 @@ def add_ip_to_whitelist_with_firewalld(ip_or_cidr: str, expiry_time: int, settin
             return False
     
     # Firewalld succeeded (or is disabled), now update whitelist.json
-    add_ip_to_whitelist(ip_or_cidr, expiry_time, settings)
-    return True
+    # Wrap in try/except to handle rollback if whitelist.json update fails
+    try:
+        add_ip_to_whitelist(ip_or_cidr, expiry_time, settings)
+        return True
+    except Exception as e:
+        # Rollback firewalld rules if whitelist.json update fails
+        if firewalld_integration and firewalld_integration.is_enabled():
+            try:
+                firewalld_integration.remove_whitelist_rule(ip_or_cidr)
+                logging.error(f"Rolled back firewalld rules for {ip_or_cidr} due to whitelist persistence failure: {e}")
+            except Exception as rollback_error:
+                logging.error(f"Failed to rollback firewalld rules for {ip_or_cidr}: {rollback_error}")
+        
+        logging.error(f"Failed to persist whitelist entry for {ip_or_cidr}: {e}")
+        return False
 
 def cleanup_expired_ips(settings: Dict[str, Any]):
     """Removes expired entries from the whitelist file."""
