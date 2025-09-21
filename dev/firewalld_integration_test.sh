@@ -28,7 +28,7 @@ BASE_URL="http://localhost"
 KNOCK_URL="$BASE_URL/knock"
 
 # Test IP
-TEST_IP="192.168.100.200"
+TEST_IP="192.168.178.77"
 
 # API Key (from knocker.firewalld.yaml)
 VALID_ADMIN_KEY="CHANGE_ME_SUPER_SECRET_ADMIN_KEY"
@@ -38,9 +38,9 @@ VALID_ADMIN_KEY="CHANGE_ME_SUPER_SECRET_ADMIN_KEY"
 check_prerequisites() {
     info "Checking prerequisites..."
     
-    # Check if docker-compose is available
-    if ! command -v docker-compose &> /dev/null; then
-        fail "docker-compose is required but not installed"
+    # Check if docker compose is available
+    if ! docker compose version &> /dev/null; then
+        fail "docker compose v2 is required but not installed"
     fi
     
     # Check if firewalld is available on the host system
@@ -54,12 +54,9 @@ check_prerequisites() {
 start_test_environment() {
     info "Starting test environment with firewalld integration..."
     
-    # Use the firewalld configuration
-    export KNOCKER_CONFIG_FILE="knocker.firewalld.yaml"
-    
     # Start the services
-    docker-compose -f docker-compose.yml down --remove-orphans || true
-    docker-compose -f docker-compose.yml up -d --build
+    docker compose -f docker-compose.yml down --remove-orphans || true
+    docker compose -f docker-compose.yml up -d --build
     
     # Wait for services to be ready
     info "Waiting for services to start..."
@@ -84,7 +81,7 @@ test_firewalld_daemon_access() {
     info "Testing firewalld daemon access from container..."
     
     # Test if the container can access firewalld
-    if docker-compose exec -T knocker firewall-cmd --state &>/dev/null; then
+    if docker compose exec -T knocker firewall-cmd --state &>/dev/null; then
         success "Container can access firewalld daemon"
     else
         fail "Container cannot access firewalld daemon. Check dbus mount and permissions."
@@ -95,14 +92,14 @@ test_knocker_zone_creation() {
     info "Testing knocker zone creation..."
     
     # Check if the knocker zone was created
-    if docker-compose exec -T knocker firewall-cmd --list-all-zones | grep -q "knocker"; then
+    if docker compose exec -T knocker firewall-cmd --list-all-zones | grep -q "knocker"; then
         success "Knocker firewalld zone exists"
     else
         fail "Knocker firewalld zone was not created"
     fi
     
     # Check zone properties
-    zone_info=$(docker-compose exec -T knocker firewall-cmd --zone=knocker --list-all)
+    zone_info=$(docker compose exec -T knocker firewall-cmd --zone=knocker --list-all)
     
     if echo "$zone_info" | grep -q "target: DROP"; then
         success "Knocker zone has correct target (DROP)"
@@ -122,7 +119,7 @@ test_successful_knock_creates_rules() {
     fi
     
     # Check if rich rules were created for the IP
-    if docker-compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
+    if docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
         success "Firewalld rich rules created for $TEST_IP"
     else
         fail "No firewalld rich rules found for $TEST_IP after successful knock"
@@ -140,7 +137,7 @@ test_rule_expiration() {
     fi
     
     # Verify rules exist
-    if docker-compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
+    if docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
         success "Rules created with TTL"
     else
         fail "Rules not found after knock with TTL"
@@ -151,7 +148,7 @@ test_rule_expiration() {
     sleep 15
     
     # Check if rules are gone
-    if ! docker-compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
+    if ! docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
         success "Rules expired correctly after TTL"
     else
         warning "Rules may not have expired correctly (could be due to timing)"
@@ -169,17 +166,17 @@ test_startup_rule_recovery() {
     fi
     
     # Manually remove the firewalld rule (simulate rule loss)
-    docker-compose exec -T knocker firewall-cmd --zone=knocker --remove-rich-rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"80\" accept" &>/dev/null || true
+    docker compose exec -T knocker firewall-cmd --zone=knocker --remove-rich-rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"80\" accept" &>/dev/null || true
     
     # Restart the knocker container
     info "Restarting knocker container to test rule recovery..."
-    docker-compose restart knocker
+    docker compose restart knocker
     
     # Wait for restart
     sleep 10
     
     # Check if the rule was restored
-    if docker-compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
+    if docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
         success "Rules recovered after container restart"
     else
         warning "Rule recovery test inconclusive (rule may have been recreated by other means)"
@@ -204,7 +201,7 @@ test_firewalld_error_handling() {
 
 cleanup() {
     info "Cleaning up test environment..."
-    docker-compose -f docker-compose.yml down --remove-orphans || true
+    docker compose -f docker-compose.yml down --remove-orphans || true
     success "Cleanup completed"
 }
 
