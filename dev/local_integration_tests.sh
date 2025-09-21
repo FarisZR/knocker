@@ -126,6 +126,14 @@ test_remote_whitelist_permission_denied() {
     fi
 }
 
+# --- Firewalld Integration Tests ---
+
+run_firewalld_tests() {
+    info "Running firewalld integration tests..." 
+    run_test "Firewalld Zone Exists" "test_firewalld_zone_exists"
+    run_test "Firewalld Rules After Knock" "test_firewalld_rules_after_knock"
+}
+
 # --- Main Execution ---
 main() {
     info "Starting integration tests..."
@@ -255,44 +263,6 @@ test_firewalld_rules_after_knock() {
     else
         info "Firewalld rules test skipped (docker not available)"
     fi
-}
-
-main() {
-    info "Starting integration tests..."
-
-    info "Waiting for services to be healthy..."
-    retry_count=0
-    max_retries=30
-    retry_interval=2
-
-    until $(curl --output /dev/null --silent --fail "$BASE_URL/health"); do
-        if [ ${retry_count} -ge ${max_retries} ]; then
-            fail "Services did not become healthy in time."
-        fi
-        printf '.'
-        retry_count=$((retry_count+1))
-        sleep ${retry_interval}
-    done
-    echo # Newline after dots
-    success "Services are healthy!"
-
-    run_test "Unauthorized Access" "test_unauthorized_access"
-    run_test "Successful Knock" "test_successful_knock"
-    run_test "Authorized Access After Knock" "test_authorized_access_after_knock"
-    run_test "Always-Allowed IP Direct Access" "test_always_allowed_ip_access"
-    run_test "Knock for Always-Allowed IP (Valid Key)" "test_knock_for_always_allowed_ip_valid_key"
-    run_test "Knock for Always-Allowed IP (Invalid Key)" "test_knock_for_always_allowed_ip_invalid_key"
-    run_test "Remote Whitelist (Success)" "test_remote_whitelist_success"
-    run_test "Remote Whitelist (Permission Denied)" "test_remote_whitelist_permission_denied"
-    run_test "Knock with Invalid Key" "test_knock_with_invalid_key"
-    run_test "Knock with Custom TTL (Valid)" "test_knock_with_custom_ttl_valid"
-    run_test "Knock with Custom TTL (Capped)" "test_knock_with_custom_ttl_capped"
-# --- Firewalld Integration Tests ---
-
-run_firewalld_tests() {
-    info "Running firewalld integration tests..."
-    run_test "Firewalld Zone Exists" "test_firewalld_zone_exists"
-    run_test "Firewalld Rules After Knock" "test_firewalld_rules_after_knock"
 }
 
 main() {
