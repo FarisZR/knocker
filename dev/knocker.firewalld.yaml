@@ -40,6 +40,7 @@ firewalld:
   enabled: true  # Enable for testing
   zone_name: "knocker"  # Name of the firewalld zone to create
   zone_priority: -100  # Zone priority (negative numbers = higher priority)
+  default_action: "drop"  # Default action for blocked traffic: "drop" or "reject"
   monitored_ports:
     # Ports that will be protected by knocker firewall rules
     # Only whitelisted IPs will be able to access these ports

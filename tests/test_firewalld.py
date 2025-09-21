@@ -22,6 +22,7 @@ def mock_settings():
             "enabled": True,
             "zone_name": "knocker-test",
             "zone_priority": -100,
+            "default_action": "drop",
             "monitored_ports": [
                 {"port": 80, "protocol": "tcp"},
                 {"port": 443, "protocol": "tcp"},
@@ -145,6 +146,56 @@ class TestFirewalldIntegrationInit:
         # Should not raise exception when disabled
         integration = firewalld.FirewalldIntegration(settings)
         assert integration.enabled is False
+    
+    def test_default_action_validation_drop(self):
+        """Test default_action validation succeeds for 'drop'."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "default_action": "drop",
+                "monitored_ips": ["192.168.1.0/24"]
+            }
+        }
+        # Should not raise exception
+        integration = firewalld.FirewalldIntegration(settings)
+        assert integration.default_action == "drop"
+    
+    def test_default_action_validation_reject(self):
+        """Test default_action validation succeeds for 'reject'."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "default_action": "reject",
+                "monitored_ips": ["192.168.1.0/24"]
+            }
+        }
+        # Should not raise exception
+        integration = firewalld.FirewalldIntegration(settings)
+        assert integration.default_action == "reject"
+    
+    def test_default_action_validation_invalid(self):
+        """Test default_action validation fails for invalid action."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "default_action": "invalid",
+                "monitored_ips": ["192.168.1.0/24"]
+            }
+        }
+        with pytest.raises(ValueError, match="Invalid default_action.*Must be 'drop' or 'reject'"):
+            firewalld.FirewalldIntegration(settings)
+    
+    def test_default_action_defaults_to_drop(self):
+        """Test default_action defaults to 'drop' when not specified."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "monitored_ips": ["192.168.1.0/24"]
+            }
+        }
+        # Should not raise exception and default to "drop"
+        integration = firewalld.FirewalldIntegration(settings)
+        assert integration.default_action == "drop"
 
 
 class TestFirewalldCommands:

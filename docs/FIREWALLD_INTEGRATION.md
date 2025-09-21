@@ -45,6 +45,7 @@ firewalld:
 - **`enabled`**: Boolean flag to enable/disable firewalld integration
 - **`zone_name`**: Name of the firewalld zone to create (default: "knocker")
 - **`zone_priority`**: Priority of the zone (negative numbers = higher priority, default: -100)
+- **`default_action`**: Action for blocked traffic - "drop" (silent discard) or "reject" (connection refused with response) (default: "drop")
 - **`monitored_ports`**: List of port/protocol combinations to protect
 - **`monitored_ips`**: List of IP ranges the zone will apply to (**must include network mask**)
 
@@ -135,14 +136,25 @@ On startup, knocker creates a firewalld zone with the following properties:
 - **Target**: Default (not DROP) - only specific ports are affected
 - **Sources**: Configured IP ranges from `monitored_ips`
 
-### Port-Specific DROP Rules
+### Port-Specific Rules Configuration
 
-For each monitored port, knocker creates DROP rules with low priority (9999) for both IPv4 and IPv6:
+For each monitored port, knocker creates blocking rules with low priority (9999) for both IPv4 and IPv6:
 
+**DROP Rules (Silent Discard)**:
 ```
 rule family="ipv4" port protocol="tcp" port="80" drop priority="9999"
 rule family="ipv6" port protocol="tcp" port="80" drop priority="9999"
 ```
+
+**REJECT Rules (Connection Refused with Response)**:
+```
+rule family="ipv4" port protocol="tcp" port="80" reject priority="9999"
+rule family="ipv6" port protocol="tcp" port="80" reject priority="9999"
+```
+
+The action is configurable via the `default_action` setting:
+- **`drop`** (default): Silently discards packets - attackers don't know if service exists
+- **`reject`**: Actively refuses connection - faster for legitimate clients but reveals service existence
 
 This ensures only monitored ports are blocked, leaving other ports unaffected.
 
@@ -159,14 +171,14 @@ Example rich rule created for whitelisting:
 rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="80" accept priority="1000"
 ```
 
-The high priority (1000) ensures these ALLOW rules override the low priority DROP rules (9999).
+The high priority (1000) ensures these ALLOW rules override the low priority blocking rules (9999).
 
 ### Rule Priority System
 
 Firewalld uses priority numbers where **lower numbers = higher priority**:
 
 - **Priority 1000**: Whitelist ALLOW rules (high priority)
-- **Priority 9999**: Default DROP rules (low priority)
+- **Priority 9999**: Default blocking rules (low priority) - either DROP or REJECT based on `default_action`
 
 This ensures whitelisted IPs can access monitored ports while blocked IPs cannot.
 

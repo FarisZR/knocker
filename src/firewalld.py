@@ -38,15 +38,20 @@ class FirewalldIntegration:
         self.firewalld_config = settings.get("firewalld", {})
         self.enabled = self.firewalld_config.get("enabled", False)
         self.zone_name = self.firewalld_config.get("zone_name", "knocker")
+        self.zone_priority = self.firewalld_config.get("zone_priority", -100)
+        self.default_action = self.firewalld_config.get("default_action", "drop")
         self.monitored_ports = self.firewalld_config.get("monitored_ports", [])
         self.monitored_ips = self.firewalld_config.get("monitored_ips", [])
-        self.zone_priority = self.firewalld_config.get("zone_priority", -100)
         
         self.logger = logging.getLogger(__name__)
         
         # Validate monitored IPs have proper CIDR notation
         if self.enabled:
             self._validate_monitored_ips()
+            
+            # Validate default action
+            if self.default_action not in ["drop", "reject"]:
+                raise ValueError(f"Invalid default_action '{self.default_action}'. Must be 'drop' or 'reject'")
         
     def _validate_monitored_ips(self):
         """Validate that all monitored IPs have proper CIDR notation."""
@@ -192,22 +197,22 @@ class FirewalldIntegration:
                 if not success:
                     self.logger.warning(f"Failed to add source {ip_range} to zone: {stderr}")
             
-            # Add DROP rules for monitored ports with low priority (high number)
+            # Add default action rules for monitored ports with low priority (high number)
             # These will be overridden by whitelist rules with higher priority (lower number)
             for port_config in self.monitored_ports:
                 port = port_config.get("port")
                 protocol = port_config.get("protocol", "tcp")
                 
-                # Add DROP rules for both IPv4 and IPv6 with low priority (high number = 9999)
+                # Add default action rules for both IPv4 and IPv6 with low priority (high number = 9999)
                 for family in ["ipv4", "ipv6"]:
-                    drop_rule = f'rule family="{family}" port protocol="{protocol}" port="{port}" drop priority="9999"'
+                    default_rule = f'rule family="{family}" port protocol="{protocol}" port="{port}" {self.default_action} priority="9999"'
                     success, _, stderr = self._run_firewall_cmd([
-                        "--permanent", f"--zone={self.zone_name}", f"--add-rich-rule={drop_rule}"
+                        "--permanent", f"--zone={self.zone_name}", f"--add-rich-rule={default_rule}"
                     ])
                     if not success:
-                        self.logger.warning(f"Failed to add DROP rule for {port}/{protocol} ({family}): {stderr}")
+                        self.logger.warning(f"Failed to add {self.default_action.upper()} rule for {port}/{protocol} ({family}): {stderr}")
                     else:
-                        self.logger.info(f"Added DROP rule for port {port}/{protocol} ({family})")
+                        self.logger.info(f"Added {self.default_action.upper()} rule for port {port}/{protocol} ({family})")
 
             # Reload to apply permanent changes
             success, _, stderr = self._run_firewall_cmd(["--reload"])
