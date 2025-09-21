@@ -190,9 +190,9 @@ async def knock(
     expiry_time = int(time.time()) + effective_ttl
     
     # Add to whitelist with firewalld integration
-    # This will add firewalld rules BEFORE updating whitelist.json
+    # This will add firewalld rules BEFORE updating whitelist.json if firewalld is enabled
     if not core.add_ip_to_whitelist_with_firewalld(ip_to_whitelist, expiry_time, settings):
-        logging.error(f"Failed to add firewalld rules for {ip_to_whitelist}. Request from {client_ip} rejected.")
+        logging.error(f"Failed to whitelist {ip_to_whitelist}. Request from {client_ip} rejected.")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"error": "Internal server error: firewall configuration failed."},

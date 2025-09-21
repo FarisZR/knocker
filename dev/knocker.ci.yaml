@@ -1,0 +1,56 @@
+# knocker configuration for CI testing (firewalld disabled)
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  trusted_proxies:
+    # Trust the default Docker IPv4 and IPv6 subnets.
+    # Adjust these to match your specific Docker network configuration if you've customized it.
+    - "172.29.238.0/24"
+    - "fd00:dead:c0de::/64"
+
+cors:
+  allowed_origin: "*"  # SECURITY: Set to your web app's origin (e.g., "https://your-web-app.com") in production instead of "*"
+
+security:
+  always_allowed_ips:
+    # These IPs/CIDRs are always allowed to pass through the /verify endpoint
+    # without needing to be dynamically whitelisted.
+    # It's recommended to include your reverse proxy's IP here.
+    - "172.29.238.0/24"
+    - "fd00:dead:c0de::/64"
+  excluded_paths:
+    # Request paths that start with any of these values will bypass
+    # the IP whitelist check entirely.
+    # Example:
+    # - "/api/v1/status"
+    # - "/metrics"
+    - "/knock"
+  # Maximum number of entries in the whitelist (default: 10000)
+  max_whitelist_entries: 10000
+
+whitelist:
+  # The path where the whitelist file will be stored.
+  # This path is relative to the container's file system.
+  # The docker-compose.yml file will mount a volume to this location.
+  storage_path: "/data/whitelist.json"
+
+# Firewalld integration disabled for CI testing
+firewalld:
+  enabled: false  # Disabled for CI - no firewalld daemon available
+
+api_keys:
+  - name: "admin-key-for-remote-whitelisting"
+    key: "CHANGE_ME_SUPER_SECRET_ADMIN_KEY"
+    max_ttl: 3600 # Whitelist IPs for a maximum of 1 hour (in seconds)
+    allow_remote_whitelist: true # This key CAN whitelist other IPs/CIDRs
+
+  - name: "personal-phone"
+    key: "CHANGE_ME_SECRET_PHONE_KEY"
+    max_ttl: 14400 # Whitelist IPs for a maximum of 4 hours
+    allow_remote_whitelist: false # This key can ONLY whitelist its own IP
+
+  - name: "guest-access"
+    key: "CHANGE_ME_TEMPORARY_GUEST_KEY"
+    max_ttl: 600 # Whitelist IPs for a maximum of 10 minutes
+    allow_remote_whitelist: false

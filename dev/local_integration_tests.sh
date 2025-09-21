@@ -268,6 +268,34 @@ test_firewalld_rules_after_knock() {
 main() {
     info "Starting integration tests..."
 
+    # Check if we're in CI environment or if firewalld configuration should be used
+    COMPOSE_FILE="docker-compose.yml"
+    if [ "$CI" = "true" ] || [ "$KNOCKER_TEST_MODE" = "ci" ] || [ ! -f /var/run/dbus/system_bus_socket ]; then
+        info "Using CI configuration (firewalld disabled)"
+        COMPOSE_FILE="docker-compose.ci.yml"
+    fi
+    
+    # Show docker logs for debugging if tests fail
+    show_logs_on_exit() {
+        if [ $? -ne 0 ]; then
+            info "Test failed - showing container logs for debugging:"
+            
+            # Try docker compose first, then fall back to docker-compose
+            if command -v docker &> /dev/null && docker compose version &> /dev/null; then
+                info "=== Knocker container logs ==="
+                docker compose -f "$COMPOSE_FILE" logs knocker || true
+                info "=== Caddy container logs ==="
+                docker compose -f "$COMPOSE_FILE" logs caddy || true
+            elif command -v docker-compose &> /dev/null; then
+                info "=== Knocker container logs ==="
+                docker-compose -f "$COMPOSE_FILE" logs knocker || true
+                info "=== Caddy container logs ==="
+                docker-compose -f "$COMPOSE_FILE" logs caddy || true
+            fi
+        fi
+    }
+    trap show_logs_on_exit EXIT
+
     info "Waiting for services to be healthy..."
     retry_count=0
     max_retries=30
@@ -297,8 +325,12 @@ main() {
     run_test "Knock with Custom TTL (Capped)" "test_knock_with_custom_ttl_capped"
     run_test "Knock with Custom TTL (Invalid)" "test_knock_with_custom_ttl_invalid"
     
-    # Run firewalld integration tests
-    run_firewalld_tests
+    # Run firewalld integration tests only if not in CI mode
+    if [ "$COMPOSE_FILE" != "docker-compose.ci.yml" ]; then
+        run_firewalld_tests
+    else
+        info "Firewalld integration tests skipped (running in CI mode)"
+    fi
 
     info "All integration tests passed!"
 }
