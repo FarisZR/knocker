@@ -52,8 +52,8 @@ firewalld:
   monitored_ips:
     # IP ranges that the firewalld zone will apply to
     # Use 0.0.0.0/0 for all IPv4, ::/0 for all IPv6
-    - "0.0.0.0/0"
-    - "::/0"
+    - "192.168.178.77"
+    # - "::/0"
 
 api_keys:
   - name: "admin-key-for-remote-whitelisting"

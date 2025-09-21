@@ -142,11 +142,12 @@ class FirewalldIntegration:
             
         try:
             # Check if zone already exists
-            success, _, _ = self._run_firewall_cmd([f"--zone={self.zone_name}", "--list-all"], check=False)
-            if not success:
+            success, stdout, _ = self._run_firewall_cmd(["--get-zones"], check=False)
+            zone_exists = success and self.zone_name in stdout
+            if not zone_exists:
                 # Create the zone
                 success, stdout, stderr = self._run_firewall_cmd([
-                    f"--new-zone={self.zone_name}", "--permanent"
+                    "--permanent", f"--new-zone={self.zone_name}"
                 ])
                 if not success:
                     self.logger.error(f"Failed to create zone {self.zone_name}: {stderr}")
@@ -156,14 +157,14 @@ class FirewalldIntegration:
             
             # Set zone priority (higher number = higher priority)
             success, _, stderr = self._run_firewall_cmd([
-                f"--zone={self.zone_name}", f"--set-priority={self.zone_priority}", "--permanent"
+                "--permanent", f"--zone={self.zone_name}", f"--set-priority={self.zone_priority}"
             ])
             if not success:
                 self.logger.warning(f"Failed to set zone priority: {stderr}")
             
             # Set default target to DROP for security
             success, _, stderr = self._run_firewall_cmd([
-                f"--zone={self.zone_name}", "--set-target=DROP", "--permanent"
+                "--permanent", f"--zone={self.zone_name}", "--set-target=DROP"
             ])
             if not success:
                 self.logger.error(f"Failed to set zone target to DROP: {stderr}")
@@ -172,7 +173,7 @@ class FirewalldIntegration:
             # Add monitored IP ranges to the zone
             for ip_range in self.monitored_ips:
                 success, _, stderr = self._run_firewall_cmd([
-                    f"--zone={self.zone_name}", f"--add-source={ip_range}", "--permanent"
+                    "--permanent", f"--zone={self.zone_name}", f"--add-source={ip_range}"
                 ])
                 if not success:
                     self.logger.warning(f"Failed to add source {ip_range} to zone: {stderr}")
