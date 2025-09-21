@@ -6,10 +6,13 @@ Knocker provides advanced firewall integration through firewalld, allowing for d
 
 The firewalld integration works by:
 
-1. **Creating a dedicated firewalld zone** with highest priority and DROP target by default
-2. **Adding rich rules dynamically** for whitelisted IPs with automatic expiration
-3. **Recovering missing rules on startup** by comparing whitelist.json with active firewalld rules
-4. **Providing comprehensive error handling** with detailed logging and HTTP 500 responses on failures
+1. **Creating a dedicated firewalld zone** with configurable priority (default: high priority)
+2. **Adding specific DROP rules** for monitored ports with low priority (9999)
+3. **Adding ALLOW rules dynamically** for whitelisted IPs with high priority (1000) that override DROP rules
+4. **Recovering missing rules on startup** by comparing whitelist.json with active firewalld rules
+5. **Providing comprehensive error handling** with detailed logging and HTTP 500 responses on failures
+
+This approach ensures that only monitored ports are affected by the firewall rules, while unmonitored ports remain unaffected.
 
 ## Configuration
 
@@ -19,7 +22,7 @@ Add the following section to your `knocker.yaml` configuration file:
 firewalld:
   enabled: true  # Set to true to enable firewalld integration
   zone_name: "knocker"  # Name of the firewalld zone to create
-  zone_priority: 100  # Zone priority (higher = more priority)
+  zone_priority: -100  # Zone priority (negative numbers = higher priority)
   monitored_ports:
     # Ports that will be protected by knocker firewall rules
     # Only whitelisted IPs will be able to access these ports
@@ -31,6 +34,7 @@ firewalld:
       protocol: tcp
   monitored_ips:
     # IP ranges that the firewalld zone will apply to
+    # MUST include network mask (e.g., /32 for single IPv4 host, /128 for single IPv6 host)
     # Use 0.0.0.0/0 for all IPv4, ::/0 for all IPv6
     - "0.0.0.0/0"
     - "::/0"
@@ -40,9 +44,29 @@ firewalld:
 
 - **`enabled`**: Boolean flag to enable/disable firewalld integration
 - **`zone_name`**: Name of the firewalld zone to create (default: "knocker")
-- **`zone_priority`**: Priority of the zone (higher numbers = higher priority, default: 100)
+- **`zone_priority`**: Priority of the zone (negative numbers = higher priority, default: -100)
 - **`monitored_ports`**: List of port/protocol combinations to protect
-- **`monitored_ips`**: List of IP ranges the zone will apply to
+- **`monitored_ips`**: List of IP ranges the zone will apply to (**must include network mask**)
+
+### ⚠️ Important: Network Mask Requirements
+
+All IP addresses in `monitored_ips` **must include proper CIDR notation**:
+
+- **IPv4**: Use `/32` for single hosts (e.g., `192.168.1.100/32`) or appropriate subnet mask
+- **IPv6**: Use `/128` for single hosts (e.g., `2001:db8::1/128`) or appropriate prefix length
+
+**Examples:**
+```yaml
+monitored_ips:
+  - "192.168.1.100/32"    # Single IPv4 host
+  - "192.168.1.0/24"      # IPv4 subnet
+  - "2001:db8::1/128"     # Single IPv6 host
+  - "2001:db8::/32"       # IPv6 prefix
+  - "0.0.0.0/0"           # All IPv4 addresses
+  - "::/0"                # All IPv6 addresses
+```
+
+The application will validate these requirements at startup and refuse to start with invalid CIDR notation.
 
 ## Docker Configuration
 
@@ -107,22 +131,44 @@ networks:
 On startup, knocker creates a firewalld zone with the following properties:
 
 - **Name**: Configurable (default: "knocker")
-- **Priority**: Configurable (default: 100, higher = more priority)
-- **Target**: DROP (blocks all traffic by default)
+- **Priority**: Configurable (default: -100, negative numbers = higher priority)
+- **Target**: Default (not DROP) - only specific ports are affected
 - **Sources**: Configured IP ranges from `monitored_ips`
 
-### Dynamic Rule Creation
+### Port-Specific DROP Rules
+
+For each monitored port, knocker creates DROP rules with low priority (9999) for both IPv4 and IPv6:
+
+```
+rule family="ipv4" port protocol="tcp" port="80" drop priority="9999"
+rule family="ipv6" port protocol="tcp" port="80" drop priority="9999"
+```
+
+This ensures only monitored ports are blocked, leaving other ports unaffected.
+
+### Dynamic ALLOW Rule Creation
 
 When a successful knock request is made:
 
-1. **Firewalld rules are added first** using rich rules with timeout
+1. **Firewalld ALLOW rules are added first** using rich rules with high priority (1000) and timeout
 2. **Only after firewalld success** is `whitelist.json` updated
 3. **On firewalld failure**, the request returns HTTP 500 and `whitelist.json` is not modified
 
-Example rich rule created:
+Example rich rule created for whitelisting:
 ```
-rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="80" accept
+rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="80" accept priority="1000"
 ```
+
+The high priority (1000) ensures these ALLOW rules override the low priority DROP rules (9999).
+
+### Rule Priority System
+
+Firewalld uses priority numbers where **lower numbers = higher priority**:
+
+- **Priority 1000**: Whitelist ALLOW rules (high priority)
+- **Priority 9999**: Default DROP rules (low priority)
+
+This ensures whitelisted IPs can access monitored ports while blocked IPs cannot.
 
 ### Rule Expiration
 

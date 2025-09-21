@@ -40,9 +40,28 @@ class FirewalldIntegration:
         self.zone_name = self.firewalld_config.get("zone_name", "knocker")
         self.monitored_ports = self.firewalld_config.get("monitored_ports", [])
         self.monitored_ips = self.firewalld_config.get("monitored_ips", [])
-        self.zone_priority = self.firewalld_config.get("zone_priority", 100)
+        self.zone_priority = self.firewalld_config.get("zone_priority", -100)
         
         self.logger = logging.getLogger(__name__)
+        
+        # Validate monitored IPs have proper CIDR notation
+        if self.enabled:
+            self._validate_monitored_ips()
+        
+    def _validate_monitored_ips(self):
+        """Validate that all monitored IPs have proper CIDR notation."""
+        for ip_str in self.monitored_ips:
+            try:
+                network = ipaddress.ip_network(ip_str, strict=False)
+                # Check if it's a single host without explicit netmask
+                if '/' not in ip_str:
+                    if network.version == 4:
+                        raise ValueError(f"IPv4 address '{ip_str}' must include network mask (e.g., '{ip_str}/32' for single host)")
+                    else:
+                        raise ValueError(f"IPv6 address '{ip_str}' must include network mask (e.g., '{ip_str}/128' for single host)")
+            except ValueError as e:
+                self.logger.error(f"Invalid monitored IP '{ip_str}': {e}")
+                raise ValueError(f"Invalid monitored IP configuration: {e}")
         
     def is_enabled(self) -> bool:
         """Check if firewalld integration is enabled."""
@@ -110,8 +129,8 @@ class FirewalldIntegration:
                 self.logger.error(f"Invalid protocol: {protocol}")
                 return None
             
-            # Build the rich rule
-            rich_rule = f'rule family="{family}" source address="{source_addr}" port protocol="{protocol}" port="{port}" accept'
+            # Build the rich rule with high priority (low number = 1000) to override DROP rules
+            rich_rule = f'rule family="{family}" source address="{source_addr}" port protocol="{protocol}" port="{port}" accept priority="1000"'
             return rich_rule
             
         except (ValueError, ipaddress.AddressValueError) as e:
@@ -155,20 +174,15 @@ class FirewalldIntegration:
                     
                 self.logger.info(f"Created firewalld zone: {self.zone_name}")
             
-            # Set zone priority (higher number = higher priority)
+            # Set zone priority (negative numbers have higher priority)
             success, _, stderr = self._run_firewall_cmd([
                 "--permanent", f"--zone={self.zone_name}", f"--set-priority={self.zone_priority}"
             ])
             if not success:
                 self.logger.warning(f"Failed to set zone priority: {stderr}")
             
-            # Set default target to DROP for security
-            success, _, stderr = self._run_firewall_cmd([
-                "--permanent", f"--zone={self.zone_name}", "--set-target=DROP"
-            ])
-            if not success:
-                self.logger.error(f"Failed to set zone target to DROP: {stderr}")
-                return False
+            # Don't set DROP as default target - instead use specific port rules
+            # This ensures only monitored ports are affected, not all traffic
             
             # Add monitored IP ranges to the zone
             for ip_range in self.monitored_ips:
@@ -178,14 +192,23 @@ class FirewalldIntegration:
                 if not success:
                     self.logger.warning(f"Failed to add source {ip_range} to zone: {stderr}")
             
-            # Apply drop rules for monitored ports by default
+            # Add DROP rules for monitored ports with low priority (high number)
+            # These will be overridden by whitelist rules with higher priority (lower number)
             for port_config in self.monitored_ports:
                 port = port_config.get("port")
                 protocol = port_config.get("protocol", "tcp")
                 
-                # Note: We don't add services/ports to the zone by default since target=DROP
-                # Rules will be added dynamically for whitelisted IPs
-                
+                # Add DROP rules for both IPv4 and IPv6 with low priority (high number = 9999)
+                for family in ["ipv4", "ipv6"]:
+                    drop_rule = f'rule family="{family}" port protocol="{protocol}" port="{port}" drop priority="9999"'
+                    success, _, stderr = self._run_firewall_cmd([
+                        "--permanent", f"--zone={self.zone_name}", f"--add-rich-rule={drop_rule}"
+                    ])
+                    if not success:
+                        self.logger.warning(f"Failed to add DROP rule for {port}/{protocol} ({family}): {stderr}")
+                    else:
+                        self.logger.info(f"Added DROP rule for port {port}/{protocol} ({family})")
+
             # Reload to apply permanent changes
             success, _, stderr = self._run_firewall_cmd(["--reload"])
             if not success:

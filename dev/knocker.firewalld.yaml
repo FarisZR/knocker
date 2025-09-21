@@ -39,7 +39,7 @@ whitelist:
 firewalld:
   enabled: true  # Enable for testing
   zone_name: "knocker"  # Name of the firewalld zone to create
-  zone_priority: 100  # Zone priority (higher = more priority)
+  zone_priority: -100  # Zone priority (negative numbers = higher priority)
   monitored_ports:
     # Ports that will be protected by knocker firewall rules
     # Only whitelisted IPs will be able to access these ports
@@ -51,8 +51,8 @@ firewalld:
       protocol: tcp
   monitored_ips:
     # IP ranges that the firewalld zone will apply to
-    # Use 0.0.0.0/0 for all IPv4, ::/0 for all IPv6
-    - "192.168.178.77"
+    # MUST include network mask (e.g., /32 for single IPv4 host, /128 for single IPv6 host)
+    - "192.168.178.77/32"  # Single host with proper CIDR notation
     # - "::/0"
 
 api_keys:

@@ -21,7 +21,7 @@ def mock_settings():
         "firewalld": {
             "enabled": True,
             "zone_name": "knocker-test",
-            "zone_priority": 100,
+            "zone_priority": -100,
             "monitored_ports": [
                 {"port": 80, "protocol": "tcp"},
                 {"port": 443, "protocol": "tcp"},
@@ -64,7 +64,7 @@ class TestFirewalldIntegrationInit:
         """Test proper initialization with full configuration."""
         assert firewalld_integration.enabled is True
         assert firewalld_integration.zone_name == "knocker-test"
-        assert firewalld_integration.zone_priority == 100
+        assert firewalld_integration.zone_priority == -100
         assert len(firewalld_integration.monitored_ports) == 3
         assert len(firewalld_integration.monitored_ips) == 2
     
@@ -80,7 +80,7 @@ class TestFirewalldIntegrationInit:
         
         assert integration.enabled is True
         assert integration.zone_name == "knocker"
-        assert integration.zone_priority == 100
+        assert integration.zone_priority == -100
         assert integration.monitored_ports == []
         assert integration.monitored_ips == []
     
@@ -88,6 +88,63 @@ class TestFirewalldIntegrationInit:
         """Test is_enabled method."""
         assert firewalld_integration.is_enabled() is True
         assert firewalld_disabled.is_enabled() is False
+    
+    def test_cidr_validation_success(self):
+        """Test successful CIDR validation."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "monitored_ips": ["192.168.1.0/24", "10.0.0.0/8", "2001:db8::/32"]
+            }
+        }
+        # Should not raise exception
+        integration = firewalld.FirewalldIntegration(settings)
+        assert integration.enabled is True
+    
+    def test_cidr_validation_ipv4_missing_mask(self):
+        """Test CIDR validation fails for IPv4 without mask."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "monitored_ips": ["192.168.1.1"]  # Missing /32
+            }
+        }
+        with pytest.raises(ValueError, match="IPv4 address.*must include network mask"):
+            firewalld.FirewalldIntegration(settings)
+    
+    def test_cidr_validation_ipv6_missing_mask(self):
+        """Test CIDR validation fails for IPv6 without mask."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "monitored_ips": ["2001:db8::1"]  # Missing /128
+            }
+        }
+        with pytest.raises(ValueError, match="IPv6 address.*must include network mask"):
+            firewalld.FirewalldIntegration(settings)
+    
+    def test_cidr_validation_invalid_ip(self):
+        """Test CIDR validation fails for invalid IP."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "monitored_ips": ["not.an.ip/24"]
+            }
+        }
+        with pytest.raises(ValueError, match="Invalid monitored IP configuration"):
+            firewalld.FirewalldIntegration(settings)
+    
+    def test_cidr_validation_disabled_skips_check(self):
+        """Test CIDR validation is skipped when firewalld is disabled."""
+        settings = {
+            "firewalld": {
+                "enabled": False,
+                "monitored_ips": ["192.168.1.1"]  # Invalid but should be ignored
+            }
+        }
+        # Should not raise exception when disabled
+        integration = firewalld.FirewalldIntegration(settings)
+        assert integration.enabled is False
 
 
 class TestFirewalldCommands:
@@ -159,20 +216,26 @@ class TestZoneSetup:
         mock_available.return_value = True
         
         # Simulate zone doesn't exist, then successful creation
+        # New behavior: adds DROP rules for each monitored port (3 ports) x 2 IP families = 6 rules
         mock_cmd.side_effect = [
             (False, "", "zone not found"),  # Zone check
             (True, "", ""),  # Create zone
             (True, "", ""),  # Set priority
-            (True, "", ""),  # Set target DROP
-            (True, "", ""),  # Add source 1
-            (True, "", ""),  # Add source 2
+            (True, "", ""),  # Add source 1 (0.0.0.0/0)
+            (True, "", ""),  # Add source 2 (::/0)
+            (True, "", ""),  # DROP rule port 80 IPv4
+            (True, "", ""),  # DROP rule port 80 IPv6
+            (True, "", ""),  # DROP rule port 443 IPv4
+            (True, "", ""),  # DROP rule port 443 IPv6
+            (True, "", ""),  # DROP rule port 22 IPv4
+            (True, "", ""),  # DROP rule port 22 IPv6
             (True, "", "")   # Reload
         ]
         
         result = firewalld_integration.setup_knocker_zone()
         
         assert result is True
-        assert mock_cmd.call_count == 7
+        assert mock_cmd.call_count == 12
     
     @patch.object(firewalld.FirewalldIntegration, 'is_firewalld_available')
     @patch.object(firewalld.FirewalldIntegration, '_run_firewall_cmd')
@@ -180,20 +243,25 @@ class TestZoneSetup:
         """Test setup with existing zone."""
         mock_available.return_value = True
         
-        # Zone exists, so skip creation
+        # Zone exists, so skip creation but still add DROP rules
         mock_cmd.side_effect = [
-            (True, "zone info", ""),  # Zone exists
+            (True, "knocker-test zone info", ""),  # Zone exists
             (True, "", ""),  # Set priority
-            (True, "", ""),  # Set target DROP
-            (True, "", ""),  # Add source 1
-            (True, "", ""),  # Add source 2
+            (True, "", ""),  # Add source 1 (0.0.0.0/0)
+            (True, "", ""),  # Add source 2 (::/0)
+            (True, "", ""),  # DROP rule port 80 IPv4
+            (True, "", ""),  # DROP rule port 80 IPv6
+            (True, "", ""),  # DROP rule port 443 IPv4
+            (True, "", ""),  # DROP rule port 443 IPv6
+            (True, "", ""),  # DROP rule port 22 IPv4
+            (True, "", ""),  # DROP rule port 22 IPv6
             (True, "", "")   # Reload
         ]
         
         result = firewalld_integration.setup_knocker_zone()
         
         assert result is True
-        assert mock_cmd.call_count == 6
+        assert mock_cmd.call_count == 11
     
     @patch.object(firewalld.FirewalldIntegration, 'is_firewalld_available')
     def test_setup_zone_firewalld_unavailable(self, mock_available, firewalld_integration):
@@ -236,9 +304,9 @@ class TestWhitelistRules:
         
         # Verify rich rule format
         expected_calls = [
-            call(['--zone=knocker-test', '--add-rich-rule=rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="80" accept', '--timeout=600']),
-            call(['--zone=knocker-test', '--add-rich-rule=rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="443" accept', '--timeout=600']),
-            call(['--zone=knocker-test', '--add-rich-rule=rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="22" accept', '--timeout=600'])
+            call(['--zone=knocker-test', '--add-rich-rule=rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="80" accept priority="1000"', '--timeout=600']),
+            call(['--zone=knocker-test', '--add-rich-rule=rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="443" accept priority="1000"', '--timeout=600']),
+            call(['--zone=knocker-test', '--add-rich-rule=rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="22" accept priority="1000"', '--timeout=600'])
         ]
         mock_cmd.assert_has_calls(expected_calls)
     
@@ -420,25 +488,25 @@ class TestRichRuleBuilder:
     def test_build_rich_rule_ipv4_single_host(self, firewalld_integration):
         """Test building rich rule for IPv4 single host."""
         rule = firewalld_integration._build_rich_rule("192.168.1.100", 80, "tcp")
-        expected = 'rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="80" accept'
+        expected = 'rule family="ipv4" source address="192.168.1.100" port protocol="tcp" port="80" accept priority="1000"'
         assert rule == expected
     
     def test_build_rich_rule_ipv4_cidr(self, firewalld_integration):
         """Test building rich rule for IPv4 CIDR."""
         rule = firewalld_integration._build_rich_rule("192.168.1.0/24", 443, "tcp")
-        expected = 'rule family="ipv4" source address="192.168.1.0/24" port protocol="tcp" port="443" accept'
+        expected = 'rule family="ipv4" source address="192.168.1.0/24" port protocol="tcp" port="443" accept priority="1000"'
         assert rule == expected
     
     def test_build_rich_rule_ipv6_single_host(self, firewalld_integration):
         """Test building rich rule for IPv6 single host."""
         rule = firewalld_integration._build_rich_rule("2001:db8::1", 22, "tcp")
-        expected = 'rule family="ipv6" source address="2001:db8::1" port protocol="tcp" port="22" accept'
+        expected = 'rule family="ipv6" source address="2001:db8::1" port protocol="tcp" port="22" accept priority="1000"'
         assert rule == expected
     
     def test_build_rich_rule_ipv6_cidr(self, firewalld_integration):
         """Test building rich rule for IPv6 CIDR."""
         rule = firewalld_integration._build_rich_rule("2001:db8::/32", 8080, "udp")
-        expected = 'rule family="ipv6" source address="2001:db8::/32" port protocol="udp" port="8080" accept'
+        expected = 'rule family="ipv6" source address="2001:db8::/32" port protocol="udp" port="8080" accept priority="1000"'
         assert rule == expected
     
     def test_build_rich_rule_invalid_ip(self, firewalld_integration):
