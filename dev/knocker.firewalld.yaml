@@ -9,6 +9,9 @@ server:
     - "172.29.238.0/24"
     - "fd00:dead:c0de::/64"
 
+logging:
+  level: DEBUG
+
 cors:
   allowed_origin: "*"  # SECURITY: Set to your web app's origin (e.g., "https://your-web-app.com") in production instead of "*"
 

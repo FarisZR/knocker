@@ -339,6 +339,8 @@ logging:
   level: DEBUG
 ```
 
+When the top-level logging level is set to DEBUG in your `knocker.yaml` (see `logging.level`), Knocker will log the exact executed `firewall-cmd` command at DEBUG level. This includes the full command and arguments (for example: `firewall-cmd --zone=knocker --add-rich-rule=... --timeout=...`). Use DEBUG logging with caution in production as it may expose IP addresses and rule details in logs.
+
 ### Common Commands
 
 ```bash

@@ -80,6 +80,20 @@ class FirewalldIntegration:
             Tuple of (success, stdout, stderr)
         """
         cmd = ["firewall-cmd"] + args
+        # At DEBUG level, log the exact command that will be executed.
+        # This is controlled by the top-level `logging.level` setting in knocker.yaml.
+        # Note: DEBUG logging may expose IP addresses and full rule text in logs.
+        self.logger.debug("Executing firewall-cmd: %s", " ".join(cmd))
+
+        # Some deployments (uvicorn, gunicorn) attach their own loggers/handlers.
+        # Also emit to the common uvicorn error logger at DEBUG so it appears when
+        # running under typical ASGI servers that route logs through uvicorn.
+        try:
+            logging.getLogger("uvicorn.error").debug("Executing firewall-cmd: %s", " ".join(cmd))
+        except Exception:
+            # Best-effort only; don't fail if uvicorn logger isn't available.
+            pass
+
         try:
             result = subprocess.run(
                 cmd,

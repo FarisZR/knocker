@@ -12,6 +12,9 @@ server:
 cors:
   allowed_origin: "*"  # SECURITY: Set to your web app's origin (e.g., "https://your-web-app.com") in production instead of "*"
 
+logging:
+  level: DEBUG
+
 security:
   always_allowed_ips:
     # These IPs/CIDRs are always allowed to pass through the /verify endpoint
