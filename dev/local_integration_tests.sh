@@ -18,10 +18,15 @@ fail() {
 }
 
 # --- Configuration ---
+# Ensure script runs from its own directory (so tests use the dev/ compose files and
+# the script won't accidentally start services from the repository root)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || true
+ 
 BASE_URL="http://localhost"
 PROTECTED_URL="$BASE_URL/private"
 KNOCK_URL="$BASE_URL/knock"
-
+ 
 # IPs
 REGULAR_IP="1.1.1.1"
 ALWAYS_ALLOWED_IP="172.29.238.10" # From the docker-compose network
@@ -217,9 +222,9 @@ test_firewalld_zone_exists() {
     if command -v docker-compose &> /dev/null || command -v docker &> /dev/null; then
         # Try docker compose first, then fall back to docker-compose
         if command -v docker &> /dev/null && docker compose version &> /dev/null; then
-            zone_check=$(docker compose exec -T knocker firewall-cmd --list-all-zones 2>/dev/null | grep -c "knocker" || echo "0")
+            zone_check=$(docker compose -f "$COMPOSE_FILE" exec -T knocker firewall-cmd --list-all-zones 2>/dev/null | grep -c "knocker" || echo "0")
         elif command -v docker-compose &> /dev/null; then
-            zone_check=$(docker-compose exec -T knocker firewall-cmd --list-all-zones 2>/dev/null | grep -c "knocker" || echo "0")
+            zone_check=$(docker-compose -f "$COMPOSE_FILE" exec -T knocker firewall-cmd --list-all-zones 2>/dev/null | grep -c "knocker" || echo "0")
         else
             info "Firewalld zone test skipped (docker compose not available)"
             return
@@ -244,9 +249,9 @@ test_firewalld_rules_after_knock() {
             # Check if rich rules exist for the IP
             # Try docker compose first, then fall back to docker-compose
             if command -v docker &> /dev/null && docker compose version &> /dev/null; then
-                rules_check=$(docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules 2>/dev/null | grep -c "$REGULAR_IP" || echo "0")
+                rules_check=$(docker compose -f "$COMPOSE_FILE" exec -T knocker firewall-cmd --zone=knocker --list-rich-rules 2>/dev/null | grep -c "$REGULAR_IP" || echo "0")
             elif command -v docker-compose &> /dev/null; then
-                rules_check=$(docker-compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules 2>/dev/null | grep -c "$REGULAR_IP" || echo "0")
+                rules_check=$(docker-compose -f "$COMPOSE_FILE" exec -T knocker firewall-cmd --zone=knocker --list-rich-rules 2>/dev/null | grep -c "$REGULAR_IP" || echo "0")
             else
                 info "Firewalld rules test skipped (docker compose not available)"
                 return
