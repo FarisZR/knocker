@@ -27,7 +27,7 @@ services:
       - KNOCKER_CONFIG_PATH=/app/knocker.yaml
     volumes:
       - ./knocker.firewalld.yaml:/app/knocker.yaml:ro
-      - knocker_data:/data
+      # - ./knocker_data:/data
       # Mount system dbus for firewalld integration
       - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
     # NOTE: Container runs as root when firewalld integration is enabled
@@ -56,4 +56,3 @@ networks:
 volumes:
   caddy_data:
   caddy_config:
-  knocker_data:
