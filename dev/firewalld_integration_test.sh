@@ -4,6 +4,8 @@
 # Tests the firewalld integration feature with a real firewalld daemon
 
 set -e
+# Ensure script runs from its own directory (dev/)
+cd "$(dirname "$0")" || exit 1
 
 # --- Helper Functions ---
 info() {
@@ -98,14 +100,19 @@ test_knocker_zone_creation() {
         fail "Knocker firewalld zone was not created"
     fi
     
-    # Check zone properties
-    zone_info=$(docker compose exec -T knocker firewall-cmd --zone=knocker --list-all)
+    # Check zone properties (verify default DROP rules exist for monitored ports)
+    # We no longer rely on the zone target; instead ensure monitored ports have DROP rules
+    zone_info=$(docker compose exec -T knocker firewall-cmd --zone=knocker --list-all || true)
     
-    if echo "$zone_info" | grep -q "target: DROP"; then
-        success "Knocker zone has correct target (DROP)"
-    else
-        warning "Knocker zone target may not be configured correctly"
-    fi
+    # Monitored ports (must match dev/knocker.firewalld.yaml)
+    for p in 80 443 22; do
+        # Check rich-rule lines that reference the port and contain 'drop' (order-insensitive)
+        if docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules 2>/dev/null | grep -F "port=\"$p\"" | grep -q "drop"; then
+            success "Knocker zone has DROP rule for port $p"
+        else
+            warning "Knocker zone missing DROP rule for port $p"
+        fi
+    done
 }
 
 test_successful_knock_creates_rules() {
