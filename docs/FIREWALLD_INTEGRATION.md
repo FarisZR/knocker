@@ -185,10 +185,14 @@ This ensures whitelisted IPs can access monitored ports while blocked IPs cannot
 ### Rule Expiration
 
 Rules automatically expire based on:
-
+ 
 - **TTL from knock request** (if specified and within API key limits)
 - **API key max_ttl** (if no TTL specified or TTL exceeds limit)
 - **Firewalld timeout mechanism** handles automatic rule removal
+
+### TTL replacement on existing rules (collision handling)
+
+When adding a rich rule, firewalld may return a success-with-warning indicating the rule is already present (for example: "Warning: ALREADY_ENABLED: 'rule ...' already in 'knocker'"). Because firewalld's CLI reports success even when it does not update an existing rule's timeout, Knocker explicitly detects these warning messages (e.g. "ALREADY_ENABLED" or "already in") and will remove the existing rich rule and re-add it with the requested timeout. This ensures that a new, shorter TTL can replace a previously created longer TTL. Note that this behavior generates transient log warnings and may briefly remove the rule before re-adding it.
 
 ### Startup Recovery
 

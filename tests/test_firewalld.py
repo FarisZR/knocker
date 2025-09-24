@@ -375,13 +375,47 @@ class TestWhitelistRules:
             (False, "", "error"),  # Port 443 failure
             (True, "", ""),   # Port 22 success
             (True, "", ""),   # Rollback Port 80 success
-            (True, "", "")    # Rollback Port 22 success  
+            (True, "", "")    # Rollback Port 22 success
         ]
         
         result = firewalld_integration.add_whitelist_rule("192.168.1.100", 1600)
         
         assert result is False  # Should fail if not all rules added
         assert mock_cmd.call_count == 5  # 3 adds + 2 rollbacks
+
+    @patch.object(firewalld.FirewalldIntegration, 'is_firewalld_available')
+    @patch.object(firewalld.FirewalldIntegration, '_run_firewall_cmd')
+    @patch('time.time')
+    def test_add_whitelist_rule_replace_on_already_enabled(self, mock_time, mock_cmd, mock_available, firewalld_integration):
+        """When firewall-cmd reports the rule is already enabled, ensure we remove and re-add to update TTL."""
+        mock_available.return_value = True
+        mock_time.return_value = 1000
+
+        # For each of 3 monitored ports:
+        #  - initial add returns success but with ALREADY_ENABLED warning
+        #  - remove succeeds
+        #  - re-add succeeds
+        # So for 3 ports we expect 9 calls.
+        warning_tuple = (True, "", "Warning: ALREADY_ENABLED: 'rule' already in 'knocker'")
+        remove_success = (True, "", "")
+        readd_success = (True, "", "")
+
+        # Build side effect list: (add-warning, remove, readd) * 3
+        side_effects = []
+        for _ in range(3):
+            side_effects.extend([warning_tuple, remove_success, readd_success])
+
+        mock_cmd.side_effect = side_effects
+
+        result = firewalld_integration.add_whitelist_rule("192.168.1.200", 1600)
+
+        assert result is True
+        assert mock_cmd.call_count == 9
+
+        # Verify that remove-rich-rule was called at least once (presence of removal calls)
+        called_args = [call_arg[0][0] for call_arg in mock_cmd.call_args_list]
+        remove_found = any("--remove-rich-rule=" in " ".join(c) for c in called_args)
+        assert remove_found is True
     
     @patch.object(firewalld.FirewalldIntegration, 'is_firewalld_available')
     def test_add_whitelist_rule_firewalld_unavailable(self, mock_available, firewalld_integration):
@@ -531,6 +565,36 @@ rule family="ipv4" source address="10.0.0.50" port protocol="tcp" port="22" acce
         result = firewalld_disabled.restore_missing_rules({"192.168.1.100": 2000})
         
         assert result is True  # Returns True when disabled (no-op)
+    
+    @patch.object(firewalld.FirewalldIntegration, 'get_active_rules')
+    @patch('time.time')
+    def test_restore_missing_rules_replace_on_already_enabled(self, mock_time, mock_get_rules, firewalld_integration):
+        """If adding a rule during restoration returns ALREADY_ENABLED, ensure knocker removes and re-adds it."""
+        mock_time.return_value = 1000
+        
+        # Whitelist contains one IP that is missing from active rules
+        whitelist = {"192.168.1.200": 2000}
+        mock_get_rules.return_value = []
+        
+        # Simulate for each monitored port: add-warning, remove success, re-add success
+        warning = (True, "", "Warning: ALREADY_ENABLED: 'rule' already in 'knocker'")
+        remove = (True, "", "")
+        readd = (True, "", "")
+        
+        # For 3 monitored ports, expect (add-warning, remove, re-add) each
+        side_effects = []
+        for _ in range(3):
+            side_effects.extend([warning, remove, readd])
+        
+        # Patch the underlying _run_firewall_cmd used by _add_single_rule
+        with patch.object(firewalld_integration, '_run_firewall_cmd') as mock_cmd:
+            mock_cmd.side_effect = side_effects
+            
+            result = firewalld_integration.restore_missing_rules(whitelist)
+            
+            assert result is True
+            # Expect 9 calls (3 ports * (add+remove+readd))
+            assert mock_cmd.call_count == 9
 
 
 class TestRichRuleBuilder:

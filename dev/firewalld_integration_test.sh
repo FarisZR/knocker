@@ -30,7 +30,7 @@ BASE_URL="http://localhost"
 KNOCK_URL="$BASE_URL/knock"
 
 # Test IP
-TEST_IP="192.168.178.77"
+TEST_IP="192.168.178.23"
 
 # API Key (from knocker.firewalld.yaml)
 VALID_ADMIN_KEY="CHANGE_ME_SUPER_SECRET_ADMIN_KEY"
@@ -136,9 +136,9 @@ test_successful_knock_creates_rules() {
 test_rule_expiration() {
     info "Testing rule expiration (this will take a moment)..."
     
-    # Perform a knock with short TTL (10 seconds)
-    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $TEST_IP" -H "Content-Type: application/json" -d '{"ttl": 10}' $KNOCK_URL)
-    
+    # Perform a knock with short TTL (5 seconds)
+    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $TEST_IP" -H "Content-Type: application/json" -d '{"ttl": 5}' $KNOCK_URL)
+
     if ! echo "$response" | grep -q "whitelisted_entry"; then
         fail "Knock with TTL failed. Response: $response"
     fi
@@ -160,6 +160,35 @@ test_rule_expiration() {
     else
         warning "Rules may not have expired correctly (could be due to timing)"
     fi
+}
+
+test_ttl_replacement_on_existing_rule() {
+    info "Testing TTL replacement when an existing rule is present..."
+
+    # Add an existing long-TTL rule for port 80 to simulate a collision
+    docker compose exec -T knocker firewall-cmd --zone=knocker --add-rich-rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"80\" accept" --timeout=120 || true
+    info "Pre-existing long-TTL rule added for $TEST_IP:80 (simulated)"
+
+    # Perform a knock with short TTL (5 seconds)
+    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $TEST_IP" -H "Content-Type: application/json" -d '{"ttl": 5}' $KNOCK_URL)
+
+    if ! echo "$response" | grep -q "whitelisted_entry"; then
+        fail "Knock with TTL failed. Response: $response"
+    fi
+
+    # Allow the service a moment to interact with firewalld
+    sleep 2
+
+    # Verify that rules for the IP exist (should have been replaced or updated)
+    rules=$(docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules || true)
+    if echo "$rules" | grep -q "$TEST_IP"; then
+        success "Rules exist after replacement knock for $TEST_IP"
+    else
+        fail "No rules found for $TEST_IP after replacement knock"
+    fi
+
+    # Cleanup: remove the simulated pre-existing rule if present
+    docker compose exec -T knocker firewall-cmd --zone=knocker --remove-rich-rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"80\" accept" &>/dev/null || true
 }
 
 test_startup_rule_recovery() {
@@ -224,6 +253,7 @@ main() {
     test_successful_knock_creates_rules
     test_rule_expiration
     test_startup_rule_recovery
+    test_ttl_replacement_on_existing_rule
     test_firewalld_error_handling
     
     success "All firewalld integration tests passed!"

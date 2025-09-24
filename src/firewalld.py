@@ -241,20 +241,69 @@ class FirewalldIntegration:
             self.logger.error(f"Exception during zone setup: {e}")
             return False
             
+    def _add_or_replace_rule(self, ip_address: str, port: int, protocol: str, timeout_seconds: int) -> bool:
+        """
+        Try to add a rich rule with timeout. If firewalld reports the rule is already enabled
+        (ALREADY_ENABLED / 'already in'), remove the existing rule and attempt to re-add it to
+        ensure the timeout (TTL) is updated.
+        """
+        # Build rich rule using helper function
+        rich_rule = self._build_rich_rule(ip_address, port, protocol)
+        if not rich_rule:
+            self.logger.error(f"Failed to build rich rule for {ip_address}:{port}/{protocol}")
+            return False
+
+        add_args = [f"--zone={self.zone_name}", f"--add-rich-rule={rich_rule}", f"--timeout={timeout_seconds}"]
+
+        success, stdout, stderr = self._run_firewall_cmd(add_args)
+        combined_output = " ".join(filter(None, [stdout, stderr])).upper()
+
+        # If add succeeded and no warnings, we're done
+        if success and "ALREADY_ENABLED" not in combined_output and "ALREADY IN" not in combined_output and "ALREADY" not in combined_output:
+            self.logger.info(f"Added firewalld rule for {ip_address}:{port}/{protocol}")
+            return True
+
+        # If the command succeeded but indicates the rule already exists, attempt replace
+        if success and ("ALREADY_ENABLED" in combined_output or "ALREADY IN" in combined_output or ("ALREADY" in combined_output and "IN" in combined_output)):
+            self.logger.warning(f"firewall-cmd reported rule already exists for {ip_address}:{port}/{protocol}: {stderr or stdout}. Attempting to replace it to update TTL.")
+            # Try to remove the existing rule (don't fail the whole operation on remove failure)
+            rem_args = [f"--zone={self.zone_name}", f"--remove-rich-rule={rich_rule}"]
+            rem_success, rem_stdout, rem_stderr = self._run_firewall_cmd(rem_args, check=False)
+            if not rem_success:
+                self.logger.warning(f"Failed to remove existing rule for {ip_address}:{port}/{protocol}: {rem_stderr or rem_stdout}")
+
+            # Re-add with requested timeout
+            readd_success, readd_stdout, readd_stderr = self._run_firewall_cmd(add_args)
+            if readd_success:
+                self.logger.info(f"Replaced firewalld rule for {ip_address}:{port}/{protocol} with new TTL={timeout_seconds}s")
+                return True
+            else:
+                self.logger.error(f"Failed to re-add firewalld rule for {ip_address}:{port}/{protocol} after removal: {readd_stderr}")
+                return False
+
+        # If initial add failed (non-zero exit), log and return False
+        if not success:
+            self.logger.error(f"Failed to add firewalld rule for {ip_address}:{port}/{protocol}: {stderr}")
+            return False
+
+        # Fallback success
+        self.logger.info(f"Added firewalld rule for {ip_address}:{port}/{protocol} (warning present)")
+        return True
+
     def add_whitelist_rule(self, ip_address: str, expiry_time: int) -> bool:
         """
         Add firewalld rules to allow an IP access to monitored ports.
-        
+
         Args:
             ip_address: IP address or CIDR to whitelist
             expiry_time: Unix timestamp when rule should expire
-            
+
         Returns:
             True if all rules added successfully, False otherwise
         """
         if not self.is_enabled():
             return True
-            
+
         if not self.is_firewalld_available():
             self.logger.error("Firewalld not available for adding whitelist rule")
             return False
@@ -264,32 +313,26 @@ class FirewalldIntegration:
         if timeout_seconds <= 0:
             self.logger.error(f"Invalid timeout calculated: {timeout_seconds} seconds (expiry: {expiry_time}, current: {int(time.time())})")
             return False
-            
+
         success_count = 0
         total_rules = len(self.monitored_ports)
         added_rules = []  # Track successfully added rules for potential rollback
-        
+
         for port_config in self.monitored_ports:
             port = port_config.get("port")
             protocol = port_config.get("protocol", "tcp")
-            
-            # Build rich rule using helper function
-            rich_rule = self._build_rich_rule(ip_address, port, protocol)
-            if not rich_rule:
-                self.logger.error(f"Failed to build rich rule for {ip_address}:{port}/{protocol}")
-                continue
-            
-            success, stdout, stderr = self._run_firewall_cmd([
-                f"--zone={self.zone_name}", f"--add-rich-rule={rich_rule}", f"--timeout={timeout_seconds}"
-            ])
-            
-            if success:
+
+            # Attempt to add (and replace if needed) the rule
+            ok = self._add_or_replace_rule(ip_address, port, protocol, timeout_seconds)
+            if ok:
                 success_count += 1
-                added_rules.append(rich_rule)
-                self.logger.info(f"Added firewalld rule for {ip_address}:{port}/{protocol}")
+                # Track the canonical rich rule text for rollback
+                rich_rule = self._build_rich_rule(ip_address, port, protocol)
+                if rich_rule:
+                    added_rules.append(rich_rule)
             else:
-                self.logger.error(f"Failed to add firewalld rule for {ip_address}:{port}/{protocol}: {stderr}")
-        
+                self.logger.error(f"Failed to ensure firewalld rule for {ip_address}:{port}/{protocol}")
+
         if success_count == total_rules:
             self.logger.info(f"Successfully added all {total_rules} firewalld rules for {ip_address}")
             return True
