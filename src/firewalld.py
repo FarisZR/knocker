@@ -501,28 +501,18 @@ class FirewalldIntegration:
         return restored_rules == missing_rules
     
     def _add_single_rule(self, ip_address: str, port: int, protocol: str, timeout_seconds: int) -> bool:
-        """Add a single firewalld rule with timeout."""
+        """Add a single firewalld rule with timeout.
+        
+        This now delegates to _add_or_replace_rule so that behavior for handling
+        "ALREADY_ENABLED" warnings is consistent between normal adds and restoration.
+        """
         # Validate timeout
         if timeout_seconds <= 0:
             self.logger.error(f"Invalid timeout for rule restoration: {timeout_seconds} seconds")
             return False
-            
-        # Build rich rule using helper function
-        rich_rule = self._build_rich_rule(ip_address, port, protocol)
-        if not rich_rule:
-            self.logger.error(f"Failed to build rich rule for restoration: {ip_address}:{port}/{protocol}")
-            return False
-        
-        success, stdout, stderr = self._run_firewall_cmd([
-            f"--zone={self.zone_name}", f"--add-rich-rule={rich_rule}", f"--timeout={timeout_seconds}"
-        ])
-        
-        if success:
-            self.logger.info(f"Restored firewalld rule: {ip_address}:{port}/{protocol} (TTL: {timeout_seconds}s)")
-            return True
-        else:
-            self.logger.error(f"Failed to restore rule {ip_address}:{port}/{protocol}: {stderr}")
-            return False
+    
+        # Delegate to add-or-replace helper which handles ALREADY_ENABLED collisions
+        return self._add_or_replace_rule(ip_address, port, protocol, timeout_seconds)
 
 
 # Global instance (will be initialized in main.py)

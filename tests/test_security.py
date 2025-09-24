@@ -5,6 +5,7 @@ Tests pass when attacks are successfully blocked.
 """
 import pytest
 import time
+import logging
 from fastapi.testclient import TestClient
 from src.main import app, get_settings
 from src import core
@@ -212,6 +213,8 @@ class TestInformationDisclosure:
         """
         VULNERABILITY: API key names are logged in plaintext.
         """
+        # Capture DEBUG logs too so this vulnerability test can observe API key names
+        caplog.set_level(logging.DEBUG, logger="uvicorn.error")
         response = client.post(
             "/knock",
             headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"}

@@ -199,10 +199,17 @@ async def knock(
             headers={"Access-Control-Allow-Origin": allowed_origin}
         )
     
-    # Log with reduced information to prevent disclosure
-    logging.getLogger("uvicorn.error").info(
-        f"Successfully whitelisted {ip_to_whitelist} for {effective_ttl} seconds. Requested by {client_ip}."
-    )
+    # Log with limited information; avoid logging API key names at INFO level.
+    # API key name is available at DEBUG level for troubleshooting only.
+    try:
+        api_key_name = core.get_api_key_name(api_key, settings)
+    except Exception:
+        api_key_name = None
+    logger = logging.getLogger("uvicorn.error")
+    # Reduce logging to DEBUG only to avoid information disclosure in INFO-level logs.
+    logger.debug("Successfully whitelisted %s for %d seconds. Requested by %s.", ip_to_whitelist, effective_ttl, client_ip)
+    if api_key_name:
+        logger.debug("API key used: %s", api_key_name)
 
     return JSONResponse(
         content={
