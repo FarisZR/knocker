@@ -1,6 +1,6 @@
 # Knocker
 
-Knocker is a secure, configurable, and self-hosted service that provides a "knock-knock" single-packet authorization (SPA) gateway for your Caddy v2 reverse proxy. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses.
+Knocker is a secure, configurable, and self-hosted service that provides a "knock-knock" single-packet authorization (SPA) gateway for your Homelab, it can be used as authentication for your reverse proxy like Caddy, or even on the firewall level using the FirewallD integration. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses.
 
 This is ideal for homelab environments where you want to expose services to the internet without a persistent VPN connection, while minimizing your public-facing attack surface.
 
@@ -15,7 +15,7 @@ This is ideal for homelab environments where you want to expose services to the 
 *   **Path-Based Exclusion**: Exclude specific URL paths (like health checks or public APIs) from authentication entirely.
 *   **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
 *   **Secure by Default**: Built-in protection against IP spoofing via a trusted proxy mechanism.
-*   **Test-Driven Development**: A comprehensive test suite ensures code correctness and reliability.
+*   **Firewalld Integration**: Advanced firewall control with timed rules that automatically expire based on TTL. Creates dynamic firewall rules using firewalld rich rules for enhanced security. (Optional, requires root container access)
 
 ## CI/CD
 
@@ -30,17 +30,20 @@ This project is designed to be deployed as a set of Docker containers using the 
 
 For a formal API specification and a summary of the architectural choices, please see:
 
-*   [**API Specification**](./API_SPEC.md)
-*   [**Design Decisions**](./DESIGN_DECISIONS.md)
+*   [**API Specification**](./docs/API_SPEC.md)
+*   [**Design Decisions**](./docs/DESIGN_DECISIONS.md)  
+*   [**Firewalld Integration**](./docs/FIREWALLD_INTEGRATION.md) - Advanced firewall control with timed rules
 
 ### 1. Prerequisites
     *   Docker and Docker Compose installed.
     *   A public-facing server to run the containers.
+    *   (Optional) Firewalld installed and running on the host for advanced firewall integration.
 
 2.  **Configuration**:
     *   Rename `knocker.example.yaml` to `knocker.yaml`.
     *   **Crucially, change the default API keys** in `knocker.yaml` to your own secure, random strings.
     *   Review the `trusted_proxies` list in `knocker.yaml`. The defaults are suitable for most Docker setups, but you should verify they match your Docker network's subnets if you have a custom configuration.
+    *   (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
     *   Create a `Caddyfile` in the `knocker` directory. See the "Caddy Integration" section below for examples.
 
 3.  **Update `docker-compose.yml`**:
@@ -151,6 +154,80 @@ jellyfin.your-domain.com {
   reverse_proxy jellyfin_service_name:8096
 }
 ```
+
+## FirewallD Integration
+
+Knocker provides advanced firewall integration through firewalld, creating dynamic, time-based firewall rules that automatically expire based on the TTL specified in knock requests. This feature operates at the network level, allowing you to use knocker for non-http services like ssh or game servers.
+
+### Why FirewallD?
+
+FirewallD was chosen for its unique architecture that separates the command interface from the daemon. This allows Knocker to control firewalld from within a Docker container by mounting the system's D-Bus socket, and also FirewallD is the only firewall that integrates correctly with docker, meaning docker doesn't just ignore it's rules like UFW.
+https://docs.docker.com/engine/network/packet-filtering-firewalls/#integration-with-firewalld
+
+### How It Works
+
+1. **Creates a dedicated firewalld zone** with high priority
+2. **Adds DROP/REJECT rules** for monitored ports to block unauthorized access
+3. **Dynamically adds ALLOW rules** for whitelisted IPs that override the blocking rules
+4. **Automatically expires rules** based on TTL using firewalld's timeout mechanism
+5. **Recovers rules on startup** by comparing whitelist.json with active firewalld rules
+
+### Enabling FirewallD Integration
+
+1. **Prerequisites**:
+   - FirewallD installed and running on the host system
+   - Docker container must run as root for D-Bus access
+
+2. **Configuration** in `knocker.yaml`:
+   ```yaml
+   firewalld:
+     enabled: true
+     zone_name: "knocker"
+     zone_priority: -100  # Higher priority (negative = higher)
+     monitored_ports:
+       - port: 80
+         protocol: tcp
+       - port: 443
+         protocol: tcp
+       - port: 22
+         protocol: tcp
+     monitored_ips:
+       - "0.0.0.0/0"    # All IPv4 (requires /0 suffix)
+       - "::/0"          # All IPv6 (requires /0 suffix)
+   ```
+
+3. **Docker Configuration**:
+   ```yaml
+   services:
+     knocker:
+       user: "0:0"  # Run as root
+       cap_add:
+         - NET_ADMIN
+       volumes:
+         - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+   ```
+
+### Security Considerations
+
+- **Root Access**: The container must run as root to access the system D-Bus, which increases the attack surface
+- **System Access**: The container can interact with the host's firewalld daemon
+- **Network Control**: The container has NET_ADMIN capability for firewall management
+
+### Testing and Troubleshooting
+
+Monitor active rules:
+```bash
+# Check knocker zone
+firewall-cmd --zone=knocker --list-all
+
+# View rich rules
+firewall-cmd --zone=knocker --list-rich-rules
+
+# Monitor rule changes
+journalctl -u firewalld -f
+```
+
+For detailed configuration, architecture, and troubleshooting information, see the complete [FirewallD Integration Guide](./docs/FIREWALLD_INTEGRATION.md).
 
 ## API Usage
 

@@ -1,16 +1,19 @@
-# knocker.example.yaml
+# knocker configuration for CI testing (firewalld disabled)
 
 server:
   host: "0.0.0.0"
   port: 8000
   trusted_proxies:
     # Trust the default Docker IPv4 and IPv6 subnets.
-    # Adjust these to match your specific Docker network configuration.
+    # Adjust these to match your specific Docker network configuration if you've customized it.
     - "172.29.238.0/24"
     - "fd00:dead:c0de::/64"
 
 cors:
   allowed_origin: "*"  # SECURITY: Set to your web app's origin (e.g., "https://your-web-app.com") in production instead of "*"
+
+logging:
+  level: DEBUG
 
 security:
   always_allowed_ips:
@@ -35,31 +38,9 @@ whitelist:
   # The docker-compose.yml file will mount a volume to this location.
   storage_path: "/data/whitelist.json"
 
-# Firewalld integration for advanced firewall control
+# Firewalld integration disabled for CI testing
 firewalld:
-  enabled: false  # Set to true to enable firewalld integration
-  zone_name: "knocker"  # Name of the firewalld zone to create, WON"T BE CLEANED UP AUTOMATICALLY ON SHUTDOWN
-  zone_priority: -100  # Zone priority (negative numbers = higher priority, default: -100)
-  default_action: "drop"  # Default action for blocked traffic: "drop" or "reject"
-  monitored_ports:
-    # Ports that will be protected by knocker firewall rules
-    # Only whitelisted IPs will be able to access these ports
-    - port: 80
-      protocol: tcp
-    - port: 443
-      protocol: tcp
-    - port: 22
-      protocol: tcp
-  monitored_ips:
-    # CAUTION: Using 0.0.0.0 or ::/0 applies DROP-by-default to ALL sources at high priority.
-    # Start narrowly (e.g., your WAN subnet) and expand only if you fully understand the impact.
-    # Examples:
-    # - "203.0.113.0/24"   # WAN IPv4
-    # - "2001:db8:1234::/48"  # WAN IPv6
-    - "203.0.113.0/24"
-    - "2001:db8:1234::/48"
-  # NOTE: Enabling firewalld requires the container to run as root
-  # and requires system dbus access. See documentation for setup details.
+  enabled: false  # Disabled for CI - no firewalld daemon available
 
 api_keys:
   - name: "admin-key-for-remote-whitelisting"

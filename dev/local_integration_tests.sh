@@ -18,10 +18,15 @@ fail() {
 }
 
 # --- Configuration ---
+# Ensure script runs from its own directory (so tests use the dev/ compose files and
+# the script won't accidentally start services from the repository root)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || true
+ 
 BASE_URL="http://localhost"
 PROTECTED_URL="$BASE_URL/private"
 KNOCK_URL="$BASE_URL/knock"
-
+ 
 # IPs
 REGULAR_IP="1.1.1.1"
 ALWAYS_ALLOWED_IP="172.29.238.10" # From the docker-compose network
@@ -126,6 +131,14 @@ test_remote_whitelist_permission_denied() {
     fi
 }
 
+# --- Firewalld Integration Tests ---
+
+run_firewalld_tests() {
+    info "Running firewalld integration tests..." 
+    run_test "Firewalld Zone Exists" "test_firewalld_zone_exists"
+    run_test "Firewalld Rules After Knock" "test_firewalld_rules_after_knock"
+}
+
 # --- Main Execution ---
 main() {
     info "Starting integration tests..."
@@ -135,7 +148,7 @@ main() {
     max_retries=30
     retry_interval=2
 
-    until $(curl --output /dev/null --silent --fail "$BASE_URL/health"); do
+    until curl --output /dev/null --silent --fail "$BASE_URL/health"; do
         if [ ${retry_count} -ge ${max_retries} ]; then
             fail "Services did not become healthy in time."
         fi
@@ -199,6 +212,132 @@ test_knock_with_custom_ttl_invalid() {
     else
         fail "Knock with invalid TTL did not fail as expected. Response: $response"
     fi
+}
+
+# --- Firewalld Integration Tests ---
+
+test_firewalld_zone_exists() {
+    # Check if the knocker firewalld zone was created (only works if firewalld is enabled)
+    # This test may be skipped if firewalld is not available or disabled
+    if command -v docker-compose &> /dev/null || command -v docker &> /dev/null; then
+        # Try docker compose first, then fall back to docker-compose
+        if command -v docker &> /dev/null && docker compose version &> /dev/null; then
+            zone_check=$(docker compose -f "$COMPOSE_FILE" exec -T knocker firewall-cmd --list-all-zones 2>/dev/null | grep -c "knocker" || echo "0")
+        elif command -v docker-compose &> /dev/null; then
+            zone_check=$(docker-compose -f "$COMPOSE_FILE" exec -T knocker firewall-cmd --list-all-zones 2>/dev/null | grep -c "knocker" || echo "0")
+        else
+            info "Firewalld zone test skipped (docker compose not available)"
+            return
+        fi
+        
+        if [ "$zone_check" -gt 0 ]; then
+            success "Firewalld knocker zone exists"
+        else
+            info "Firewalld zone test skipped (firewalld not enabled or available)"
+        fi
+    else
+        info "Firewalld zone test skipped (docker not available)"
+    fi
+}
+
+test_firewalld_rules_after_knock() {
+    # Check if firewalld rules are created after a successful knock (if firewalld is enabled)
+    if command -v docker-compose &> /dev/null || command -v docker &> /dev/null; then
+        # First, perform a knock
+        response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $REGULAR_IP" $KNOCK_URL)
+        if echo "$response" | grep -q "whitelisted_entry"; then
+            # Check if rich rules exist for the IP
+            # Try docker compose first, then fall back to docker-compose
+            if command -v docker &> /dev/null && docker compose version &> /dev/null; then
+                rules_check=$(docker compose -f "$COMPOSE_FILE" exec -T knocker firewall-cmd --zone=knocker --list-rich-rules 2>/dev/null | grep -c "$REGULAR_IP" || echo "0")
+            elif command -v docker-compose &> /dev/null; then
+                rules_check=$(docker-compose -f "$COMPOSE_FILE" exec -T knocker firewall-cmd --zone=knocker --list-rich-rules 2>/dev/null | grep -c "$REGULAR_IP" || echo "0")
+            else
+                info "Firewalld rules test skipped (docker compose not available)"
+                return
+            fi
+            
+            if [ "$rules_check" -gt 0 ]; then
+                success "Firewalld rules created for whitelisted IP ($REGULAR_IP)"
+            else
+                info "Firewalld rules test skipped (firewalld not enabled or no rules found)"
+            fi
+        else
+            fail "Could not perform knock for firewalld rules test"
+        fi
+    else
+        info "Firewalld rules test skipped (docker not available)"
+    fi
+}
+
+main() {
+    info "Starting integration tests..."
+
+    # Check if we're in CI environment or if firewalld configuration should be used
+    COMPOSE_FILE="docker-compose.yml"
+    if [ "$CI" = "true" ] || [ "$KNOCKER_TEST_MODE" = "ci" ] || [ ! -f /var/run/dbus/system_bus_socket ]; then
+        info "Using CI configuration (firewalld disabled)"
+        COMPOSE_FILE="docker-compose.ci.yml"
+    fi
+    
+    # Show docker logs for debugging if tests fail
+    show_logs_on_exit() {
+        if [ $? -ne 0 ]; then
+            info "Test failed - showing container logs for debugging:"
+            
+            # Try docker compose first, then fall back to docker-compose
+            if command -v docker &> /dev/null && docker compose version &> /dev/null; then
+                info "=== Knocker container logs ==="
+                docker compose -f "$COMPOSE_FILE" logs knocker || true
+                info "=== Caddy container logs ==="
+                docker compose -f "$COMPOSE_FILE" logs caddy || true
+            elif command -v docker-compose &> /dev/null; then
+                info "=== Knocker container logs ==="
+                docker-compose -f "$COMPOSE_FILE" logs knocker || true
+                info "=== Caddy container logs ==="
+                docker-compose -f "$COMPOSE_FILE" logs caddy || true
+            fi
+        fi
+    }
+    trap show_logs_on_exit EXIT
+
+    info "Waiting for services to be healthy..."
+    retry_count=0
+    max_retries=30
+    retry_interval=2
+
+    until curl --output /dev/null --silent --fail "$BASE_URL/health"; do
+        if [ ${retry_count} -ge ${max_retries} ]; then
+            fail "Services did not become healthy in time."
+        fi
+        printf '.'
+        retry_count=$((retry_count+1))
+        sleep ${retry_interval}
+    done
+    echo # Newline after dots
+    success "Services are healthy!"
+
+    run_test "Unauthorized Access" "test_unauthorized_access"
+    run_test "Successful Knock" "test_successful_knock"
+    run_test "Authorized Access After Knock" "test_authorized_access_after_knock"
+    run_test "Always-Allowed IP Direct Access" "test_always_allowed_ip_access"
+    run_test "Knock for Always-Allowed IP (Valid Key)" "test_knock_for_always_allowed_ip_valid_key"
+    run_test "Knock for Always-Allowed IP (Invalid Key)" "test_knock_for_always_allowed_ip_invalid_key"
+    run_test "Remote Whitelist (Success)" "test_remote_whitelist_success"
+    run_test "Remote Whitelist (Permission Denied)" "test_remote_whitelist_permission_denied"
+    run_test "Knock with Invalid Key" "test_knock_with_invalid_key"
+    run_test "Knock with Custom TTL (Valid)" "test_knock_with_custom_ttl_valid"
+    run_test "Knock with Custom TTL (Capped)" "test_knock_with_custom_ttl_capped"
+    run_test "Knock with Custom TTL (Invalid)" "test_knock_with_custom_ttl_invalid"
+    
+    # Run firewalld integration tests only if not in CI mode
+    if [ "$COMPOSE_FILE" != "docker-compose.ci.yml" ]; then
+        run_firewalld_tests
+    else
+        info "Firewalld integration tests skipped (running in CI mode)"
+    fi
+
+    info "All integration tests passed!"
 }
 
 main

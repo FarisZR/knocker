@@ -29,7 +29,7 @@ jobs:
       uses: docker/setup-buildx-action@v3
 
     - name: Run docker compose stack
-      run: docker compose -f dev/docker-compose.yml up -d --build
+      run: docker compose -f dev/docker-compose.ci.yml up -d --build
 
     - name: Wait for services to be healthy
       run: sleep 10 # Simple wait for services to start

@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, Response, status, Depends
 from fastapi.responses import JSONResponse
 import core
 import config
+import firewalld
 
 @lru_cache()
 def get_settings() -> Dict:
@@ -23,10 +24,33 @@ def get_settings() -> Dict:
 async def lifespan(app: FastAPI):
     """
     Application lifespan manager.
-    On startup, it performs a cleanup of any expired IPs.
+    On startup, it performs cleanup of expired IPs and initializes firewalld.
     """
     logging.info("Knocker service starting up...")
-    core.cleanup_expired_ips(get_settings())
+    
+    settings = get_settings()
+    core.cleanup_expired_ips(settings)
+    
+    # Initialize firewalld integration
+    firewalld_integration = firewalld.initialize_firewalld(settings)
+    if firewalld_integration and firewalld_integration.is_enabled():
+        logging.info("Firewalld integration is enabled")
+        
+        # Setup firewalld zone
+        if firewalld_integration.setup_knocker_zone():
+            logging.info("Firewalld zone setup completed successfully")
+            
+            # Restore missing rules from whitelist
+            whitelist = core.load_whitelist(settings)
+            if firewalld_integration.restore_missing_rules(whitelist):
+                logging.info("Firewalld rule restoration completed successfully")
+            else:
+                logging.warning("Some firewalld rules could not be restored")
+        else:
+            logging.error("Failed to setup firewalld zone - firewalld integration may not work properly")
+    else:
+        logging.info("Firewalld integration is disabled")
+    
     yield
     logging.info("Knocker service shutting down.")
 
@@ -165,12 +189,27 @@ async def knock(
 
     expiry_time = int(time.time()) + effective_ttl
     
-    core.add_ip_to_whitelist(ip_to_whitelist, expiry_time, settings)
+    # Add to whitelist with firewalld integration
+    # This will add firewalld rules BEFORE updating whitelist.json if firewalld is enabled
+    if not core.add_ip_to_whitelist_with_firewalld(ip_to_whitelist, expiry_time, settings):
+        logging.error(f"Failed to whitelist {ip_to_whitelist}. Request from {client_ip} rejected.")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": "Internal server error: firewall configuration failed."},
+            headers={"Access-Control-Allow-Origin": allowed_origin}
+        )
     
-    # Log with reduced information to prevent disclosure
-    logging.getLogger("uvicorn.error").info(
-        f"Successfully whitelisted {ip_to_whitelist} for {effective_ttl} seconds. Requested by {client_ip}."
-    )
+    # Log with limited information; avoid logging API key names at INFO level.
+    # API key name is available at DEBUG level for troubleshooting only.
+    try:
+        api_key_name = core.get_api_key_name(api_key, settings)
+    except Exception:
+        api_key_name = None
+    logger = logging.getLogger("uvicorn.error")
+    # Reduce logging to DEBUG only to avoid information disclosure in INFO-level logs.
+    logger.debug("Successfully whitelisted %s for %d seconds. Requested by %s.", ip_to_whitelist, effective_ttl, client_ip)
+    if api_key_name:
+        logger.debug("API key used: %s", api_key_name)
 
     return JSONResponse(
         content={

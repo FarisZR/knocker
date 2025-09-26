@@ -1,13 +1,16 @@
-# knocker.example.yaml
+# knocker configuration with firewalld integration enabled for testing
 
 server:
   host: "0.0.0.0"
   port: 8000
   trusted_proxies:
     # Trust the default Docker IPv4 and IPv6 subnets.
-    # Adjust these to match your specific Docker network configuration.
+    # Adjust these to match your specific Docker network configuration if you've customized it.
     - "172.29.238.0/24"
     - "fd00:dead:c0de::/64"
+
+logging:
+  level: DEBUG
 
 cors:
   allowed_origin: "*"  # SECURITY: Set to your web app's origin (e.g., "https://your-web-app.com") in production instead of "*"
@@ -37,9 +40,9 @@ whitelist:
 
 # Firewalld integration for advanced firewall control
 firewalld:
-  enabled: false  # Set to true to enable firewalld integration
-  zone_name: "knocker"  # Name of the firewalld zone to create, WON"T BE CLEANED UP AUTOMATICALLY ON SHUTDOWN
-  zone_priority: -100  # Zone priority (negative numbers = higher priority, default: -100)
+  enabled: true  # Enable for testing
+  zone_name: "knocker"  # Name of the firewalld zone to create
+  zone_priority: -100  # Zone priority (negative numbers = higher priority)
   default_action: "drop"  # Default action for blocked traffic: "drop" or "reject"
   monitored_ports:
     # Ports that will be protected by knocker firewall rules
@@ -51,15 +54,10 @@ firewalld:
     - port: 22
       protocol: tcp
   monitored_ips:
-    # CAUTION: Using 0.0.0.0 or ::/0 applies DROP-by-default to ALL sources at high priority.
-    # Start narrowly (e.g., your WAN subnet) and expand only if you fully understand the impact.
-    # Examples:
-    # - "203.0.113.0/24"   # WAN IPv4
-    # - "2001:db8:1234::/48"  # WAN IPv6
-    - "203.0.113.0/24"
-    - "2001:db8:1234::/48"
-  # NOTE: Enabling firewalld requires the container to run as root
-  # and requires system dbus access. See documentation for setup details.
+    # IP ranges that the firewalld zone will apply to
+    # MUST include network mask (e.g., /32 for single IPv4 host, /128 for single IPv6 host)
+    - "192.168.178.77/32"  # Single host with proper CIDR notation
+    # - "::/0"
 
 api_keys:
   - name: "admin-key-for-remote-whitelisting"
