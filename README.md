@@ -26,14 +26,7 @@ This project uses GitHub Actions for continuous integration and deployment.
 
 ## Deployment
 
-This project is designed to be deployed as a set of Docker containers using the provided `docker-compose.yml` file. It uses the pre-built image from the GitHub Container Registry.
-
-For a formal API specification and a summary of the architectural choices, please see:
-
-*   [**API Specification**](./docs/API_SPEC.md)
-*   [**Design Decisions**](./docs/DESIGN_DECISIONS.md)  
-*   [**Firewalld Integration**](./docs/FIREWALLD_INTEGRATION.md) - Advanced firewall control with timed rules
-
+This project is designed to be deployed as a set of Docker containers using the provided `docker-compose.yml` file. It uses the pre-built docker images with support for AMD64, Arm64 and risc-v.
 ### 1. Prerequisites
     *   Docker and Docker Compose installed.
     *   A public-facing server to run the containers.
@@ -42,18 +35,11 @@ For a formal API specification and a summary of the architectural choices, pleas
 2.  **Configuration**:
     *   Rename `knocker.example.yaml` to `knocker.yaml`.
     *   **Crucially, change the default API keys** in `knocker.yaml` to your own secure, random strings.
-    *   Review the `trusted_proxies` list in `knocker.yaml`. The defaults are suitable for most Docker setups, but you should verify they match your Docker network's subnets if you have a custom configuration.
+    *   Review the `trusted_proxies` list in `knocker.yaml`, they should match the subnet of the reverse proxys network (`docker network inspect xxx`)
     *   (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
     *   Create a `Caddyfile` in the `knocker` directory. See the "Caddy Integration" section below for examples.
 
-3.  **Update `docker-compose.yml`**:
-    *   Open the `docker-compose.yml` file.
-    *   Change the `image` line for the `knocker` service to point to your own GitHub repository:
-        ```yaml
-        image: ghcr.io/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY_NAME:latest
-        ```
-
-4.  **Run the Service**:
+3.  **Run the Service**:
     ```bash
     docker compose up -d
     ```
@@ -61,38 +47,7 @@ For a formal API specification and a summary of the architectural choices, pleas
 
 ## Configuration (`knocker.yaml`)
 
-The service is configured entirely through the `knocker.yaml` file.
-
-*   **`server`**:
-    *   `host` & `port`: The address the internal server listens on. Should generally be left as is.
-    *   `trusted_proxies`: A list of IPs or CIDR ranges. The service will only trust the `X-Forwarded-For` header from these addresses. **This is a critical security setting.**
-
-*   **`whitelist`**:
-    *   `storage_path`: The location inside the container where the `whitelist.json` file is stored. This is mounted to a Docker volume for persistence.
-
-*   **`api_keys`**:
-    *   A list of key objects.
-    *   `name`: A friendly name for the key.
-    *   `key`: The secret API key string.
-    *   `ttl`: The duration in seconds that an IP will be whitelisted for.
-    *   `allow_remote_whitelist`: A boolean (`true` or `false`). If `true`, this key can be used to whitelist any IP/CIDR passed in the request body. If `false`, it can only whitelist the IP of the device making the request.
-
-*   **`security`**:
-    *   `always_allowed_ips`: A list of IPv4 or IPv6 addresses or CIDR ranges that will always be allowed to pass the `/verify` endpoint, regardless of whether they are in the dynamic whitelist. This is useful for permanently allowing access to trusted IPs, such as the IP of a reverse proxy or an admin workstation.
-      ```yaml
-      security:
-        always_allowed_ips:
-          - "1.2.3.4"
-          - "192.168.1.0/24"
-          - "2001:db8::/32"
-      ```
-    *   `excluded_paths`: A list of URL paths that will bypass the IP whitelist check entirely. Any request whose path starts with one of these values will be allowed. This is useful for exposing health check endpoints or public API routes.
-      ```yaml
-      security:
-        excluded_paths:
-          - "/api/v1/status"
-          - "/metrics"
-      ```
+The service is configured entirely through the `knocker.yaml` file, an example config with all the option is in [knocker.example.yaml](./knocker.example.yaml)
 
 ## Caddy Integration
 
@@ -207,12 +162,6 @@ https://docs.docker.com/engine/network/packet-filtering-firewalls/#integration-w
          - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
    ```
 
-### Security Considerations
-
-- **Root Access**: The container must run as root to access the system D-Bus, which increases the attack surface
-- **System Access**: The container can interact with the host's firewalld daemon
-- **Network Control**: The container has NET_ADMIN capability for firewall management
-
 ### Testing and Troubleshooting
 
 Monitor active rules:
@@ -262,9 +211,11 @@ This endpoint validates an API key and whitelists an IP.
 
 This endpoint is used by Caddy's `forward_auth` to check if the client's IP is whitelisted. It returns `200 OK` on success and `401 Unauthorized` on failure.
 
-## Running Tests
+## Tests
+The project includes a full test suite
 
-The project includes a full test suite. To run the tests locally:
+### Unit tests
+To run the tests locally:
 
 1.  **Install Dependencies**:
     ```bash
@@ -274,3 +225,11 @@ The project includes a full test suite. To run the tests locally:
 2.  **Run Pytest**:
     ```bash
     python3 -m pytest
+
+### Integration Tests
+There's a dev environment under [dev](./dev/), with bash scripts for integrations tests with caddy and a separate one with firewalld.
+The CI runs the caddy tests, but firewalld needs a privileged runner, which is why it needs to be run locally and isn't a part of the CI.
+
+## Docs
+
+For a formal API specification and a summary of the architectural choices, please see the [documentation](./docs/).

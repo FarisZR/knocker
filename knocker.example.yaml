@@ -10,7 +10,7 @@ server:
     - "fd00:dead:c0de::/64"
 
 cors:
-  allowed_origin: "*"  # SECURITY: Set to your web app's origin (e.g., "https://your-web-app.com") in production instead of "*"
+  allowed_origin: "*"  # SECURITY: Set to your Knocker EXPO webapp's origin (e.g., "https://your-web-app.com") in production instead of "*"
 
 security:
   always_allowed_ips:
@@ -35,15 +35,21 @@ whitelist:
   # The docker-compose.yml file will mount a volume to this location.
   storage_path: "/data/whitelist.json"
 
-# Firewalld integration for advanced firewall control
+# Firewalld integration for advanced network-level firewall control
+# This creates dynamic firewall rules that automatically expire based on TTL
 firewalld:
-  enabled: false  # Set to true to enable firewalld integration
-  zone_name: "knocker"  # Name of the firewalld zone to create, WON"T BE CLEANED UP AUTOMATICALLY ON SHUTDOWN
-  zone_priority: -100  # Zone priority (negative numbers = higher priority, default: -100)
-  default_action: "drop"  # Default action for blocked traffic: "drop" or "reject"
+  enabled: false  # Set to true to enable firewalld integration (requires root container)
+  zone_name: "knocker"  # Name of the firewalld zone to create
+                        # WARNING: Zone won't be cleaned up automatically on shutdown
+  zone_priority: -100  # Zone priority (negative numbers = higher priority)
+                       # Default -100 ensures knocker rules take precedence
+  default_action: "drop"  # Action for blocked traffic:
+                          # "drop" = silently discard (attackers don't know service exists)
+                          # "reject" = refuse connection (faster for legitimate clients)
   monitored_ports:
-    # Ports that will be protected by knocker firewall rules
-    # Only whitelisted IPs will be able to access these ports
+    # Only these ports will be protected by knocker firewall rules
+    # Unmonitored ports remain unaffected by knocker
+    # Only whitelisted IPs can access these specific ports
     - port: 80
       protocol: tcp
     - port: 443
@@ -51,28 +57,44 @@ firewalld:
     - port: 22
       protocol: tcp
   monitored_ips:
-    # CAUTION: Using 0.0.0.0 or ::/0 applies DROP-by-default to ALL sources at high priority.
-    # Start narrowly (e.g., your WAN subnet) and expand only if you fully understand the impact.
+    # IP ranges that the firewalld zone will apply to
+    # MUST include network mask (e.g., /32 for single IPv4 host, /128 for single IPv6 host)
+    # 
+    # WARNING: Using 0.0.0.0/0 or ::/0 applies DROP/REJECT rules to ALL traffic
+    # at high priority. This will block ALL access to monitored ports by default.
+    # Start with narrow ranges (your WAN subnet) and expand carefully.
+    #
     # Examples:
-    # - "203.0.113.0/24"   # WAN IPv4
-    # - "2001:db8:1234::/48"  # WAN IPv6
-    - "203.0.113.0/24"
-    - "2001:db8:1234::/48"
-  # NOTE: Enabling firewalld requires the container to run as root
-  # and requires system dbus access. See documentation for setup details.
+    # - "192.168.1.100/32"    # Single IPv4 host
+    # - "192.168.1.0/24"      # IPv4 subnet
+    # - "2001:db8::1/128"     # Single IPv6 host
+    # - "2001:db8::/32"       # IPv6 prefix
+    # - "203.0.113.0/24"      # Your WAN IPv4 range
+    # - "2001:db8:1234::/48"  # Your WAN IPv6 range
+    # - "0.0.0.0/0"           # All IPv4 (USE WITH EXTREME CAUTION)
+    # - "::/0"                # All IPv6 (USE WITH EXTREME CAUTION)
+    - "203.0.113.0/24"        # Example WAN IPv4 range - CHANGE THIS
+    - "2001:db8:1234::/48"    # Example WAN IPv6 range - CHANGE THIS
+  
+  # CONTAINER REQUIREMENTS:
+  # - Must run as root (user: "0:0")
+  # - Needs NET_ADMIN capability
+  # - Requires system dbus mount: /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+  # - Host must have firewalld installed and running
+  #
+  # See docs/FIREWALLD_INTEGRATION.md for complete setup instructions
 
 api_keys:
   - name: "admin-key-for-remote-whitelisting"
-    key: "CHANGE_ME_SUPER_SECRET_ADMIN_KEY"
-    max_ttl: 3600 # Whitelist IPs for a maximum of 1 hour (in seconds)
-    allow_remote_whitelist: true # This key CAN whitelist other IPs/CIDRs
-
+    key: "CHANGE_ME_SUPER_SECRET_ADMIN_KEY"  # SECURITY: Change this to a strong, random key
+    max_ttl: 3600  # Maximum TTL in seconds (1 hour)
+    allow_remote_whitelist: true  # Can whitelist other IP/CIDR specified in request body
   - name: "personal-phone"
-    key: "CHANGE_ME_SECRET_PHONE_KEY"
-    max_ttl: 14400 # Whitelist IPs for a maximum of 4 hours
-    allow_remote_whitelist: false # This key can ONLY whitelist its own IP
+    key: "CHANGE_ME_SECRET_PHONE_KEY"  # SECURITY: Change this to a strong, random key
+    max_ttl: 14400  # Maximum TTL in seconds (4 hours)
+    allow_remote_whitelist: false  # Can only whitelist the requesting IP address
 
   - name: "guest-access"
-    key: "CHANGE_ME_TEMPORARY_GUEST_KEY"
-    max_ttl: 600 # Whitelist IPs for a maximum of 10 minutes
-    allow_remote_whitelist: false
+    key: "CHANGE_ME_TEMPORARY_GUEST_KEY"  # SECURITY: Change this to a strong, random key
+    max_ttl: 600  # Maximum TTL in seconds (10 minutes)
+    allow_remote_whitelist: false  # Can only whitelist the requesting IP address
