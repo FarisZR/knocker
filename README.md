@@ -116,7 +116,7 @@ Knocker provides advanced firewall integration through firewalld, creating dynam
 
 ### Why FirewallD?
 
-FirewallD was chosen for its unique architecture that separates the command interface from the daemon. This allows Knocker to control firewalld from within a Docker container by mounting the system's D-Bus socket, and also FirewallD is the only firewall that integrates correctly with docker, meaning docker doesn't just ignore it's rules like UFW.
+FirewallD was chosen for the ability to separates the cli interface from the daemon. This allows Knocker to control firewalld from within a Docker container by mounting the system's D-Bus socket, and also FirewallD is the only firewall that integrates correctly with docker, meaning docker doesn't just ignore it's rules like UFW.
 https://docs.docker.com/engine/network/packet-filtering-firewalls/#integration-with-firewalld
 
 ### How It Works
