@@ -148,7 +148,7 @@ main() {
     max_retries=30
     retry_interval=2
 
-    until $(curl --output /dev/null --silent --fail "$BASE_URL/health"); do
+    until curl --output /dev/null --silent --fail "$BASE_URL/health"; do
         if [ ${retry_count} -ge ${max_retries} ]; then
             fail "Services did not become healthy in time."
         fi
@@ -306,7 +306,7 @@ main() {
     max_retries=30
     retry_interval=2
 
-    until $(curl --output /dev/null --silent --fail "$BASE_URL/health"); do
+    until curl --output /dev/null --silent --fail "$BASE_URL/health"; do
         if [ ${retry_count} -ge ${max_retries} ]; then
             fail "Services did not become healthy in time."
         fi
