@@ -114,5 +114,9 @@ knocker.yaml
 whitelist.json
 test_whitelist.json
 
+# Runtime-generated OpenAPI schema
+openapi.json
+test_openapi.json
+
 # Docker
 .dockerignore

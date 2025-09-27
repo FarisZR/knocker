@@ -98,3 +98,8 @@ api_keys:
     key: "CHANGE_ME_TEMPORARY_GUEST_KEY"  # SECURITY: Change this to a strong, random key
     max_ttl: 600  # Maximum TTL in seconds (10 minutes)
     allow_remote_whitelist: false  # Can only whitelist the requesting IP address
+
+# Documentation and OpenAPI configuration
+documentation:
+  enabled: true  # Set to false to disable OpenAPI generation and docs endpoints
+  openapi_output_path: "openapi.json"  # Path where OpenAPI schema will be saved on startup
