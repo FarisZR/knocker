@@ -70,7 +70,16 @@ async def generate_and_persist_openapi(app: FastAPI, settings: Dict):
         docs_config = settings.get("documentation", {})
         if not docs_config.get("enabled", True):
             logging.info("OpenAPI documentation generation is disabled")
+            # Disable documentation routes by setting them to None
+            app.docs_url = None
+            app.redoc_url = None
+            app.openapi_url = None
             return
+        else:
+            # Ensure documentation routes are enabled
+            app.docs_url = "/docs"
+            app.redoc_url = "/redoc"
+            app.openapi_url = "/openapi.json"
             
         output_path = docs_config.get("openapi_output_path", "openapi.json")
         
@@ -91,6 +100,7 @@ async def generate_and_persist_openapi(app: FastAPI, settings: Dict):
 
 
 # Configure FastAPI app with proper metadata
+# Documentation URLs will be configured dynamically during lifespan based on settings
 app_config = {
     "lifespan": lifespan,
     "title": "Knocker API",
@@ -124,7 +134,6 @@ A dynamic IP whitelisting service that works with reverse proxy authorization.
         }
     ]
 }
-
 app = FastAPI(**app_config)
 
 
@@ -242,6 +251,7 @@ async def knock_options(settings: dict = Depends(get_settings)):
 )
 async def knock(
     request: Request,
+    response: Response,
     body: Optional[Union[KnockRequest, Dict]] = None,
     client_ip: str = Depends(get_client_ip_dependency),
     settings: dict = Depends(get_settings)
@@ -320,7 +330,7 @@ async def knock(
         logging.error(f"Failed to whitelist {ip_to_whitelist}. Request from {client_ip} rejected.")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"error": "Internal server error: firewall configuration failed."},
+            content={"error": "Internal server error: whitelist persistence or firewall configuration failed."},
             headers={"Access-Control-Allow-Origin": allowed_origin}
         )
     
@@ -336,13 +346,12 @@ async def knock(
     if api_key_name:
         logger.debug("API key used: %s", api_key_name)
 
-    return JSONResponse(
-        content={
-            "whitelisted_entry": ip_to_whitelist,
-            "expires_at": expiry_time,
-            "expires_in_seconds": effective_ttl,
-        },
-        headers={"Access-Control-Allow-Origin": allowed_origin}
+    # Ensure CORS and response_model validation
+    response.headers["Access-Control-Allow-Origin"] = allowed_origin
+    return KnockResponse(
+        whitelisted_entry=ip_to_whitelist,
+        expires_at=expiry_time,
+        expires_in_seconds=effective_ttl,
     )
 
 @app.get(

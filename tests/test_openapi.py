@@ -58,10 +58,13 @@ def cleanup_test_files():
             os.remove(file)
 
 
-client = TestClient(app)
+@pytest.fixture
+def client():
+    """Create a test client for each test."""
+    return TestClient(app)
 
 
-def test_openapi_json_endpoint():
+def test_openapi_json_endpoint(client):
     """Test that the OpenAPI JSON endpoint is accessible."""
     response = client.get("/openapi.json")
     assert response.status_code == 200
@@ -73,21 +76,21 @@ def test_openapi_json_endpoint():
     assert len(schema["paths"]) >= 3  # At least /knock, /health, /verify
 
 
-def test_swagger_ui_endpoint():
+def test_swagger_ui_endpoint(client):
     """Test that Swagger UI is accessible."""
     response = client.get("/docs")
     assert response.status_code == 200
     assert "swagger" in response.text.lower()
 
 
-def test_redoc_endpoint():
+def test_redoc_endpoint(client):
     """Test that ReDoc is accessible."""
     response = client.get("/redoc")
     assert response.status_code == 200
     assert "redoc" in response.text.lower()
 
 
-def test_openapi_schema_structure():
+def test_openapi_schema_structure(client):
     """Test that the OpenAPI schema has proper structure."""
     response = client.get("/openapi.json")
     schema = response.json()
@@ -120,7 +123,7 @@ def test_openapi_schema_structure():
     assert "500" in responses
 
 
-def test_pydantic_models_in_schema():
+def test_pydantic_models_in_schema(client):
     """Test that Pydantic models are properly included in schema."""
     response = client.get("/openapi.json")
     schema = response.json()
@@ -150,7 +153,7 @@ def test_pydantic_models_in_schema():
     assert "expires_in_seconds" in properties
 
 
-def test_endpoint_tags_and_descriptions():
+def test_endpoint_tags_and_descriptions(client):
     """Test that endpoints have proper tags and descriptions."""
     response = client.get("/openapi.json")
     schema = response.json()
@@ -174,7 +177,7 @@ def test_endpoint_tags_and_descriptions():
     assert "Verify IP Authorization" in verify_get["summary"]
 
 
-def test_api_tags_configuration():
+def test_api_tags_configuration(client):
     """Test that OpenAPI tags are properly configured."""
     response = client.get("/openapi.json")
     schema = response.json()
@@ -193,7 +196,7 @@ def test_api_tags_configuration():
     assert "health" in system_tag["description"].lower()
 
 
-def test_backward_compatibility_with_dict_input():
+def test_backward_compatibility_with_dict_input(client):
     """Test that endpoints still accept dict input for backward compatibility."""
     # Test with dictionary input (old format)
     response = client.post(
@@ -209,7 +212,7 @@ def test_backward_compatibility_with_dict_input():
     assert "expires_in_seconds" in data
 
 
-def test_validation_error_conversion():
+def test_validation_error_conversion(client):
     """Test that Pydantic validation errors are converted to 400 status codes."""
     # Test invalid TTL (should be converted from 422 to 400)
     response = client.post(
