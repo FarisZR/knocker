@@ -12,6 +12,12 @@ server:
 cors:
   allowed_origin: "*"  # SECURITY: Set to your Knocker EXPO webapp's origin (e.g., "https://your-web-app.com") in production instead of "*"
 
+documentation:
+  # Filesystem path (absolute or relative to the working directory) where the
+  # dynamically generated OpenAPI document will be written on startup.
+  # This file powers the interactive Swagger UI and ReDoc documentation.
+  openapi_output_path: "docs/openapi.json"
+
 security:
   always_allowed_ips:
     # These IPs/CIDRs are always allowed to pass through the /verify endpoint

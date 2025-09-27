@@ -4,11 +4,14 @@ import ipaddress
 from typing import Optional, Dict
 from functools import lru_cache
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response, status, Depends
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, Response, status, Depends, Body
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 import core
 import config
 import firewalld
+import openapi_utils
+import schemas
 
 @lru_cache()
 def get_settings() -> Dict:
@@ -50,11 +53,49 @@ async def lifespan(app: FastAPI):
             logging.error("Failed to setup firewalld zone - firewalld integration may not work properly")
     else:
         logging.info("Firewalld integration is disabled")
-    
+
+    # Generate the OpenAPI document so documentation stays in sync with the app definition.
+    try:
+        openapi_utils.generate_openapi_document(app, settings)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logging.exception("Failed to generate OpenAPI document: %s", exc)
+
     yield
     logging.info("Knocker service shutting down.")
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+
+# --- API Documentation Endpoints ---
+
+@app.get("/openapi.json", include_in_schema=False)
+async def serve_openapi(settings: dict = Depends(get_settings)):
+    try:
+        openapi_path = openapi_utils.ensure_openapi_document(app, settings)
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logging.exception("Unable to serve OpenAPI document: %s", exc)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=schemas.ErrorResponse(error="OpenAPI document could not be generated.").model_dump(),
+        )
+
+    if not openapi_path.exists():
+        logging.error("OpenAPI document expected at %s but not found", openapi_path)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=schemas.ErrorResponse(error="OpenAPI document is not available.").model_dump(),
+        )
+
+    return FileResponse(openapi_path, media_type="application/json", filename="openapi.json")
+
+
+@app.get("/docs", include_in_schema=False)
+async def swagger_ui():
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="Knocker API - Swagger UI")
+
+
+@app.get("/redoc", include_in_schema=False)
+async def redoc_ui():
+    return get_redoc_html(openapi_url="/openapi.json", title="Knocker API - ReDoc")
 
 # --- Dependency for getting the real client IP ---
 def get_client_ip(request: Request, settings: Optional[dict] = None) -> Optional[str]:
@@ -116,21 +157,34 @@ async def knock_options(settings: dict = Depends(get_settings)):
         }
     )
 
-@app.post("/knock", status_code=status.HTTP_200_OK)
+@app.post(
+    "/knock",
+    status_code=status.HTTP_200_OK,
+    response_model=schemas.KnockResponse,
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"model": schemas.ErrorResponse},
+        status.HTTP_401_UNAUTHORIZED: {"model": schemas.ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": schemas.ErrorResponse},
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": schemas.ErrorResponse},
+    },
+)
 async def knock(
     request: Request,
-    body: Optional[Dict] = None,
+    response: Response,
+    body: Optional[schemas.KnockRequest] = Body(default=None),
     client_ip: str = Depends(get_client_ip_dependency),
     settings: dict = Depends(get_settings)
 ):
     api_key = request.headers.get("X-Api-Key")
     allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
 
+    response.headers["Access-Control-Allow-Origin"] = allowed_origin
+
     if not client_ip:
         logging.warning("Could not determine client IP.")
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            content={"error": "Could not determine client IP."},
+            content=schemas.ErrorResponse(error="Could not determine client IP.").model_dump(),
             headers={"Access-Control-Allow-Origin": allowed_origin}
         )
 
@@ -138,26 +192,26 @@ async def knock(
         logging.warning(f"Invalid or missing API key provided by {client_ip}.")
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"error": "Invalid or missing API key."},
+            content=schemas.ErrorResponse(error="Invalid or missing API key.").model_dump(),
             headers={"Access-Control-Allow-Origin": allowed_origin}
         )
 
     ip_to_whitelist = client_ip
-    if body and "ip_address" in body:
+    if body and body.ip_address is not None:
         if not core.can_whitelist_remote(api_key, settings):
             logging.warning(f"API key used by {client_ip} lacks remote whitelist permission.")
             return JSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
-                content={"error": "API key lacks remote whitelist permission."},
+                content=schemas.ErrorResponse(error="API key lacks remote whitelist permission.").model_dump(),
                 headers={"Access-Control-Allow-Origin": allowed_origin}
             )
         
-        target_ip = body["ip_address"]
+        target_ip = body.ip_address
         if not core.is_valid_ip_or_cidr(target_ip):
             logging.warning(f"Invalid IP address or CIDR notation '{target_ip}' in request body from {client_ip}.")
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "Invalid IP address or CIDR notation in request body."},
+                content=schemas.ErrorResponse(error="Invalid IP address or CIDR notation in request body.").model_dump(),
                 headers={"Access-Control-Allow-Origin": allowed_origin}
             )
         
@@ -166,14 +220,14 @@ async def knock(
             logging.warning(f"Unsafe CIDR range '{target_ip}' rejected from {client_ip}.")
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "CIDR range too broad. Maximum 65536 addresses allowed."},
+                content=schemas.ErrorResponse(error="CIDR range too broad. Maximum 65536 addresses allowed.").model_dump(),
                 headers={"Access-Control-Allow-Origin": allowed_origin}
             )
         
         ip_to_whitelist = target_ip
 
     max_ttl = core.get_max_ttl_for_key(api_key, settings)
-    requested_ttl = body.get("ttl") if body else None
+    requested_ttl = body.ttl if body else None
     
     effective_ttl = max_ttl
 
@@ -182,7 +236,7 @@ async def knock(
             logging.warning(f"Invalid TTL '{requested_ttl}' specified by {client_ip}.")
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "Invalid TTL specified. Must be a positive integer."},
+                content=schemas.ErrorResponse(error="Invalid TTL specified. Must be a positive integer.").model_dump(),
                 headers={"Access-Control-Allow-Origin": allowed_origin}
             )
         effective_ttl = min(requested_ttl, max_ttl)
@@ -211,18 +265,15 @@ async def knock(
     if api_key_name:
         logger.debug("API key used: %s", api_key_name)
 
-    return JSONResponse(
-        content={
-            "whitelisted_entry": ip_to_whitelist,
-            "expires_at": expiry_time,
-            "expires_in_seconds": effective_ttl,
-        },
-        headers={"Access-Control-Allow-Origin": allowed_origin}
+    return schemas.KnockResponse(
+        whitelisted_entry=ip_to_whitelist,
+        expires_at=expiry_time,
+        expires_in_seconds=effective_ttl,
     )
 
-@app.get("/health", status_code=status.HTTP_200_OK)
+@app.get("/health", status_code=status.HTTP_200_OK, response_model=schemas.HealthResponse)
 async def health_check():
-    return {"status": "ok"}
+    return schemas.HealthResponse(status="ok")
 
 @app.get("/verify", status_code=status.HTTP_200_OK)
 async def verify(

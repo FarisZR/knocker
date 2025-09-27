@@ -109,6 +109,7 @@ venv.bak/
 # Project-specific files
 # Ignore the actual configuration file to avoid committing secrets
 knocker.yaml
+docs/openapi.json
 
 # Ignore the whitelist data file
 whitelist.json
