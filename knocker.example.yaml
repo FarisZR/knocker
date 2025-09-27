@@ -99,7 +99,7 @@ api_keys:
     max_ttl: 600  # Maximum TTL in seconds (10 minutes)
     allow_remote_whitelist: false  # Can only whitelist the requesting IP address
 
-# Documentation and OpenAPI configuration
+# Documentation and OpenAPI configuration, disabled by default
 documentation:
-  enabled: true  # Set to false to disable OpenAPI generation and docs endpoints
-  openapi_output_path: "openapi.json"  # Path where OpenAPI schema will be saved on startup
+  enabled: false  # Documentation is disabled by default; set to true to expose docs endpoints
+  openapi_output_path: "openapi.json"  # Path where OpenAPI schema will be saved when documentation is enabled

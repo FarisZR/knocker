@@ -8,6 +8,11 @@ from functools import lru_cache
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, status, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.openapi.docs import (
+    get_redoc_html,
+    get_swagger_ui_html,
+    get_swagger_ui_oauth2_redirect_html,
+)
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 import core
@@ -63,40 +68,113 @@ async def lifespan(app: FastAPI):
     logging.info("Knocker service shutting down.")
 
 
+def _remove_documentation_routes(app: FastAPI) -> None:
+    """Remove existing documentation-related routes from the app router."""
+    doc_paths = {
+        getattr(app, "docs_url", None),
+        getattr(app, "redoc_url", None),
+        getattr(app, "openapi_url", None),
+        getattr(app, "swagger_ui_oauth2_redirect_url", None),
+    }
+    doc_paths.discard(None)
+    if not doc_paths:
+        return
+
+    router = app.router
+    router.routes = [
+        route for route in router.routes
+        if getattr(route, "path", None) not in doc_paths
+    ]
+
+    routes_by_name = getattr(router, "routes_by_name", None)
+    if isinstance(routes_by_name, dict):
+        for name, route in list(routes_by_name.items()):
+            if getattr(route, "path", None) in doc_paths:
+                routes_by_name.pop(name, None)
+
+
+def _configure_documentation_routes(app: FastAPI, enabled: bool) -> None:
+    """Apply FastAPI documentation URL configuration."""
+    if enabled:
+        app.docs_url = "/docs"
+        app.redoc_url = "/redoc"
+        app.openapi_url = "/openapi.json"
+        app.swagger_ui_oauth2_redirect_url = f"{app.docs_url}/oauth2-redirect"
+
+        _remove_documentation_routes(app)
+
+        async def openapi_json(_: Request):
+            return JSONResponse(app.openapi())
+
+        async def swagger_ui_html(_: Request):
+            return get_swagger_ui_html(
+                openapi_url=app.openapi_url,
+                title=f"{app.title} - Swagger UI",
+            )
+
+        async def swagger_ui_redirect(_: Request):
+            return get_swagger_ui_oauth2_redirect_html()
+
+        async def redoc_html(_: Request):
+            return get_redoc_html(
+                openapi_url=app.openapi_url,
+                title=f"{app.title} - ReDoc",
+            )
+
+        app.add_route(app.openapi_url, openapi_json, include_in_schema=False)
+        app.add_route(app.docs_url, swagger_ui_html, include_in_schema=False)
+        app.add_route(
+            app.swagger_ui_oauth2_redirect_url,
+            swagger_ui_redirect,
+            include_in_schema=False,
+        )
+        app.add_route(app.redoc_url, redoc_html, include_in_schema=False)
+    else:
+        _remove_documentation_routes(app)
+        app.docs_url = None
+        app.redoc_url = None
+        app.openapi_url = None
+        app.swagger_ui_oauth2_redirect_url = None
+
+
 async def generate_and_persist_openapi(app: FastAPI, settings: Dict):
     """Generate OpenAPI schema and persist it to disk."""
+    docs_config = settings.get("documentation") or {}
+    docs_enabled = bool(docs_config.get("enabled", False))
+    output_path_str = docs_config.get("openapi_output_path", "openapi.json")
+    output_path = Path(output_path_str)
+
+    _configure_documentation_routes(app, docs_enabled)
+
+    if not docs_enabled:
+        logging.info("OpenAPI documentation generation is disabled")
+        try:
+            if output_path.exists():
+                output_path.unlink()
+                logging.info(f"OpenAPI schema removed because documentation is disabled: {output_path}")
+        except Exception as exc:
+            logging.warning(f"Failed to remove OpenAPI schema file at {output_path}: {exc}")
+        return
+
     try:
-        # Get documentation settings
-        docs_config = settings.get("documentation", {})
-        if not docs_config.get("enabled", True):
-            logging.info("OpenAPI documentation generation is disabled")
-            # Disable documentation routes by setting them to None
-            app.docs_url = None
-            app.redoc_url = None
-            app.openapi_url = None
-            return
-        else:
-            # Ensure documentation routes are enabled
-            app.docs_url = "/docs"
-            app.redoc_url = "/redoc"
-            app.openapi_url = "/openapi.json"
-            
-        output_path = docs_config.get("openapi_output_path", "openapi.json")
-        
-        # Generate the schema
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        logging.error(f"Failed to prepare directory for OpenAPI schema at {output_path}: {exc}")
+        return
+
+    app.openapi_schema = None
+    try:
         openapi_schema = app.openapi()
-        
-        # Write to disk
-        output_file = Path(output_path)
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(output_file, 'w') as f:
+        with output_path.open('w', encoding='utf-8') as f:
             json.dump(openapi_schema, f, indent=2)
-            
         logging.info(f"OpenAPI schema generated and saved to {output_path}")
-        
-    except Exception as e:
-        logging.error(f"Failed to generate or persist OpenAPI schema: {e}")
+    except Exception as exc:
+        logging.error(f"Failed to generate or persist OpenAPI schema: {exc}")
+        try:
+            if output_path.exists():
+                output_path.unlink()
+        except Exception:
+            pass
 
 
 # Configure FastAPI app with proper metadata

@@ -15,6 +15,7 @@ This is ideal for homelab environments where you want to expose services to the 
 *   **Path-Based Exclusion**: Exclude specific URL paths (like health checks or public APIs) from authentication entirely.
 *   **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
 *   **Secure by Default**: Built-in protection against IP spoofing via a trusted proxy mechanism.
+*   **Optional Interactive API Docs**: Generate Swagger UI, ReDoc, and OpenAPI JSON on demand when documentation is explicitly enabled.
 *   **Firewalld Integration**: Advanced firewall control with timed rules that automatically expire based on TTL. Creates dynamic firewall rules using firewalld rich rules for enhanced security. (Optional, requires root container access)
 
 ## CI/CD
@@ -36,6 +37,7 @@ This project is designed to be deployed as a set of Docker containers using the 
     *   Rename `knocker.example.yaml` to `knocker.yaml`.
     *   **Crucially, change the default API keys** in `knocker.yaml` to your own secure, random strings.
     *   Review the `trusted_proxies` list in `knocker.yaml`, they should match the subnet of the reverse proxys network (`docker network inspect xxx`)
+    *   (Optional) Enable interactive documentation by setting `documentation.enabled: true` (it is disabled by default).
     *   (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
     *   Create a `Caddyfile` in the `knocker` directory. See the "Caddy Integration" section below for examples.
 
@@ -231,5 +233,15 @@ There's a dev environment under [dev](./dev/), with bash scripts for integration
 The CI runs the caddy tests, but firewalld needs a privileged runner, which is why it needs to be run locally and isn't a part of the CI.
 
 ## Docs
+
+Interactive documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) are disabled by default. To expose them, set the following in `knocker.yaml`:
+
+```yaml
+documentation:
+  enabled: true
+  openapi_output_path: "openapi.json"
+```
+
+When documentation is disabled (default), Knocker removes these endpoints and deletes any previously generated schema file to prevent stale artifacts.
 
 For a formal API specification and a summary of the architectural choices, please see the [documentation](./docs/).

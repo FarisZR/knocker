@@ -1,10 +1,10 @@
 # Interactive API Documentation
 
-The Knocker service automatically generates interactive API documentation using OpenAPI 3.1 specification. This documentation provides a complete reference for all API endpoints with the ability to test them directly from the browser.
+Knocker can optionally expose interactive API documentation using the OpenAPI 3.1 specification. When enabled, the documentation provides a complete reference for all API endpoints with in-browser testing capabilities.
 
 ## Accessing the Documentation
 
-Once the service is running, you can access the interactive documentation at:
+When documentation is enabled, the service exposes the following endpoints:
 
 - **Swagger UI**: `http://your-server:8000/docs`
 - **ReDoc**: `http://your-server:8000/redoc`
@@ -36,32 +36,42 @@ The documentation system can be configured in your `knocker.yaml` file:
 
 ```yaml
 documentation:
-  enabled: true  # Set to false to disable OpenAPI generation
-  openapi_output_path: "openapi.json"  # Where to save the generated schema
+  enabled: false  # Documentation is disabled by default; set to true to enable it
+  openapi_output_path: "openapi.json"  # Where to save the generated schema when enabled
 ```
 
-### Disabling Documentation
+### Enabling Documentation
 
-To disable the interactive documentation (e.g., in production environments):
+Documentation is disabled by default. To expose the interactive interfaces:
 
 ```yaml
 documentation:
-  enabled: false
+  enabled: true
 ```
 
 This will:
-- Disable automatic OpenAPI schema generation
-- Remove the `/docs` and `/redoc` endpoints
-- Skip writing the OpenAPI file to disk
+- Enable automatic OpenAPI schema generation
+- Publish the `/docs`, `/redoc`, and `/openapi.json` endpoints
+- Persist the OpenAPI file to the configured `openapi_output_path`
+
+### Disabling Documentation (Default)
+
+When `documentation.enabled` is `false` or omitted, Knocker will:
+- Skip OpenAPI schema generation
+- Remove the `/docs` and `/redoc` endpoints (they return `404`)
+- Disable the `/openapi.json` endpoint
+- Delete any existing schema file at `openapi_output_path` to avoid stale artifacts
 
 ## Schema Persistence
 
-The service automatically generates and persists the OpenAPI schema to disk on startup. This provides:
+When documentation is enabled, the service generates and persists the OpenAPI schema to disk on startup. This provides:
 
 - **Offline Access**: Schema available even when service is down
 - **CI/CD Integration**: Schema file can be used in automated testing
 - **Documentation Archiving**: Track API changes over time
 - **Tool Integration**: Import schema into API design tools
+
+If documentation is disabled, Knocker removes any existing schema file at the configured path to prevent stale versions from being served elsewhere.
 
 The generated file (`openapi.json` by default) is automatically ignored by git to prevent committing generated content.
 
