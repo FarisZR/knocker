@@ -226,7 +226,7 @@ async def knock_options(settings: dict = Depends(get_settings)):
         400: {"model": ErrorResponse, "description": "Bad request - invalid parameters"},
         401: {"model": ErrorResponse, "description": "Unauthorized - invalid or missing API key"},
         403: {"model": ErrorResponse, "description": "Forbidden - insufficient permissions"},
-        500: {"model": ErrorResponse, "description": "Internal server error"}
+        500: {"model": ErrorResponse, "description": "Internal server error - failed to persist whitelist or create firewall rules"}
     },
     tags=["Authentication"],
     summary="Whitelist IP Address",
