@@ -225,3 +225,55 @@ def test_validation_error_conversion(client):
     data = response.json()
     assert "error" in data
     assert "TTL" in data["error"]
+
+
+def test_documentation_endpoints_available_when_enabled(client):
+    """Test that documentation endpoints are available when documentation is enabled."""
+    # The default mock_settings has documentation.enabled = True
+    
+    # Test that documentation endpoints work
+    docs_response = client.get("/docs")
+    redoc_response = client.get("/redoc") 
+    openapi_response = client.get("/openapi.json")
+    
+    # All should work when documentation is enabled
+    assert docs_response.status_code == 200
+    assert redoc_response.status_code == 200
+    assert openapi_response.status_code == 200
+    
+    # Verify content types are appropriate
+    assert "text/html" in docs_response.headers.get("content-type", "")
+    assert "text/html" in redoc_response.headers.get("content-type", "")
+    assert "application/json" in openapi_response.headers.get("content-type", "")
+
+
+def test_app_configuration_honors_documentation_settings():
+    """Test that the app correctly applies documentation settings."""
+    from main import generate_and_persist_openapi, app
+    import asyncio
+    
+    # Test with documentation enabled
+    enabled_settings = {
+        "documentation": {"enabled": True, "openapi_output_path": "test_openapi.json"}
+    }
+    
+    # Run the configuration function
+    asyncio.run(generate_and_persist_openapi(app, enabled_settings))
+    
+    # When enabled, URLs should be set
+    assert app.docs_url == "/docs"
+    assert app.redoc_url == "/redoc"
+    assert app.openapi_url == "/openapi.json"
+    
+    # Test with documentation disabled
+    disabled_settings = {
+        "documentation": {"enabled": False, "openapi_output_path": "test_openapi.json"}
+    }
+    
+    # Run the configuration function
+    asyncio.run(generate_and_persist_openapi(app, disabled_settings))
+    
+    # When disabled, URLs should be None (treated as non-existing paths)
+    assert app.docs_url is None
+    assert app.redoc_url is None
+    assert app.openapi_url is None
