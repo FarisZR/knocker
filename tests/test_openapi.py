@@ -1,13 +1,23 @@
 """
 Tests for OpenAPI documentation generation and functionality.
 """
+import asyncio
+import copy
 import json
 import os
 import tempfile
 import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
-from main import app, get_settings
+from main import app, get_settings, generate_and_persist_openapi
+
+
+def configure_app_with_settings(settings: dict):
+    """Apply settings to the FastAPI app and regenerate documentation."""
+    settings_copy = copy.deepcopy(settings)
+    app.dependency_overrides[get_settings] = lambda: settings_copy
+    asyncio.run(generate_and_persist_openapi(app, copy.deepcopy(settings_copy)))
+    return settings_copy
 
 
 @pytest.fixture
@@ -31,7 +41,7 @@ def mock_settings():
         },
         "documentation": {
             "enabled": True,
-            "openapi_output_path": "openapi.json"
+            "openapi_output_path": "test_openapi.json"
         }
     }
 
@@ -39,16 +49,23 @@ def mock_settings():
 @pytest.fixture(autouse=True)
 def override_settings(mock_settings):
     """Override settings for all tests."""
-    app.dependency_overrides[get_settings] = lambda: mock_settings
+    settings_copy = configure_app_with_settings(mock_settings)
     yield
     app.dependency_overrides = {}
+    cleanup_settings = {
+        "documentation": {
+            "enabled": False,
+            "openapi_output_path": settings_copy.get("documentation", {}).get("openapi_output_path", "openapi.json")
+        }
+    }
+    asyncio.run(generate_and_persist_openapi(app, copy.deepcopy(cleanup_settings)))
 
 
 @pytest.fixture(autouse=True)
 def cleanup_test_files():
     """Clean up test files."""
     import os
-    files_to_clean = ["./test_whitelist.json", "openapi.json"]
+    files_to_clean = ["./test_whitelist.json", "openapi.json", "test_openapi.json"]
     for file in files_to_clean:
         if os.path.exists(file):
             os.remove(file)
@@ -247,33 +264,91 @@ def test_documentation_endpoints_available_when_enabled(client):
     assert "application/json" in openapi_response.headers.get("content-type", "")
 
 
-def test_app_configuration_honors_documentation_settings():
+def test_app_configuration_honors_documentation_settings(tmp_path):
     """Test that the app correctly applies documentation settings."""
-    from main import generate_and_persist_openapi, app
-    import asyncio
+    schema_path = tmp_path / "config_openapi.json"
     
-    # Test with documentation enabled
     enabled_settings = {
-        "documentation": {"enabled": True, "openapi_output_path": "test_openapi.json"}
+        "documentation": {"enabled": True, "openapi_output_path": str(schema_path)}
     }
-    
-    # Run the configuration function
     asyncio.run(generate_and_persist_openapi(app, enabled_settings))
     
-    # When enabled, URLs should be set
     assert app.docs_url == "/docs"
     assert app.redoc_url == "/redoc"
     assert app.openapi_url == "/openapi.json"
+    assert schema_path.exists()
     
-    # Test with documentation disabled
     disabled_settings = {
-        "documentation": {"enabled": False, "openapi_output_path": "test_openapi.json"}
+        "documentation": {"enabled": False, "openapi_output_path": str(schema_path)}
     }
-    
-    # Run the configuration function
     asyncio.run(generate_and_persist_openapi(app, disabled_settings))
     
-    # When disabled, URLs should be None (treated as non-existing paths)
     assert app.docs_url is None
     assert app.redoc_url is None
     assert app.openapi_url is None
+
+
+def test_documentation_disabled_removes_endpoints_and_schema(tmp_path, mock_settings):
+    """Documentation disabled removes routes and deletes persisted schema."""
+    schema_path = tmp_path / "disabled_openapi.json"
+    schema_path.write_text("{}")
+    
+    disabled_settings = copy.deepcopy(mock_settings)
+    disabled_settings["documentation"]["enabled"] = False
+    disabled_settings["documentation"]["openapi_output_path"] = str(schema_path)
+    
+    configure_app_with_settings(disabled_settings)
+    local_client = TestClient(app)
+    
+    assert local_client.get("/docs").status_code == 404
+    assert local_client.get("/redoc").status_code == 404
+    assert local_client.get("/openapi.json").status_code == 404
+    assert not schema_path.exists()
+
+
+def test_documentation_defaults_to_disabled_when_missing(mock_settings):
+    """Missing documentation config defaults to disabled behaviour."""
+    default_schema_path = Path("openapi.json")
+    default_schema_path.write_text("{}")
+    
+    missing_settings = copy.deepcopy(mock_settings)
+    missing_settings.pop("documentation", None)
+    
+    configure_app_with_settings(missing_settings)
+    local_client = TestClient(app)
+    
+    assert local_client.get("/docs").status_code == 404
+    assert local_client.get("/redoc").status_code == 404
+    assert local_client.get("/openapi.json").status_code == 404
+    assert not default_schema_path.exists()
+
+
+def test_documentation_can_be_reenabled_after_disable(tmp_path, mock_settings):
+    """Disabling, then re-enabling documentation restores routes and schema."""
+    schema_path = tmp_path / "reenabled_openapi.json"
+    
+    disabled_settings = copy.deepcopy(mock_settings)
+    disabled_settings["documentation"]["enabled"] = False
+    disabled_settings["documentation"]["openapi_output_path"] = str(schema_path)
+    configure_app_with_settings(disabled_settings)
+    disabled_client = TestClient(app)
+    
+    assert disabled_client.get("/docs").status_code == 404
+    assert not schema_path.exists()
+    
+    enabled_settings = copy.deepcopy(mock_settings)
+    enabled_settings["documentation"]["openapi_output_path"] = str(schema_path)
+    configure_app_with_settings(enabled_settings)
+    enabled_client = TestClient(app)
+    
+    assert enabled_client.get("/docs").status_code == 200
+    assert enabled_client.get("/redoc").status_code == 200
+    assert enabled_client.get("/openapi.json").status_code == 200
+    assert schema_path.exists()
+
+    # Disable again to verify removal after re-enable cycle
+    configure_app_with_settings(disabled_settings)
+    re_disabled_client = TestClient(app)
+
+    assert re_disabled_client.get("/docs").status_code == 404
+    assert not schema_path.exists()
