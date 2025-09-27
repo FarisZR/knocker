@@ -1,14 +1,24 @@
 import time
 import logging
 import ipaddress
-from typing import Optional, Dict
+import json
+from pathlib import Path
+from typing import Optional, Dict, Union
 from functools import lru_cache
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response, status, Depends
+from fastapi import FastAPI, Request, Response, status, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.openapi.docs import (
+    get_redoc_html,
+    get_swagger_ui_html,
+    get_swagger_ui_oauth2_redirect_html,
+)
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 import core
 import config
 import firewalld
+from models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse
 
 @lru_cache()
 def get_settings() -> Dict:
@@ -30,6 +40,9 @@ async def lifespan(app: FastAPI):
     
     settings = get_settings()
     core.cleanup_expired_ips(settings)
+    
+    # Generate and persist OpenAPI schema
+    await generate_and_persist_openapi(app, settings)
     
     # Initialize firewalld integration
     firewalld_integration = firewalld.initialize_firewalld(settings)
@@ -54,7 +67,177 @@ async def lifespan(app: FastAPI):
     yield
     logging.info("Knocker service shutting down.")
 
-app = FastAPI(lifespan=lifespan)
+
+def _remove_documentation_routes(app: FastAPI) -> None:
+    """Remove existing documentation-related routes from the app router."""
+    doc_paths = {
+        getattr(app, "docs_url", None),
+        getattr(app, "redoc_url", None),
+        getattr(app, "openapi_url", None),
+        getattr(app, "swagger_ui_oauth2_redirect_url", None),
+    }
+    doc_paths.discard(None)
+    if not doc_paths:
+        return
+
+    router = app.router
+    router.routes = [
+        route for route in router.routes
+        if getattr(route, "path", None) not in doc_paths
+    ]
+
+    routes_by_name = getattr(router, "routes_by_name", None)
+    if isinstance(routes_by_name, dict):
+        for name, route in list(routes_by_name.items()):
+            if getattr(route, "path", None) in doc_paths:
+                routes_by_name.pop(name, None)
+
+
+def _configure_documentation_routes(app: FastAPI, enabled: bool) -> None:
+    """Apply FastAPI documentation URL configuration."""
+    if enabled:
+        app.docs_url = "/docs"
+        app.redoc_url = "/redoc"
+        app.openapi_url = "/openapi.json"
+        app.swagger_ui_oauth2_redirect_url = f"{app.docs_url}/oauth2-redirect"
+
+        _remove_documentation_routes(app)
+
+        async def openapi_json(_: Request):
+            return JSONResponse(app.openapi())
+
+        async def swagger_ui_html(_: Request):
+            return get_swagger_ui_html(
+                openapi_url=app.openapi_url,
+                title=f"{app.title} - Swagger UI",
+            )
+
+        async def swagger_ui_redirect(_: Request):
+            return get_swagger_ui_oauth2_redirect_html()
+
+        async def redoc_html(_: Request):
+            return get_redoc_html(
+                openapi_url=app.openapi_url,
+                title=f"{app.title} - ReDoc",
+            )
+
+        app.add_route(app.openapi_url, openapi_json, include_in_schema=False)
+        app.add_route(app.docs_url, swagger_ui_html, include_in_schema=False)
+        app.add_route(
+            app.swagger_ui_oauth2_redirect_url,
+            swagger_ui_redirect,
+            include_in_schema=False,
+        )
+        app.add_route(app.redoc_url, redoc_html, include_in_schema=False)
+    else:
+        _remove_documentation_routes(app)
+        app.docs_url = None
+        app.redoc_url = None
+        app.openapi_url = None
+        app.swagger_ui_oauth2_redirect_url = None
+
+
+async def generate_and_persist_openapi(app: FastAPI, settings: Dict):
+    """Generate OpenAPI schema and persist it to disk."""
+    docs_config = settings.get("documentation") or {}
+    docs_enabled = bool(docs_config.get("enabled", False))
+    output_path_str = docs_config.get("openapi_output_path", "openapi.json")
+    output_path = Path(output_path_str)
+
+    _configure_documentation_routes(app, docs_enabled)
+
+    if not docs_enabled:
+        logging.info("OpenAPI documentation generation is disabled")
+        try:
+            if output_path.exists():
+                output_path.unlink()
+                logging.info(f"OpenAPI schema removed because documentation is disabled: {output_path}")
+        except Exception as exc:
+            logging.warning(f"Failed to remove OpenAPI schema file at {output_path}: {exc}")
+        return
+
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        logging.error(f"Failed to prepare directory for OpenAPI schema at {output_path}: {exc}")
+        return
+
+    app.openapi_schema = None
+    try:
+        openapi_schema = app.openapi()
+        with output_path.open('w', encoding='utf-8') as f:
+            json.dump(openapi_schema, f, indent=2)
+        logging.info(f"OpenAPI schema generated and saved to {output_path}")
+    except Exception as exc:
+        logging.error(f"Failed to generate or persist OpenAPI schema: {exc}")
+        try:
+            if output_path.exists():
+                output_path.unlink()
+        except Exception:
+            pass
+
+
+# Configure FastAPI app with proper metadata
+# Documentation URLs will be configured dynamically during lifespan based on settings
+app_config = {
+    "lifespan": lifespan,
+    "title": "Knocker API",
+    "description": """
+A dynamic IP whitelisting service that works with reverse proxy authorization.
+
+## Features
+
+* **API Key Authentication**: Secure your knock endpoint with configurable API keys
+* **Configurable TTL**: Each API key can have its own Time-To-Live (TTL)
+* **Remote Whitelisting**: Admin keys can whitelist any IP or CIDR range
+* **Path-Based Exclusion**: Exclude specific URL paths from authentication
+* **IPv6 Support**: Full support for IPv6 and IPv4 addresses
+* **Firewall Integration**: Optional firewalld integration for advanced security
+
+## Usage
+
+1. Use the `/knock` endpoint to add IPs to the whitelist
+2. Reverse proxies can use `/verify` to check if an IP is authorized
+3. Monitor service health with the `/health` endpoint
+""",
+    "version": "1.0.0",
+    "openapi_tags": [
+        {
+            "name": "Authentication", 
+            "description": "Endpoints for IP whitelisting and verification"
+        },
+        {
+            "name": "System", 
+            "description": "Health monitoring and system status"
+        }
+    ]
+}
+app = FastAPI(**app_config)
+
+
+# Custom exception handler to maintain backward compatibility
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Convert Pydantic validation errors to 400 Bad Request for backward compatibility."""
+    settings = get_settings()
+    allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
+    
+    # Extract a user-friendly error message
+    error_msg = "Invalid request data."
+    if exc.errors():
+        first_error = exc.errors()[0]
+        if first_error.get("type") == "value_error":
+            error_msg = str(first_error.get("msg", "Invalid request data."))
+        elif "ttl" in str(first_error.get("loc", [])):
+            error_msg = "Invalid TTL specified. Must be a positive integer."
+        elif "ip_address" in str(first_error.get("loc", [])):
+            error_msg = "Invalid IP address or CIDR notation in request body."
+    
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"error": error_msg},
+        headers={"Access-Control-Allow-Origin": allowed_origin}
+    )
 
 # --- Dependency for getting the real client IP ---
 def get_client_ip(request: Request, settings: Optional[dict] = None) -> Optional[str]:
@@ -101,7 +284,13 @@ def get_client_ip_dependency(request: Request, settings: dict = Depends(get_sett
 
 # --- API Endpoints ---
 
-@app.options("/knock")
+@app.options(
+    "/knock", 
+    tags=["Authentication"],
+    summary="CORS Preflight",
+    description="Handles OPTIONS requests for CORS preflight checks.",
+    status_code=204
+)
 async def knock_options(settings: dict = Depends(get_settings)):
     """
     Handles OPTIONS requests for CORS preflight.
@@ -116,10 +305,32 @@ async def knock_options(settings: dict = Depends(get_settings)):
         }
     )
 
-@app.post("/knock", status_code=status.HTTP_200_OK)
+@app.post(
+    "/knock", 
+    response_model=KnockResponse,
+    responses={
+        200: {"model": KnockResponse, "description": "Successfully whitelisted the IP"},
+        400: {"model": ErrorResponse, "description": "Bad request - invalid parameters"},
+        401: {"model": ErrorResponse, "description": "Unauthorized - invalid or missing API key"},
+        403: {"model": ErrorResponse, "description": "Forbidden - insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error - failed to persist whitelist or create firewall rules"}
+    },
+    tags=["Authentication"],
+    summary="Whitelist IP Address",
+    description="""
+    Add an IP address or CIDR range to the whitelist.
+    
+    * Requires a valid API key in the `X-Api-Key` header
+    * By default whitelists the client's IP address
+    * Can whitelist a different IP/CIDR if the API key has remote whitelist permission
+    * TTL can be specified but will be capped by the API key's maximum TTL
+    """,
+    status_code=status.HTTP_200_OK
+)
 async def knock(
     request: Request,
-    body: Optional[Dict] = None,
+    response: Response,
+    body: Optional[Union[KnockRequest, Dict]] = None,
     client_ip: str = Depends(get_client_ip_dependency),
     settings: dict = Depends(get_settings)
 ):
@@ -143,37 +354,39 @@ async def knock(
         )
 
     ip_to_whitelist = client_ip
-    if body and "ip_address" in body:
-        if not core.can_whitelist_remote(api_key, settings):
-            logging.warning(f"API key used by {client_ip} lacks remote whitelist permission.")
-            return JSONResponse(
-                status_code=status.HTTP_403_FORBIDDEN,
-                content={"error": "API key lacks remote whitelist permission."},
-                headers={"Access-Control-Allow-Origin": allowed_origin}
-            )
-        
-        target_ip = body["ip_address"]
-        if not core.is_valid_ip_or_cidr(target_ip):
-            logging.warning(f"Invalid IP address or CIDR notation '{target_ip}' in request body from {client_ip}.")
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "Invalid IP address or CIDR notation in request body."},
-                headers={"Access-Control-Allow-Origin": allowed_origin}
-            )
-        
-        # Security check: prevent overly broad CIDR ranges
-        if not core.is_safe_cidr_range(target_ip):
-            logging.warning(f"Unsafe CIDR range '{target_ip}' rejected from {client_ip}.")
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "CIDR range too broad. Maximum 65536 addresses allowed."},
-                headers={"Access-Control-Allow-Origin": allowed_origin}
-            )
-        
-        ip_to_whitelist = target_ip
+    if body:
+        # Handle both KnockRequest objects and raw dicts for backward compatibility
+        ip_address = getattr(body, 'ip_address', None) if hasattr(body, 'ip_address') else body.get('ip_address')
+        if ip_address:
+            if not core.can_whitelist_remote(api_key, settings):
+                logging.warning(f"API key used by {client_ip} lacks remote whitelist permission.")
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"error": "API key lacks remote whitelist permission."},
+                    headers={"Access-Control-Allow-Origin": allowed_origin}
+                )
+            
+            if not core.is_valid_ip_or_cidr(ip_address):
+                logging.warning(f"Invalid IP address or CIDR notation '{ip_address}' in request body from {client_ip}.")
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"error": "Invalid IP address or CIDR notation in request body."},
+                    headers={"Access-Control-Allow-Origin": allowed_origin}
+                )
+            
+            # Security check: prevent overly broad CIDR ranges
+            if not core.is_safe_cidr_range(ip_address):
+                logging.warning(f"Unsafe CIDR range '{ip_address}' rejected from {client_ip}.")
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"error": "CIDR range too broad. Maximum 65536 addresses allowed."},
+                    headers={"Access-Control-Allow-Origin": allowed_origin}
+                )
+            
+            ip_to_whitelist = ip_address
 
     max_ttl = core.get_max_ttl_for_key(api_key, settings)
-    requested_ttl = body.get("ttl") if body else None
+    requested_ttl = getattr(body, 'ttl', None) if hasattr(body, 'ttl') else (body.get('ttl') if body else None)
     
     effective_ttl = max_ttl
 
@@ -195,7 +408,7 @@ async def knock(
         logging.error(f"Failed to whitelist {ip_to_whitelist}. Request from {client_ip} rejected.")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"error": "Internal server error: firewall configuration failed."},
+            content={"error": "Internal server error: whitelist persistence or firewall configuration failed."},
             headers={"Access-Control-Allow-Origin": allowed_origin}
         )
     
@@ -211,20 +424,47 @@ async def knock(
     if api_key_name:
         logger.debug("API key used: %s", api_key_name)
 
-    return JSONResponse(
-        content={
-            "whitelisted_entry": ip_to_whitelist,
-            "expires_at": expiry_time,
-            "expires_in_seconds": effective_ttl,
-        },
-        headers={"Access-Control-Allow-Origin": allowed_origin}
+    # Ensure CORS and response_model validation
+    response.headers["Access-Control-Allow-Origin"] = allowed_origin
+    return KnockResponse(
+        whitelisted_entry=ip_to_whitelist,
+        expires_at=expiry_time,
+        expires_in_seconds=effective_ttl,
     )
 
-@app.get("/health", status_code=status.HTTP_200_OK)
+@app.get(
+    "/health", 
+    response_model=HealthResponse,
+    tags=["System"],
+    summary="Health Check",
+    description="Verify that the Knocker service is running and operational.",
+    status_code=status.HTTP_200_OK
+)
 async def health_check():
-    return {"status": "ok"}
+    return HealthResponse(status="ok")
 
-@app.get("/verify", status_code=status.HTTP_200_OK)
+@app.get(
+    "/verify", 
+    responses={
+        200: {"description": "IP is authorized - access granted"},
+        401: {"description": "IP is not authorized - access denied"}
+    },
+    tags=["Authentication"],
+    summary="Verify IP Authorization",
+    description="""
+    Verify if a client IP is currently whitelisted and authorized.
+    
+    This endpoint is typically used by reverse proxies (like Caddy's forward_auth)
+    to check if a request should be allowed through.
+    
+    * Returns 200 if the IP is whitelisted or in always-allowed list
+    * Returns 200 if the request path is in the excluded paths list  
+    * Returns 401 if the IP is not authorized
+    * Uses X-Forwarded-For header when coming from trusted proxies
+    * Uses X-Forwarded-Uri header to check excluded paths
+    """,
+    status_code=status.HTTP_200_OK
+)
 async def verify(
     request: Request,
     client_ip: str = Depends(get_client_ip_dependency),

@@ -23,6 +23,8 @@ services:
     restart: unless-stopped
     networks:
       - caddy_net
+    ports:
+      - "8000:8000"  # Expose knocker API port (adjust
     environment:
       - KNOCKER_CONFIG_PATH=/app/knocker.yaml
     volumes:
