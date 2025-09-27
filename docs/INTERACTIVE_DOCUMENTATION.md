@@ -4,7 +4,7 @@ Knocker can optionally expose interactive API documentation using the OpenAPI 3.
 
 ## Accessing the Documentation
 
-When documentation is enabled, the service exposes the following endpoints:
+When documentation is enabled (It's disabled by default), the service exposes the following endpoints:
 
 - **Swagger UI**: `http://your-server:8000/docs`
 - **ReDoc**: `http://your-server:8000/redoc`
