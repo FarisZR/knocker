@@ -14,20 +14,12 @@ This is ideal for homelab environments where you want to expose services to the 
 *   **Static IP/CIDR Whitelisting**: Always allow certain IP addresses or ranges to bypass the dynamic whitelist.
 *   **Path-Based Exclusion**: Exclude specific URL paths (like health checks or public APIs) from authentication entirely.
 *   **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
-*   **Secure by Default**: Built-in protection against IP spoofing via a trusted proxy mechanism.
-*   **Optional Interactive API Docs**: Generate Swagger UI, ReDoc, and OpenAPI JSON on demand when documentation is explicitly enabled.
 *   **Firewalld Integration**: Advanced firewall control with timed rules that automatically expire based on TTL. Creates dynamic firewall rules using firewalld rich rules for enhanced security. (Optional, requires root container access)
-
-## CI/CD
-
-This project uses GitHub Actions for continuous integration and deployment.
-
-*   **CI (`ci.yml`)**: On every pull request to `main`, this workflow runs the full Python test suite and then performs a live integration test with Docker Compose to ensure the Caddy and Knocker services work together correctly.
-*   **Docker Publish (`docker-publish.yml`)**: On every push to `main`, this workflow builds and publishes a multi-arch Docker image to the GitHub Container Registry (ghcr.io).
 
 ## Deployment
 
 This project is designed to be deployed as a set of Docker containers using the provided `docker-compose.yml` file. It uses the pre-built docker images with support for AMD64, Arm64 and risc-v.
+
 ### 1. Prerequisites
     *   Docker and Docker Compose installed.
     *   A public-facing server to run the containers.
@@ -36,10 +28,8 @@ This project is designed to be deployed as a set of Docker containers using the 
 2.  **Configuration**:
     *   Rename `knocker.example.yaml` to `knocker.yaml`.
     *   **Crucially, change the default API keys** in `knocker.yaml` to your own secure, random strings.
-    *   Review the `trusted_proxies` list in `knocker.yaml`, they should match the subnet of the reverse proxys network (`docker network inspect xxx`)
-    *   (Optional) Enable interactive documentation by setting `documentation.enabled: true` (it is disabled by default).
+    *   Review the `trusted_proxies` list in `knocker.yaml`, they should match the subnet of the reverse proxy's network (`docker network inspect xxx`)
     *   (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
-    *   Create a `Caddyfile` in the `knocker` directory. See the "Caddy Integration" section below for examples.
 
 3.  **Run the Service**:
     ```bash
@@ -47,13 +37,14 @@ This project is designed to be deployed as a set of Docker containers using the 
     ```
     This will pull the pre-built `knocker` image and start both the `knocker` and `caddy` services.
 
-## Configuration (`knocker.yaml`)
+## Use knocker with a Reverse Proxy
 
-The service is configured entirely through the `knocker.yaml` file, an example config with all the option is in [knocker.example.yaml](./knocker.example.yaml)
+Knocker runs by default in reverse proxy mode.
+It offers a verify endpoint, to check if the requesting IP is whitelisted or not, if not it will reply with a 401 and the reverse proxy will refuse the connection.
 
-## Caddy Integration
+### Caddy
 
-To protect your services, you will use Caddy's `forward_auth` directive.
+Caddy has the `forward_auth` directive to check connections using an auth endpoint.
 
 1.  **Define a Reusable Snippet**: It's best practice to define a snippet in your `Caddyfile` for the auth check.
 
@@ -85,32 +76,12 @@ jellyfin.your-domain.com {
   reverse_proxy jellyfin_service_name:8096
 }
 ```
-### Userland-proxy related issues
-
-If you are enabling knocking for IPs behind tailscale or other IPs, you may face issues due to how userland-proxy works, you may get different request IP from the actual ip address.
-
-Disabling Userland-proxy should fix it, but make sure to test your setup.
-You may also use host networking.
 
 ### Authorization Failures
 
 When a user is not whitelisted, Caddy's `forward_auth` directive will return a `401 Unauthorized` response with an empty body. 
 
 **Important Note**: Caddy's `handle_errors` directive does **not** work with `forward_auth` responses. The error response comes directly from the authentication service (knocker), not from Caddy itself, so `handle_errors` cannot intercept or modify these responses.
-
-If you need custom error pages for unauthorized access, you have a few alternatives:
-
-*   **Modify the knocker service**: Update the `/verify` endpoint to return custom HTML content in 401 responses (requires code changes).
-*   **Use a different approach**: Instead of `forward_auth`, you could implement authorization at the application level.
-*   **Accept the default**: Use the standard 401 response for unauthorized access.
-
-**Example of the standard behavior**:
-```caddyfile
-jellyfin.your-domain.com {
-  import knocker_auth  # This will return empty 401 responses for unauthorized users
-  reverse_proxy jellyfin_service_name:8096
-}
-```
 
 ## FirewallD Integration
 
@@ -179,6 +150,13 @@ journalctl -u firewalld -f
 ```
 
 For detailed configuration, architecture, and troubleshooting information, see the complete [FirewallD Integration Guide](./docs/FIREWALLD_INTEGRATION.md).
+
+## Userland-proxy related issues
+
+If you are enabling knocking for IPs behind tailscale or other IPs, you may face issues due to how userland-proxy works, you may get different request IP from the actual ip address.
+
+Disabling Userland-proxy should fix it, but make sure to test your setup.
+You may also use host networking.
 
 ## API Usage
 
