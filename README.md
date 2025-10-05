@@ -223,3 +223,12 @@ documentation:
 When documentation is disabled (default), Knocker removes these endpoints and deletes any previously generated schema file to prevent stale artifacts.
 
 For a formal API specification and a summary of the architectural choices, please see the [documentation](./docs/).
+
+## Fully vibe-coded
+
+Knocker was fully vibe coded.
+The initial implementation was done with Gemini 2.5 pro, thanks to the tokens provided in the roo code/request hackathon.
+
+Further features were mostly done with the GitHub copilot Agent (sonnet 4), which needed a lot of fixes, done mostly by GPT-5(CODEX).
+
+If you hate AI please don't use this.
