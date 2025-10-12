@@ -174,6 +174,8 @@ class TestEndpointFirewalldIntegration:
                 # Mock the FirewalldIntegration class
                 mock_integration = Mock()
                 mock_integration.is_enabled.return_value = True
+                # Ensure version check passes in mocked integration
+                mock_integration._check_firewalld_version.return_value = True
                 mock_integration.setup_knocker_zone.return_value = True
                 mock_integration.restore_missing_rules.return_value = True
                 mock_integration.add_whitelist_rule.return_value = True
@@ -229,6 +231,8 @@ class TestEndpointFirewalldIntegration:
                 # Mock disabled firewalld integration
                 mock_integration = Mock()
                 mock_integration.is_enabled.return_value = False
+                # Provide compatible version check stub even if disabled (harmless)
+                mock_integration._check_firewalld_version.return_value = True
                 mock_firewalld_class.return_value = mock_integration
                 
                 import src.firewalld as firewalld_module

@@ -87,6 +87,9 @@ When a user is not whitelisted, Caddy's `forward_auth` directive will return a `
 
 Knocker provides advanced firewall integration through firewalld, creating dynamic, time-based firewall rules that automatically expire based on the TTL specified in knock requests. This feature operates at the network level, allowing you to use knocker for non-http services like ssh or game servers.
 
+Knocker requires FirewallD v2, due to dependency on the zone priority feature.
+It's available in Debian 13, Ubuntu 24.04 LTS and other recent stable distros.
+
 ### Why FirewallD?
 
 FirewallD was chosen for the ability to separates the cli interface from the daemon. This allows Knocker to control firewalld from within a Docker container by mounting the system's D-Bus socket, and also FirewallD is the only firewall that integrates correctly with docker, meaning docker doesn't just ignore it's rules like UFW.

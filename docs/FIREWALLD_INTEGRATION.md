@@ -4,6 +4,9 @@ Knocker provides advanced firewall integration through firewalld, allowing for d
 
 ## Overview
 
+Minimum supported Firewalld version: 2.0.0+
+Knocker performs a quick compatibility check on startup using `firewall-cmd --version` and will fail fast with an error if the installed Firewalld is older than 2.0.0. If firewalld integration is disabled in the configuration, this check is skipped.
+
 The firewalld integration works by:
 
 1. **Creating a dedicated firewalld zone** with configurable priority (default: high priority)

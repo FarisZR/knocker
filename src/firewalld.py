@@ -164,6 +164,53 @@ class FirewalldIntegration:
         
         self.logger.warning(f"Firewalld not available: {stderr}")
         return False
+
+    def _check_firewalld_version(self) -> bool:
+        """
+        Ensure the installed firewalld version is >= 2.0.0.
+
+        Uses `firewall-cmd --version` output (via _run_firewall_cmd) and
+        performs a simple semantic-version comparison on the first numeric token.
+        Returns True if compatible, False otherwise. Logs errors on failure.
+        """
+        success, stdout, stderr = self._run_firewall_cmd(["--version"], check=False)
+        if not success:
+            # Couldn't determine version; treat as incompatible
+            self.logger.error(f"Failed to determine firewalld version: {stderr}")
+            return False
+
+        # Typical outputs:
+        #  - "firewall-cmd 2.9.0"
+        #  - "2.9.0"
+        ver_text = stdout.strip()
+        if not ver_text:
+            self.logger.error("Empty output from firewall-cmd --version; cannot determine version")
+            return False
+
+        # Extract the first token that looks like a version (starts with a digit)
+        tokens = ver_text.split()
+        version_str = None
+        for t in tokens:
+            if t and t[0].isdigit():
+                version_str = t
+                break
+        if not version_str:
+            version_str = ver_text
+
+        try:
+            parts = version_str.split('.')
+            major = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
+            minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+            patch = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+
+            if (major, minor, patch) < (2, 0, 0):
+                self.logger.error("knocker requires Firewalld 2.0 or newer.")
+                return False
+
+            return True
+        except Exception as e:
+            self.logger.error(f"Unable to parse firewalld version from output '{stdout}': {e}")
+            return False
         
     def setup_knocker_zone(self) -> bool:
         """

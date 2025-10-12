@@ -257,6 +257,23 @@ class TestFirewalldAvailability:
         assert firewalld_integration.is_firewalld_available() is False
 
 
+class TestFirewalldVersionCheck:
+    """Test firewalld version compatibility checks on startup."""
+
+    @patch.object(firewalld.FirewalldIntegration, '_run_firewall_cmd')
+    def test_check_version_ok(self, mock_cmd, firewalld_integration):
+        """When firewall-cmd reports >= 2.0.0, the check should pass."""
+        mock_cmd.return_value = (True, "firewall-cmd 2.3.1", "")
+        assert firewalld_integration._check_firewalld_version() is True
+
+    @patch.object(firewalld.FirewalldIntegration, '_run_firewall_cmd')
+    def test_check_version_too_old(self, mock_cmd, firewalld_integration, caplog):
+        """When firewall-cmd reports < 2.0.0, the check should fail and log the error."""
+        mock_cmd.return_value = (True, "firewall-cmd 1.9.8", "")
+        caplog.set_level("ERROR")
+        assert firewalld_integration._check_firewalld_version() is False
+        assert any("knocker requires Firewalld 2.0 or newer." in r.message for r in caplog.records)
+
 class TestZoneSetup:
     """Test knocker zone creation and setup."""
     
