@@ -313,12 +313,18 @@ def is_valid_api_key(api_key: str, settings: Dict[str, Any]) -> bool:
     
     # Use constant-time comparison to prevent timing attacks
     # IMPORTANT: We must check ALL keys, not return early on first match
+    # We use bitwise OR to avoid short-circuit evaluation
     found = False
     for key_info in api_keys_list:
         stored_key = key_info.get('key', '')
-        if stored_key and hmac.compare_digest(stored_key, api_key):
-            found = True
-            # Continue checking remaining keys to maintain constant time
+        # Pad empty keys to ensure we always compare strings of similar length
+        # This prevents timing differences from empty vs non-empty keys
+        if not stored_key:
+            # Use a dummy key of similar length to avoid empty string comparison
+            stored_key = ' ' * len(api_key) if api_key else ' '
+        # Always call compare_digest for every key to maintain constant time
+        # Use bitwise OR (|) instead of logical OR (or) to prevent short-circuiting
+        found = found | hmac.compare_digest(stored_key, api_key)
     return found
 
 
