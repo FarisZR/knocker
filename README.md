@@ -1,6 +1,6 @@
 ![](./assets/knocker-banner.webp)
 
-Knocker is a secure, configurable, and self-hosted service that provides an HTTP based "knock-knock" single-packet authorization (SPA) gateway for your Homelab, it can be used as authentication for your reverse proxy like Caddy, or even on the firewall level using the FirewallD integration. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses AKA networks.
+Knocker is a configurable, and self-hosted service that provides an HTTP based "knock-knock" single-packet authorization (SPA) gateway for your Homelab, it can be used as authentication for your reverse proxy like Caddy, or even on the firewall level using the FirewallD integration. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses AKA networks.
 
 This is ideal for homelab environments where you want to expose services to the internet without a persistent VPN connection, while minimizing your public-facing attack surface.
  
