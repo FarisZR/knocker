@@ -1,10 +1,37 @@
 ![](./assets/knocker-banner.webp)
 
-Knocker is a secure, configurable, and self-hosted service that provides a "knock-knock" single-packet authorization (SPA) gateway for your Homelab, it can be used as authentication for your reverse proxy like Caddy, or even on the firewall level using the FirewallD integration. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses.
+Knocker is a secure, configurable, and self-hosted service that provides an HTTP based "knock-knock" single-packet authorization (SPA) gateway for your Homelab, it can be used as authentication for your reverse proxy like Caddy, or even on the firewall level using the FirewallD integration. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses AKA networks.
 
 This is ideal for homelab environments where you want to expose services to the internet without a persistent VPN connection, while minimizing your public-facing attack surface.
+ 
+## Sequence diagram
 
- <!-- Placeholder for diagram -->
+```mermaid
+sequenceDiagram
+    participant User
+    participant Caddy as Reverse Proxy (Caddy)
+    participant Knocker
+    participant Service as Protected Service
+
+    User->>Caddy: HTTP request to protected service
+    Caddy->>Knocker: GET /verify (copies X-Forwarded-For)
+    Knocker-->>Knocker: check always_allowed_ips / excluded_paths / whitelist
+    alt IP whitelisted
+        Knocker-->>Caddy: 200 OK (empty body)
+        Caddy->>Service: forward request
+        Service-->>Caddy: 200 OK
+        Caddy-->>User: 200 OK
+    else IP not whitelisted
+        Knocker-->>Caddy: 401 Unauthorized (empty body)
+        Caddy-->>User: 401 Unauthorized
+    end
+
+    Note over User,Knocker: Performing a "knock" (to add whitelist entry)
+    User->>Knocker: POST /knock (X-Api-Key, optional ip_address, ttl)
+    Knocker->>Knocker: validate API key, determine client IP
+    Knocker->>Knocker: update whitelist.json with expiry
+    Knocker-->>User: 200 OK (whitelisted_entry, expires_at, expires_in_seconds)
+```
 
 ## Features
 
@@ -21,17 +48,17 @@ This is ideal for homelab environments where you want to expose services to the 
 This project is designed to be deployed as a set of Docker containers using the provided `docker-compose.yml` file. It uses the pre-built docker images with support for AMD64, Arm64 and risc-v.
 
 ### 1. Prerequisites
-    *   Docker and Docker Compose installed.
-    *   A public-facing server to run the containers.
-    *   (Optional) Firewalld installed and running on the host for advanced firewall integration.
+-   Docker and Docker Compose installed.
+-   A public-facing server to run the containers (doesn't even have to be on the same server running the services! IN PROXY MODE)
+-   (Optional) Firewalld 2.0+ installed and running on the host for advanced firewall integration.
 
-2.  **Configuration**:
+1.  **Configuration**:
     *   Rename `knocker.example.yaml` to `knocker.yaml`.
     *   **Crucially, change the default API keys** in `knocker.yaml` to your own secure, random strings.
     *   Review the `trusted_proxies` list in `knocker.yaml`, they should match the subnet of the reverse proxy's network (`docker network inspect xxx`)
     *   (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
 
-3.  **Run the Service**:
+2.  **Run the Service**:
     ```bash
     docker compose up -d
     ```
@@ -39,7 +66,7 @@ This project is designed to be deployed as a set of Docker containers using the 
 
 ## Use knocker with a Reverse Proxy
 
-Knocker runs by default in reverse proxy mode.
+Knocker works by acting as an auth gateway for your reverse Proxy.
 It offers a verify endpoint, to check if the requesting IP is whitelisted or not, if not it will reply with a 401 and the reverse proxy will refuse the connection.
 
 ### Caddy
@@ -87,7 +114,33 @@ When a user is not whitelisted, Caddy's `forward_auth` directive will return a `
 
 Knocker provides advanced firewall integration through firewalld, creating dynamic, time-based firewall rules that automatically expire based on the TTL specified in knock requests. This feature operates at the network level, allowing you to use knocker for non-http services like ssh or game servers.
 
-Knocker requires FirewallD v2, due to dependency on the zone priority feature.
+## Sequence diagram (firewalld)
+
+```mermaid
+sequenceDiagram
+    participant Client as User
+    participant Firewall as Firewalld (knocker zone)
+    participant Knocker
+    participant Service as Protected Service (port 22)
+
+    Note over Client,Firewall: Initial state — monitored port is blocked by default
+    Client->>Firewall: TCP SYN to Service:22
+    Firewall-->>Client: DROP (no response)
+
+    Note over Client,Knocker: User performs a knock to whitelist their IP
+    Client->>Knocker: POST /knock (X-Api-Key, optional ip_address, ttl)
+    Knocker->>Knocker: validate API key & determine client IP
+    Knocker->>Firewall: add rich accept rule for client IP on port 22 with timeout
+    Firewall-->>Knocker: success
+
+    Note over Firewall,Client: New rule overrides DROP due to higher priority
+    Client->>Firewall: TCP SYN to Service:22
+    Firewall->>Service: forward packet
+    Service-->>Client: TCP SYN-ACK (connection established)
+    Knocker->>Knocker: update whitelist.json with expiry
+```
+
+Knocker requires FirewallD 2.0+ due to dependency on the zone priority feature.
 It's available in Debian 13, Ubuntu 24.04 LTS and other recent stable distros.
 
 ### Why FirewallD?
@@ -106,38 +159,12 @@ https://docs.docker.com/engine/network/packet-filtering-firewalls/#integration-w
 ### Enabling FirewallD Integration
 
 1. **Prerequisites**:
-   - FirewallD installed and running on the host system
+   - FirewallD 2.0+ installed and running on the host system
    - Docker container must run as root for D-Bus access
 
-2. **Configuration** in `knocker.yaml`:
-   ```yaml
-   firewalld:
-     enabled: true
-     zone_name: "knocker"
-     zone_priority: -100  # Higher priority (negative = higher)
-     monitored_ports:
-       - port: 80
-         protocol: tcp
-       - port: 443
-         protocol: tcp
-       - port: 22
-         protocol: tcp
-     monitored_ips:
-       - "0.0.0.0/0"    # All IPv4 (requires /0 suffix)
-       - "::/0"          # All IPv6 (requires /0 suffix)
-   ```
-
-3. **Docker Configuration**:
-   ```yaml
-   services:
-     knocker:
-       user: "0:0"  # Run as root
-       cap_add:
-         - NET_ADMIN
-       volumes:
-         - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
-   ```
-
+2. **Configuration** 
+  - enable FirewallD in the knocker.yaml config, settings are already available in the [example config](./knocker.example.yaml)
+  - Mount the Dbus socket into the docker container, and make sure it runs as root, the required entires are commented out in the [docker-compose.yml](./docker-compose.yml) file
 ### Testing and Troubleshooting
 
 Monitor active rules:
@@ -159,7 +186,7 @@ For detailed configuration, architecture, and troubleshooting information, see t
 If you are enabling knocking for IPs behind tailscale or other IPs, you may face issues due to how userland-proxy works, you may get different request IP from the actual ip address.
 
 Disabling Userland-proxy should fix it, but make sure to test your setup.
-You may also use host networking.
+You could also use host networking.
 
 ## API Usage
 
@@ -230,8 +257,8 @@ For a formal API specification and a summary of the architectural choices, pleas
 ## Fully vibe-coded
 
 Knocker was fully vibe coded.
-The initial implementation was done with Gemini 2.5 pro, thanks to the tokens provided in the roo code/request hackathon.
+The initial implementation was done with Gemini 2.5 pro, thanks to the tokens provided in the roo code/requesty hackathon.
 
-Further features were mostly done with the GitHub copilot Agent (sonnet 4), which needed a lot of fixes, done mostly by GPT-5(CODEX).
+Further features were mostly done with the GitHub copilot Agent (sonnet 4/later 4.5), which needed a lot of fixes, done mostly by GPT-5 mini/CODEX.
 
-If you hate AI please don't use this.
+If you're Anti-AI please don't use this.
