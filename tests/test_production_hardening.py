@@ -289,19 +289,15 @@ class TestHealthCheckDependencies:
         
         app.dependency_overrides = {}
     
-    def test_health_check_detects_storage_issues(self, test_settings):
+    def test_health_check_detects_storage_issues(self, test_settings, monkeypatch):
         """Health check should detect inaccessible storage."""
-        # Use an invalid path
-        bad_settings = test_settings.copy()
-        bad_settings["whitelist"] = {"storage_path": "/invalid/path/that/cannot/exist/whitelist.json"}
+        bad_settings = {**test_settings, "whitelist": {"storage_path": "./will_fail.json"}}
         app.dependency_overrides[get_settings] = lambda: bad_settings
-        
-        response = client.get("/health")
-        # Should still pass as it creates parent dirs, but logs the issue
-        # In a real scenario with permissions issues, it would fail
-        
+        # Simulate write failure
+        monkeypatch.setattr(core, "save_whitelist", lambda wl, st: (_ for _ in ()).throw(PermissionError("denied")))
+        resp = client.get("/health")
+        assert resp.status_code == 503
         app.dependency_overrides = {}
-
 
 class TestConfigurationValidation:
     """Test configuration loading validation."""
