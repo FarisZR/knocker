@@ -217,7 +217,7 @@ If using firewalld integration:
 
 ## Need Help?
 
-- 📖 [Security Guide](./SECURITY.md)
-- 📖 [Project Overview](./Project-OVERVIEW.md)
+- 📖 [Security Guide](SECURITY.md)
+- 📖 [Project Overview](Project-OVERVIEW.md)
 - 🐛 [GitHub Issues](https://github.com/FarisZR/knocker/issues)
 - 🔒 [Security Policy](../SECURITY.md)
