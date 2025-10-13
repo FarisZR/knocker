@@ -109,9 +109,8 @@ class TestCrossProcessLocking:
         # Perform an operation
         core.add_ip_to_whitelist("192.168.1.100", future_time, test_settings)
         
-        # Lock file should exist after operation (directory structure created)
-        assert lock_file_path.parent.exists()
-    
+        # Lock file should exist after operation
+        assert lock_file_path.exists()
     def test_concurrent_operations_safe(self, test_settings):
         """Concurrent operations should not corrupt the whitelist."""
         import threading
