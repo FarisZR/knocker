@@ -50,17 +50,19 @@ class TestCoreFirewalldIntegrationFunction:
         
         settings = {"whitelist": {"storage_path": "/tmp/test_whitelist.json"}}
         
-        result = core.add_ip_to_whitelist_with_firewalld("192.168.1.100", 1700000000, settings)
+        # Use a future timestamp
+        future_time = int(time.time()) + 3600
+        result = core.add_ip_to_whitelist_with_firewalld("192.168.1.100", future_time, settings)
         
         assert result is True
         
         # Verify firewalld was called
-        mock_integration.add_whitelist_rule.assert_called_once_with("192.168.1.100", 1700000000)
+        mock_integration.add_whitelist_rule.assert_called_once_with("192.168.1.100", future_time)
         
         # Verify whitelist.json was updated
         whitelist = core.load_whitelist(settings)
         assert "192.168.1.100" in whitelist
-        assert whitelist["192.168.1.100"] == 1700000000
+        assert whitelist["192.168.1.100"] == future_time
     
     @patch('src.firewalld.get_firewalld_integration')  
     def test_add_with_firewalld_failure(self, mock_get_integration):
@@ -73,12 +75,14 @@ class TestCoreFirewalldIntegrationFunction:
         
         settings = {"whitelist": {"storage_path": "/tmp/test_whitelist.json"}}
         
-        result = core.add_ip_to_whitelist_with_firewalld("192.168.1.100", 1700000000, settings)
+        # Use a future timestamp
+        future_time = int(time.time()) + 3600
+        result = core.add_ip_to_whitelist_with_firewalld("192.168.1.100", future_time, settings)
         
         assert result is False
         
         # Verify firewalld was called
-        mock_integration.add_whitelist_rule.assert_called_once_with("192.168.1.100", 1700000000)
+        mock_integration.add_whitelist_rule.assert_called_once_with("192.168.1.100", future_time)
         
         # Verify whitelist.json was NOT updated
         whitelist = core.load_whitelist(settings)
@@ -94,7 +98,9 @@ class TestCoreFirewalldIntegrationFunction:
         
         settings = {"whitelist": {"storage_path": "/tmp/test_whitelist.json"}}
         
-        result = core.add_ip_to_whitelist_with_firewalld("192.168.1.100", 1700000000, settings)
+        # Use a future timestamp
+        future_time = int(time.time()) + 3600
+        result = core.add_ip_to_whitelist_with_firewalld("192.168.1.100", future_time, settings)
         
         assert result is True
         
@@ -113,7 +119,9 @@ class TestCoreFirewalldIntegrationFunction:
         
         settings = {"whitelist": {"storage_path": "/tmp/test_whitelist.json"}}
         
-        result = core.add_ip_to_whitelist_with_firewalld("192.168.1.100", 1700000000, settings)
+        # Use a future timestamp
+        future_time = int(time.time()) + 3600
+        result = core.add_ip_to_whitelist_with_firewalld("192.168.1.100", future_time, settings)
         
         assert result is True
         
@@ -137,12 +145,14 @@ class TestCoreFirewalldIntegrationFunction:
             
             settings = {"whitelist": {"storage_path": "/tmp/test_whitelist.json"}}
             
-            result = core.add_ip_to_whitelist_with_firewalld("192.168.1.100", 1700000000, settings)
+            # Use a future timestamp
+            future_time = int(time.time()) + 3600
+            result = core.add_ip_to_whitelist_with_firewalld("192.168.1.100", future_time, settings)
             
             assert result is False
             
             # Verify firewalld rules were added then rolled back
-            mock_integration.add_whitelist_rule.assert_called_once_with("192.168.1.100", 1700000000)
+            mock_integration.add_whitelist_rule.assert_called_once_with("192.168.1.100", future_time)
             mock_integration.remove_whitelist_rule.assert_called_once_with("192.168.1.100")
             
             # Verify whitelist.json update was attempted
