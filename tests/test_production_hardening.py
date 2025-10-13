@@ -57,30 +57,98 @@ class TestTimingAttackResistance:
     """Test that API key validation is resistant to timing attacks."""
     
     def test_constant_time_validation(self, test_settings):
-        """Verify timing is consistent regardless of key validity."""
+        """
+        Verify timing is consistent regardless of key validity using robust statistical analysis.
+        
+        Uses warm-up runs, large sample size, outlier removal, and statistical testing
+        to detect timing attack vulnerabilities.
+        """
         valid_key = "valid_key_12345"
         invalid_key = "invalid_key_12345"
         
-        # Test multiple times to get average
+        # Warm-up runs to stabilize timing
+        for _ in range(10):
+            core.is_valid_api_key(valid_key, test_settings)
+            core.is_valid_api_key(invalid_key, test_settings)
+        
+        # Collect measurements with high-resolution timing
+        sample_size = 150
         valid_times = []
         invalid_times = []
         
-        for _ in range(10):
-            start = time.perf_counter()
+        for _ in range(sample_size):
+            start = time.perf_counter_ns()
             core.is_valid_api_key(valid_key, test_settings)
-            valid_times.append(time.perf_counter() - start)
+            valid_times.append(time.perf_counter_ns() - start)
             
-            start = time.perf_counter()
+            start = time.perf_counter_ns()
             core.is_valid_api_key(invalid_key, test_settings)
-            invalid_times.append(time.perf_counter() - start)
+            invalid_times.append(time.perf_counter_ns() - start)
         
-        # Times should be similar (within reasonable variance)
-        # This is a basic check - true timing attack detection requires statistical analysis
-        avg_valid = sum(valid_times) / len(valid_times)
-        avg_invalid = sum(invalid_times) / len(invalid_times)
+        # Remove outliers using trimmed mean (remove top/bottom 10%)
+        def trimmed_mean(samples, trim_percent=0.1):
+            sorted_samples = sorted(samples)
+            trim_count = int(len(sorted_samples) * trim_percent)
+            if trim_count > 0:
+                trimmed = sorted_samples[trim_count:-trim_count]
+            else:
+                trimmed = sorted_samples
+            return sum(trimmed) / len(trimmed), trimmed
         
-        # Times should be within same order of magnitude
-        assert abs(avg_valid - avg_invalid) < 0.001, "Timing difference too large - potential timing attack vector"
+        valid_mean, valid_trimmed = trimmed_mean(valid_times)
+        invalid_mean, invalid_trimmed = trimmed_mean(invalid_times)
+        
+        # Calculate standard deviations
+        def std_dev(samples, mean):
+            variance = sum((x - mean) ** 2 for x in samples) / len(samples)
+            return variance ** 0.5
+        
+        valid_std = std_dev(valid_trimmed, valid_mean)
+        invalid_std = std_dev(invalid_trimmed, invalid_mean)
+        
+        # Perform Mann-Whitney U test (non-parametric)
+        # Null hypothesis: distributions are the same
+        def mann_whitney_u(samples1, samples2):
+            """Simplified Mann-Whitney U test for timing attack detection."""
+            n1, n2 = len(samples1), len(samples2)
+            combined = [(val, 0) for val in samples1] + [(val, 1) for val in samples2]
+            combined.sort(key=lambda x: x[0])
+            
+            # Calculate ranks
+            rank_sum_1 = sum(i + 1 for i, (val, group) in enumerate(combined) if group == 0)
+            
+            # Calculate U statistic
+            u1 = rank_sum_1 - (n1 * (n1 + 1)) / 2
+            u2 = n1 * n2 - u1
+            u = min(u1, u2)
+            
+            # Calculate expected value and standard deviation under null hypothesis
+            mean_u = n1 * n2 / 2
+            std_u = ((n1 * n2 * (n1 + n2 + 1)) / 12) ** 0.5
+            
+            # Calculate z-score
+            z = (u - mean_u) / std_u if std_u > 0 else 0
+            
+            # For two-tailed test, we want |z| to be small (distributions similar)
+            # p-value approximation: larger |z| means more different distributions
+            return abs(z)
+        
+        z_score = mann_whitney_u(valid_trimmed, invalid_trimmed)
+        
+        # Assert that distributions are similar (z-score < 2 means p > 0.05 approximately)
+        # This indicates no statistically significant timing difference
+        assert z_score < 2.0, (
+            f"Timing attack detected: z-score={z_score:.2f} indicates statistically "
+            f"significant difference between valid ({valid_mean:.0f}ns ± {valid_std:.0f}ns) "
+            f"and invalid ({invalid_mean:.0f}ns ± {invalid_std:.0f}ns) key timings"
+        )
+        
+        # Additional check: relative difference should be small
+        relative_diff = abs(valid_mean - invalid_mean) / max(valid_mean, invalid_mean)
+        assert relative_diff < 0.1, (
+            f"Timing difference too large: {relative_diff*100:.1f}% difference between "
+            f"valid and invalid key validation times"
+        )
     
     def test_empty_api_key_handled(self, test_settings):
         """Empty API key should be handled gracefully."""

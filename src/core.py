@@ -285,6 +285,9 @@ def is_valid_api_key(api_key: str, settings: Dict[str, Any]) -> bool:
     """
     Checks if an API key exists in the configuration.
     Uses constant-time comparison to prevent timing attacks.
+    
+    Important: This function iterates through ALL keys regardless of match
+    to maintain constant time operation and prevent timing attack vectors.
     """
     if not api_key:
         return False
@@ -295,11 +298,14 @@ def is_valid_api_key(api_key: str, settings: Dict[str, Any]) -> bool:
         return False
     
     # Use constant-time comparison to prevent timing attacks
+    # IMPORTANT: We must check ALL keys, not return early on first match
+    found = False
     for key_info in api_keys_list:
         stored_key = key_info.get('key', '')
         if stored_key and hmac.compare_digest(stored_key, api_key):
-            return True
-    return False
+            found = True
+            # Continue checking remaining keys to maintain constant time
+    return found
 
 
 def get_api_key_name(api_key: str, settings: Dict[str, Any]) -> str:
