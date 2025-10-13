@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 # Thread lock for whitelist operations
-_whitelist_lock = threading.Lock()
+# Using RLock (reentrant lock) to allow nested lock acquisition
+# in read-modify-write sequences
+_whitelist_lock = threading.RLock()
 
 # --- IP/CIDR Validation ---
 
@@ -201,10 +203,16 @@ def save_whitelist(whitelist: Dict[str, int], settings: Dict[str, Any]):
             raise
 
 def add_ip_to_whitelist(ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]):
-    """Adds an IP or CIDR to the whitelist and saves it."""
-    whitelist = load_whitelist(settings)
-    whitelist[ip_or_cidr] = expiry_time
-    save_whitelist(whitelist, settings)
+    """
+    Adds an IP or CIDR to the whitelist and saves it.
+    
+    The entire read-modify-write sequence is protected by a lock to prevent
+    race conditions where concurrent updates could overwrite each other.
+    """
+    with _whitelist_lock:
+        whitelist = load_whitelist(settings)
+        whitelist[ip_or_cidr] = expiry_time
+        save_whitelist(whitelist, settings)
 
 
 def add_ip_to_whitelist_with_firewalld(ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]) -> bool:
@@ -255,15 +263,21 @@ def add_ip_to_whitelist_with_firewalld(ip_or_cidr: str, expiry_time: int, settin
         return False
 
 def cleanup_expired_ips(settings: Dict[str, Any]):
-    """Removes expired entries from the whitelist file."""
-    whitelist = load_whitelist(settings)
-    now = int(time.time())
+    """
+    Removes expired entries from the whitelist file.
     
-    # Create a new dict with only the non-expired entries
-    fresh_whitelist = {entry: expiry for entry, expiry in whitelist.items() if expiry > now}
-    
-    if len(fresh_whitelist) < len(whitelist):
-        save_whitelist(fresh_whitelist, settings)
+    The entire read-modify-write sequence is protected by a lock to prevent
+    race conditions where concurrent updates could overwrite each other.
+    """
+    with _whitelist_lock:
+        whitelist = load_whitelist(settings)
+        now = int(time.time())
+        
+        # Create a new dict with only the non-expired entries
+        fresh_whitelist = {entry: expiry for entry, expiry in whitelist.items() if expiry > now}
+        
+        if len(fresh_whitelist) < len(whitelist):
+            save_whitelist(fresh_whitelist, settings)
 
 # --- Permissions & Key Helpers ---
 
