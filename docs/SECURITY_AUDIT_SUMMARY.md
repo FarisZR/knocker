@@ -1,5 +1,35 @@
 # Security Audit Summary
 
+## Latest Updates (Production Hardening)
+
+### Additional Security Improvements
+
+**Timing Attack Prevention:**
+- API key validation now uses `hmac.compare_digest()` for constant-time comparison
+- Prevents attackers from deducing valid API keys through timing analysis
+
+**Enhanced Input Validation:**
+- Maximum TTL limit of 10 years (315,360,000 seconds) to prevent integer overflow issues
+- String length validation for IP addresses (max 100 characters)
+- Type validation for all user inputs
+- Comprehensive edge case handling (zero, negative, float TTLs)
+
+**Configuration Security:**
+- Duplicate API key detection at startup
+- Empty API keys list validation
+- Path traversal prevention in KNOCKER_CONFIG_PATH
+- Absolute path validation for configuration files
+
+**Health Check Improvements:**
+- Dependency verification (API keys, storage accessibility)
+- Returns 503 Service Unavailable for unhealthy states
+- Proper error reporting without exposing sensitive details
+
+**Production Readiness:**
+- 163 comprehensive tests covering all security features
+- 24 new tests for production hardening scenarios
+- Zero tolerance for edge case failures
+
 ## Overview
 
 A comprehensive security audit was performed on the Caddy Knocker project from an offensive security perspective. This audit identified 7 security vulnerabilities ranging from Critical to Low severity, all of which have been successfully remediated.

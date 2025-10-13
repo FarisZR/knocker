@@ -1,0 +1,81 @@
+name: Create GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          # Generate changelog
+          if [ -n "$PREV_TAG" ]; then
+            echo "## Changes since $PREV_TAG" > CHANGELOG.md
+            git log $PREV_TAG..HEAD --pretty=format:"* %s (%h)" >> CHANGELOG.md
+          else
+            echo "## Initial Release" > CHANGELOG.md
+            echo "First tagged release of Knocker" >> CHANGELOG.md
+          fi
+          
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          cat CHANGELOG.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            # Knocker ${{ steps.version.outputs.version }}
+            
+            ## Docker Images
+            
+            Pull the release image with:
+            ```bash
+            docker pull ghcr.io/fariszr/knocker:${{ steps.version.outputs.version }}
+            # Or use the latest tag for the most recent stable release
+            docker pull ghcr.io/fariszr/knocker:latest
+            ```
+            
+            Supported architectures: `linux/amd64`, `linux/arm/v8`, `linux/arm/v7`
+            
+            ## Installation
+            
+            1. Download `knocker.example.yaml` and rename it to `knocker.yaml`
+            2. **Change all default API keys** to secure random strings
+            3. Update `trusted_proxies` to match your Docker network
+            4. Run with: `docker compose up -d`
+            
+            For detailed setup instructions, see the [README](https://github.com/FarisZR/knocker#readme).
+            
+            ${{ steps.changelog.outputs.changelog }}
+            
+            ## Security Notes
+            
+            - Always change default API keys in production
+            - Configure `trusted_proxies` to prevent IP spoofing
+            - Review the [Security Guide](https://github.com/FarisZR/knocker/blob/main/docs/SECURITY.md)
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -358,6 +358,23 @@ async def knock(
         # Handle both KnockRequest objects and raw dicts for backward compatibility
         ip_address = getattr(body, 'ip_address', None) if hasattr(body, 'ip_address') else body.get('ip_address')
         if ip_address:
+            # Security: Validate input size to prevent DoS
+            if not isinstance(ip_address, str):
+                logging.warning(f"Invalid IP address type from {client_ip}.")
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"error": "IP address must be a string."},
+                    headers={"Access-Control-Allow-Origin": allowed_origin}
+                )
+            
+            if len(ip_address) > 100:  # Max length for IPv6 with CIDR
+                logging.warning(f"IP address too long ({len(ip_address)} chars) from {client_ip}.")
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"error": "IP address or CIDR notation too long."},
+                    headers={"Access-Control-Allow-Origin": allowed_origin}
+                )
+            
             if not core.can_whitelist_remote(api_key, settings):
                 logging.warning(f"API key used by {client_ip} lacks remote whitelist permission.")
                 return JSONResponse(
@@ -391,13 +408,34 @@ async def knock(
     effective_ttl = max_ttl
 
     if requested_ttl is not None:
-        if not isinstance(requested_ttl, int) or requested_ttl <= 0:
-            logging.warning(f"Invalid TTL '{requested_ttl}' specified by {client_ip}.")
+        # Comprehensive TTL validation
+        if not isinstance(requested_ttl, int):
+            logging.warning(f"Invalid TTL type '{type(requested_ttl).__name__}' specified by {client_ip}.")
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={"error": "Invalid TTL specified. Must be a positive integer."},
                 headers={"Access-Control-Allow-Origin": allowed_origin}
             )
+        
+        # Check for edge cases: 0, negative, and excessively large values
+        if requested_ttl <= 0:
+            logging.warning(f"Invalid TTL '{requested_ttl}' (must be positive) specified by {client_ip}.")
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "Invalid TTL specified. Must be a positive integer."},
+                headers={"Access-Control-Allow-Origin": allowed_origin}
+            )
+        
+        # Prevent extremely large TTL values (max 10 years = 315360000 seconds)
+        MAX_TTL = 315360000
+        if requested_ttl > MAX_TTL:
+            logging.warning(f"TTL {requested_ttl} exceeds maximum allowed ({MAX_TTL}) from {client_ip}.")
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": f"TTL too large. Maximum allowed is {MAX_TTL} seconds (10 years)."},
+                headers={"Access-Control-Allow-Origin": allowed_origin}
+            )
+        
         effective_ttl = min(requested_ttl, max_ttl)
 
     expiry_time = int(time.time()) + effective_ttl
@@ -440,8 +478,42 @@ async def knock(
     description="Verify that the Knocker service is running and operational.",
     status_code=status.HTTP_200_OK
 )
-async def health_check():
-    return HealthResponse(status="ok")
+async def health_check(settings: dict = Depends(get_settings)):
+    """
+    Health check endpoint with dependency verification.
+    Validates that critical configuration and dependencies are available.
+    """
+    try:
+        # Verify critical configuration sections exist
+        if not settings.get('api_keys'):
+            logging.error("Health check failed: No API keys configured")
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "unhealthy", "error": "No API keys configured"}
+            )
+        
+        # Verify whitelist storage is accessible
+        whitelist_path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+        try:
+            # Try to create parent directory if it doesn't exist
+            whitelist_path.parent.mkdir(parents=True, exist_ok=True)
+            # Verify we can read/write
+            if whitelist_path.exists():
+                _ = core.load_whitelist(settings)
+        except Exception as e:
+            logging.error(f"Health check failed: Whitelist storage not accessible: {e}")
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "unhealthy", "error": "Whitelist storage not accessible"}
+            )
+        
+        return HealthResponse(status="ok")
+    except Exception as e:
+        logging.error(f"Health check failed with unexpected error: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "error": "Internal error"}
+        )
 
 @app.get(
     "/verify", 

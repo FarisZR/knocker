@@ -47,6 +47,16 @@ sequenceDiagram
 
 This project is designed to be deployed as a set of Docker containers using the provided `docker-compose.yml` file. It uses the pre-built docker images with support for AMD64, Arm64 and risc-v.
 
+### Docker Image Tags
+
+Knocker provides different image tags for different use cases:
+
+- **`latest`** - Latest stable release (recommended for production)
+- **`v1.2.3`** - Specific version tags (pinned versions)
+- **`main`** - Development branch (rolling updates, may be unstable)
+
+**For production use, we recommend using either `latest` or a specific version tag like `v1.0.0`.**
+
 ### 1. Prerequisites
 -   Docker and Docker Compose installed.
 -   A public-facing server to run the containers (doesn't even have to be on the same server running the services! IN PROXY MODE)

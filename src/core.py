@@ -4,6 +4,7 @@ import time
 import fcntl
 import threading
 import logging
+import hmac
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -281,10 +282,24 @@ def get_max_ttl_for_key(api_key: str, settings: Dict[str, Any]) -> int:
     return 0
 
 def is_valid_api_key(api_key: str, settings: Dict[str, Any]) -> bool:
-    """Checks if an API key exists in the configuration."""
+    """
+    Checks if an API key exists in the configuration.
+    Uses constant-time comparison to prevent timing attacks.
+    """
     if not api_key:
         return False
-    return any(key_info.get('key') == api_key for key_info in settings.get('api_keys', []))
+    
+    api_keys_list = settings.get('api_keys', [])
+    if not api_keys_list:
+        logging.warning("No API keys configured in settings")
+        return False
+    
+    # Use constant-time comparison to prevent timing attacks
+    for key_info in api_keys_list:
+        stored_key = key_info.get('key', '')
+        if stored_key and hmac.compare_digest(stored_key, api_key):
+            return True
+    return False
 
 
 def get_api_key_name(api_key: str, settings: Dict[str, Any]) -> str:
