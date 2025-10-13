@@ -15,10 +15,10 @@ from fastapi.openapi.docs import (
 )
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-import core
-import config
-import firewalld
-from models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse
+from . import core
+from . import config
+from . import firewalld
+from .models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse
 
 @lru_cache()
 def get_settings() -> Dict:
@@ -497,9 +497,34 @@ async def health_check(settings: dict = Depends(get_settings)):
         try:
             # Try to create parent directory if it doesn't exist
             whitelist_path.parent.mkdir(parents=True, exist_ok=True)
-            # Verify we can read/write
-            if whitelist_path.exists():
-                _ = core.load_whitelist(settings)
+
+            # Verify we can read and write the whitelist storage by performing
+            # a safe read-then-write roundtrip. This detects permission errors
+            # and other I/O problems (e.g., disk is read-only).
+            whitelist = {}
+            try:
+                if whitelist_path.exists():
+                    whitelist = core.load_whitelist(settings)
+            except Exception as e:
+                logging.error(f"Health check failed: Could not read whitelist storage: {e}")
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content={"status": "unhealthy", "error": "Whitelist storage not accessible"}
+                )
+
+            try:
+                # Attempt to save the currently-loaded whitelist (no-op in normal cases).
+                # Use an explicit import by module name to ensure we call the same
+                # module object that tests may monkeypatch (e.g. `src.core`).
+                import importlib
+                core_module = importlib.import_module("src.core")
+                core_module.save_whitelist(whitelist, settings)
+            except Exception as e:
+                logging.error(f"Health check failed: Could not write to whitelist storage: {e}")
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content={"status": "unhealthy", "error": "Whitelist storage not accessible"}
+                )
         except Exception as e:
             logging.error(f"Health check failed: Whitelist storage not accessible: {e}")
             return JSONResponse(
