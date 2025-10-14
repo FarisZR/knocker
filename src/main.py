@@ -15,10 +15,16 @@ from fastapi.openapi.docs import (
 )
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from . import core
-from . import config
-from . import firewalld
-from .models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse
+try:
+    from . import core
+    from . import config
+    from . import firewalld
+    from .models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse
+except ImportError:  # pragma: no cover - fallback for direct module execution
+    import core
+    import config
+    import firewalld
+    from models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse
 
 @lru_cache()
 def get_settings() -> Dict:
