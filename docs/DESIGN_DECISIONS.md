@@ -46,4 +46,4 @@ This document outlines the key architectural and design decisions made during th
 
 ### 7. Import Compatibility
 
-The FastAPI entrypoint (`main.py`) now supports both relative (`from . import core`) and absolute (`import core`) imports. This guards against import errors when the service runs as a package (for example `uvicorn src.main:app`) and when tests import the module directly via `PYTHONPATH=src`. The fallback keeps local tooling and the production container aligned without requiring separate entrypoints.
+The FastAPI entrypoint (`main.py`) now supports both relative (`from . import core`) and absolute (`import core`) imports. This guards against import errors when the service runs as a package (for example `uvicorn src.main:app`) and when tests import the module directly via `PYTHONPATH=src`. When running inside Docker the runtime now avoids trying to import `src.core` explicitly, ensuring the health checks succeed regardless of the deployment layout.

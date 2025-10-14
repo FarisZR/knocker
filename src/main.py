@@ -519,12 +519,7 @@ async def health_check(settings: dict = Depends(get_settings)):
                 )
 
             try:
-                # Attempt to save the currently-loaded whitelist (no-op in normal cases).
-                # Use an explicit import by module name to ensure we call the same
-                # module object that tests may monkeypatch (e.g. `src.core`).
-                import importlib
-                core_module = importlib.import_module("src.core")
-                core_module.save_whitelist(whitelist, settings)
+                core.save_whitelist(whitelist, settings)
             except Exception as e:
                 logging.error(f"Health check failed: Could not write to whitelist storage: {e}")
                 return JSONResponse(
