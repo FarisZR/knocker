@@ -5,10 +5,14 @@ on:
     branches: [ "main" ]
     paths:
       - src/**
+      - dev/**
+      - tests/**
   push:
     branches: [ "main" ]
     paths:
       - src/**
+      - dev/**
+      - tests/**
   workflow_dispatch:
 
 jobs:
