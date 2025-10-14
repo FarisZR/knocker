@@ -260,20 +260,29 @@ class FirewalldIntegration:
             
             # Add default action rules for monitored ports with low priority (high number)
             # These will be overridden by whitelist rules with higher priority (lower number)
+            # Rules must include destination address to only apply to monitored_ips
             for port_config in self.monitored_ports:
                 port = port_config.get("port")
                 protocol = port_config.get("protocol", "tcp")
                 
-                # Add default action rules for both IPv4 and IPv6 with low priority (high number = 9999)
-                for family in ["ipv4", "ipv6"]:
-                    default_rule = f'rule family="{family}" port protocol="{protocol}" port="{port}" {self.default_action} priority="9999"'
-                    success, _, stderr = self._run_firewall_cmd([
-                        "--permanent", f"--zone={self.zone_name}", f"--add-rich-rule={default_rule}"
-                    ])
-                    if not success:
-                        self.logger.warning(f"Failed to add {self.default_action.upper()} rule for {port}/{protocol} ({family}): {stderr}")
-                    else:
-                        self.logger.info(f"Added {self.default_action.upper()} rule for port {port}/{protocol} ({family})")
+                # Create a default rule for each monitored IP
+                for monitored_ip in self.monitored_ips:
+                    try:
+                        # Parse the monitored IP to determine its family
+                        network = ipaddress.ip_network(monitored_ip, strict=False)
+                        family = "ipv4" if network.version == 4 else "ipv6"
+                        
+                        # Build default action rule with destination address
+                        default_rule = f'rule family="{family}" destination address="{monitored_ip}" port protocol="{protocol}" port="{port}" {self.default_action} priority="9999"'
+                        success, _, stderr = self._run_firewall_cmd([
+                            "--permanent", f"--zone={self.zone_name}", f"--add-rich-rule={default_rule}"
+                        ])
+                        if not success:
+                            self.logger.warning(f"Failed to add {self.default_action.upper()} rule for {monitored_ip}:{port}/{protocol} ({family}): {stderr}")
+                        else:
+                            self.logger.info(f"Added {self.default_action.upper()} rule for destination {monitored_ip}:{port}/{protocol} ({family})")
+                    except (ValueError, ipaddress.AddressValueError) as e:
+                        self.logger.error(f"Invalid monitored IP '{monitored_ip}' while creating default rule: {e}")
 
             # Reload to apply permanent changes
             success, _, stderr = self._run_firewall_cmd(["--reload"])
