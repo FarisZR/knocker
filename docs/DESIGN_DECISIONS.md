@@ -43,3 +43,7 @@ This document outlines the key architectural and design decisions made during th
 
 *   **State Management**: JSON file (`whitelist.json`)
     *   **Reasoning**: For a self-contained, single-node service typical of a homelab, a simple JSON file is a robust and sufficient solution for storing the whitelist. It requires no external dependencies (like Redis or a database), simplifying deployment. The service is designed to be stateless, with all state managed in this file, which is persisted via a Docker volume.
+
+### 7. Import Compatibility
+
+The FastAPI entrypoint (`main.py`) now supports both relative (`from . import core`) and absolute (`import core`) imports. This guards against import errors when the service runs as a package (for example `uvicorn src.main:app`) and when tests import the module directly via `PYTHONPATH=src`. When running inside Docker the runtime now avoids trying to import `src.core` explicitly, ensuring the health checks succeed regardless of the deployment layout.

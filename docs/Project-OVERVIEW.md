@@ -22,8 +22,11 @@ This is ideal for homelab environments where you want to expose services to the 
 
 This project uses GitHub Actions for continuous integration and deployment.
 
-*   **CI (`ci.yml`)**: On every pull request to `main`, this workflow runs the full Python test suite and then performs a live integration test with Docker Compose to ensure the Caddy and Knocker services work together correctly.
-*   **Docker Publish (`docker-publish.yml`)**: On every push to `main`, this workflow builds and publishes a multi-arch Docker image to the GitHub Container Registry (ghcr.io).
+*   **CI (`tests.yml`)**: On every pull request to `main`, this workflow runs the full Python test suite and then performs a live integration test with Docker Compose to ensure the Caddy and Knocker services work together correctly.
+*   **Docker Publish (`docker-publish.yml`)**: Builds and publishes multi-arch Docker images to GitHub Container Registry (ghcr.io)
+    - On push to `main` → `ghcr.io/fariszr/knocker:main` (rolling development)
+    - On version tags (v1.2.3) → Multiple tags including `:latest`, `:v1.2.3`, `:1.2.3`, `:1.2`, `:1` (stable releases)
+*   **Release Workflow (`release.yml`)**: On version tags, automatically creates GitHub releases with changelogs and installation instructions
 
 ## Deployment
 

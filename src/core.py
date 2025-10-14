@@ -4,11 +4,41 @@ import time
 import fcntl
 import threading
 import logging
+import hmac
 from pathlib import Path
 from typing import Dict, Any, Optional
+from contextlib import contextmanager
 
 # Thread lock for whitelist operations
-_whitelist_lock = threading.Lock()
+# Using RLock (reentrant lock) to allow nested lock acquisition
+# in read-modify-write sequences
+_whitelist_lock = threading.RLock()
+
+@contextmanager
+def _interprocess_whitelist_lock(whitelist_path: Path):
+    """
+    Cross-process file lock for whitelist operations.
+    
+    Prevents race conditions when multiple processes modify the whitelist
+    simultaneously (e.g., multiple Knocker instances or external scripts).
+    
+    Args:
+        whitelist_path: Path to the whitelist JSON file
+        
+    Yields:
+        None (lock is held for the duration of the context)
+    """
+    # Ensure lock file directory exists
+    lock_file_path = whitelist_path.with_suffix('.lock')
+    lock_file_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Acquire exclusive file lock
+    with open(lock_file_path, 'w') as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 # --- IP/CIDR Validation ---
 
@@ -200,10 +230,38 @@ def save_whitelist(whitelist: Dict[str, int], settings: Dict[str, Any]):
             raise
 
 def add_ip_to_whitelist(ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]):
-    """Adds an IP or CIDR to the whitelist and saves it."""
-    whitelist = load_whitelist(settings)
-    whitelist[ip_or_cidr] = expiry_time
-    save_whitelist(whitelist, settings)
+    """
+    Adds an IP or CIDR to the whitelist and saves it.
+    
+    The entire read-modify-write sequence is protected by both in-process and
+    cross-process locks to prevent race conditions from concurrent updates.
+    
+    Args:
+        ip_or_cidr: IP address or CIDR range to whitelist
+        expiry_time: Unix timestamp when the entry expires
+        settings: Application settings
+        
+    Raises:
+        ValueError: If ip_or_cidr is invalid or expiry_time is in the past
+    """
+    # Input validation: verify IP/CIDR format
+    if not is_valid_ip_or_cidr(ip_or_cidr):
+        raise ValueError(f"Invalid IP address or CIDR notation: {ip_or_cidr}")
+    
+    # Input validation: verify expiry time is in the future
+    now = int(time.time())
+    if expiry_time <= now:
+        raise ValueError(f"Expiry time {expiry_time} is not in the future (current time: {now})")
+    
+    # Get whitelist path for cross-process locking
+    whitelist_path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+    
+    # Use both in-process and cross-process locks
+    with _whitelist_lock:
+        with _interprocess_whitelist_lock(whitelist_path):
+            whitelist = load_whitelist(settings)
+            whitelist[ip_or_cidr] = expiry_time
+            save_whitelist(whitelist, settings)
 
 
 def add_ip_to_whitelist_with_firewalld(ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]) -> bool:
@@ -254,15 +312,27 @@ def add_ip_to_whitelist_with_firewalld(ip_or_cidr: str, expiry_time: int, settin
         return False
 
 def cleanup_expired_ips(settings: Dict[str, Any]):
-    """Removes expired entries from the whitelist file."""
-    whitelist = load_whitelist(settings)
-    now = int(time.time())
+    """
+    Removes expired entries from the whitelist file.
     
-    # Create a new dict with only the non-expired entries
-    fresh_whitelist = {entry: expiry for entry, expiry in whitelist.items() if expiry > now}
+    The entire read-modify-write sequence is protected by both in-process and
+    cross-process locks to prevent race conditions from concurrent updates.
+    """
+    # Get whitelist path for cross-process locking
+    whitelist_path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
     
-    if len(fresh_whitelist) < len(whitelist):
-        save_whitelist(fresh_whitelist, settings)
+    # Use both in-process and cross-process locks
+    with _whitelist_lock:
+        with _interprocess_whitelist_lock(whitelist_path):
+            whitelist = load_whitelist(settings)
+            now = int(time.time())
+            
+            # Create a new dict with only the non-expired entries
+            fresh_whitelist = {entry: expiry for entry, expiry in whitelist.items() if expiry > now}
+            
+            # Only save if the whitelist actually changed
+            if fresh_whitelist != whitelist:
+                save_whitelist(fresh_whitelist, settings)
 
 # --- Permissions & Key Helpers ---
 
@@ -281,10 +351,36 @@ def get_max_ttl_for_key(api_key: str, settings: Dict[str, Any]) -> int:
     return 0
 
 def is_valid_api_key(api_key: str, settings: Dict[str, Any]) -> bool:
-    """Checks if an API key exists in the configuration."""
+    """
+    Checks if an API key exists in the configuration.
+    Uses constant-time comparison to prevent timing attacks.
+    
+    Important: This function iterates through ALL keys regardless of match
+    to maintain constant time operation and prevent timing attack vectors.
+    """
     if not api_key:
         return False
-    return any(key_info.get('key') == api_key for key_info in settings.get('api_keys', []))
+    
+    api_keys_list = settings.get('api_keys', [])
+    if not api_keys_list:
+        logging.warning("No API keys configured in settings")
+        return False
+    
+    # Use constant-time comparison to prevent timing attacks
+    # IMPORTANT: We must check ALL keys, not return early on first match
+    # We use bitwise OR to avoid short-circuit evaluation
+    found = False
+    for key_info in api_keys_list:
+        stored_key = key_info.get('key', '')
+        # Pad empty keys to ensure we always compare strings of similar length
+        # This prevents timing differences from empty vs non-empty keys
+        if not stored_key:
+            # Use a dummy key of similar length to avoid empty string comparison
+            stored_key = ' ' * len(api_key) if api_key else ' '
+        # Always call compare_digest for every key to maintain constant time
+        # Use bitwise OR (|) instead of logical OR (or) to prevent short-circuiting
+        found = found | hmac.compare_digest(stored_key, api_key)
+    return found
 
 
 def get_api_key_name(api_key: str, settings: Dict[str, Any]) -> str:

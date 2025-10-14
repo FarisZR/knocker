@@ -1,6 +1,6 @@
 ![](./assets/knocker-banner.webp)
 
-Knocker is a secure, configurable, and self-hosted service that provides an HTTP based "knock-knock" single-packet authorization (SPA) gateway for your Homelab, it can be used as authentication for your reverse proxy like Caddy, or even on the firewall level using the FirewallD integration. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses AKA networks.
+Knocker is a configurable, and self-hosted service that provides an HTTP based "knock-knock" single-packet authorization (SPA) gateway for your Homelab, it can be used as authentication for your reverse proxy like Caddy, or even on the firewall level using the FirewallD integration. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses AKA networks.
 
 This is ideal for homelab environments where you want to expose services to the internet without a persistent VPN connection, while minimizing your public-facing attack surface.
  
@@ -45,7 +45,19 @@ sequenceDiagram
 
 ## Deployment
 
-This project is designed to be deployed as a set of Docker containers using the provided `docker-compose.yml` file. It uses the pre-built docker images with support for AMD64, Arm64 and risc-v.
+This project is designed to be deployed as a set of Docker containers using the provided `docker-compose.yml` file. It uses the pre-built docker images with support for AMD64, Armv8 and ARMv7
+
+### Docker Image Tags
+
+Knocker provides different image tags for different use cases:
+
+- **`latest`** - Latest stable release (recommended for production)
+- **`v1.2.3`** - Specific version tags (pinned versions)
+- **`main`** - Development branch (rolling updates, may be unstable)
+
+**For production use, we recommend using either `latest` or a specific version tag like `v1.0.0`.**
+
+> 🔒 **Production Deployment?** See the [Production Deployment Checklist](./docs/PRODUCTION_CHECKLIST.md) for security best practices and deployment guidelines.
 
 ### 1. Prerequisites
 -   Docker and Docker Compose installed.

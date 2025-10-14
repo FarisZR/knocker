@@ -113,6 +113,7 @@ knocker.yaml
 # Ignore the whitelist data file
 whitelist.json
 test_whitelist.json
+*.lock
 
 # Runtime-generated OpenAPI schema
 openapi.json

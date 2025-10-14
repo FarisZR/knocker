@@ -12,9 +12,11 @@ RUN groupadd --gid 1001 appuser && \
 
 # Copy requirements and install dependencies system-wide
 COPY src/requirements.txt .
-RUN apt-get update && apt-get install -y curl firewalld && \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl firewalld && \
     pip install --no-cache-dir -r requirements.txt && \
-    apt-get clean
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy the rest of the application code
 COPY src/ .
