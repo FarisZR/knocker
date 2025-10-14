@@ -55,10 +55,6 @@ Knocker provides different image tags for different use cases:
 - **`v1.2.3`** - Specific version tags (pinned versions)
 - **`main`** - Development branch (rolling updates, may be unstable)
 
-**For production use, we recommend using either `latest` or a specific version tag like `v1.0.0`.**
-
-> 🔒 **Production Deployment?** See the [Production Deployment Checklist](./docs/PRODUCTION_CHECKLIST.md) for security best practices and deployment guidelines.
-
 ### 1. Prerequisites
 -   Docker and Docker Compose installed.
 -   A public-facing server to run the containers (doesn't even have to be on the same server running the services! IN PROXY MODE)
