@@ -127,7 +127,7 @@ test_zone_target_configuration() {
     
     # Verify the zone was created successfully (regardless of target setting)
     if docker compose exec -T knocker firewall-cmd --zone=knocker --list-all &>/dev/null; then
-        info "Zone target is: ${zone_target:-not explicitly set}"
+        info "Zone target is: ${zone_target:-not configured in knocker (using firewalld default)}"
         success "Zone created successfully without zone_target (default behavior)"
     else
         fail "Zone was not created properly"
