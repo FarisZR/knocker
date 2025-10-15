@@ -23,7 +23,7 @@ Knocker is a dynamic IP whitelisting service that integrates with reverse proxie
 
 - **Whitelist Persistence**: The IP whitelist is stored in a simple JSON file (`/data/whitelist.json` inside the container), not a database. The path is configured in `knocker.yaml`.
 - **No Database**: The project intentionally uses a simple JSON file for the whitelist to keep the architecture simple and to avoid introducing a database dependency. Any proposal to add a database would be a major architectural change.
-- **Stateless Application**: The knocker service is designed to be completely stateless. All state is managed in the `whitelist.json` file, which is persisted via a Docker volume. Do not introduce in-memory state that would break this pattern.
+- **Stateless Application Design**: The knocker service is designed to be stateless at the process level - it maintains no in-memory state between requests. All state is persisted externally in the `whitelist.json` file via a Docker volume. Do not introduce in-memory state that would break this pattern.
 - **State Management**: The application's state (the IP whitelist) is managed in a single JSON file. All functions in `src/core.py` that modify the whitelist (`add_ip_to_whitelist`, `cleanup_expired_ips`) handle file I/O (load and save).
 
 ### API Key Permissions
@@ -34,8 +34,7 @@ Knocker is a dynamic IP whitelisting service that integrates with reverse proxie
 
 ### Core Logic
 
-- **IP Whitelisting Logic**: The core logic for adding, checking, and cleaning up whitelisted IPs is in `src/core.py`. Do not implement this logic elsewhere.
-- **Core logic is in `src/core.py`**: While `src/main.py` defines the API endpoints, all the business logic for IP validation, whitelist management, and API key permissions is located in `src/core.py`.
+- **Core logic is in `src/core.py`**: While `src/main.py` defines the API endpoints, all the business logic for IP validation, whitelist management, and API key permissions is located in `src/core.py`. Do not implement this logic elsewhere.
 
 ### Configuration Reference
 

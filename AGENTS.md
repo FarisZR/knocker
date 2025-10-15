@@ -18,4 +18,4 @@ This file provides guidance to agents when working with code in this repository.
 
 - github repo: FarisZR/knocker
 
-- **Update Documenation**: on any changes, you must update the documentation under the docs/ directory.
+- **Update Documentation**: on any changes, you must update the documentation under the docs/ directory.
