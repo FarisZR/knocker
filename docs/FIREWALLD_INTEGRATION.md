@@ -141,25 +141,29 @@ On startup, knocker creates a firewalld zone with the following properties:
 
 ### Port-Specific Rules Configuration
 
-For each monitored port, knocker creates blocking rules with low priority (9999) for both IPv4 and IPv6:
+For each combination of monitored port and monitored IP, knocker creates blocking rules with low priority (9999). The rules include destination address filters to ensure they only apply to traffic destined for the monitored IPs:
 
 **DROP Rules (Silent Discard)**:
 ```
-rule family="ipv4" port protocol="tcp" port="80" drop priority="9999"
-rule family="ipv6" port protocol="tcp" port="80" drop priority="9999"
+rule family="ipv4" destination address="192.168.1.0/24" port protocol="tcp" port="80" drop priority="9999"
+rule family="ipv6" destination address="2001:db8::/32" port protocol="tcp" port="80" drop priority="9999"
 ```
 
 **REJECT Rules (Connection Refused with Response)**:
 ```
-rule family="ipv4" port protocol="tcp" port="80" reject priority="9999"
-rule family="ipv6" port protocol="tcp" port="80" reject priority="9999"
+rule family="ipv4" destination address="192.168.1.0/24" port protocol="tcp" port="80" reject priority="9999"
+rule family="ipv6" destination address="2001:db8::/32" port protocol="tcp" port="80" reject priority="9999"
 ```
 
 The action is configurable via the `default_action` setting:
 - **`drop`** (default): Silently discards packets - attackers don't know if service exists
 - **`reject`**: Actively refuses connection - faster for legitimate clients but reveals service existence
 
-This ensures only monitored ports are blocked, leaving other ports unaffected.
+**Important**: Default action rules are created for each monitored IP address in the `monitored_ips` configuration. This ensures that the deny/drop rules only apply to connections where:
+1. The destination IP matches one of the monitored IPs
+2. The destination port matches one of the monitored ports
+
+This design ensures that only traffic to specific IPs and ports is blocked, leaving other destinations and ports completely unaffected.
 
 ### Dynamic ALLOW Rule Creation
 

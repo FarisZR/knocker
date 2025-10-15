@@ -775,5 +775,162 @@ class TestSecurityAndValidation:
         assert "--zone=test; rm -rf /" in call_args
 
 
+class TestDefaultActionRulesWithMonitoredIPs:
+    """Test that default action rules (drop/reject) respect monitored_ips configuration."""
+    
+    @patch.object(firewalld.FirewalldIntegration, 'is_firewalld_available')
+    @patch.object(firewalld.FirewalldIntegration, '_run_firewall_cmd')
+    def test_default_rules_include_destination_addresses_ipv4(self, mock_cmd, mock_available):
+        """Test that default action rules include destination addresses from monitored_ips (IPv4)."""
+        mock_available.return_value = True
+        
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "zone_name": "test-zone",
+                "default_action": "drop",
+                "monitored_ports": [
+                    {"port": 80, "protocol": "tcp"},
+                ],
+                "monitored_ips": [
+                    "192.168.178.0/24",
+                ]
+            }
+        }
+        
+        integration = firewalld.FirewalldIntegration(settings)
+        
+        # Mock the responses for zone setup
+        mock_cmd.side_effect = [
+            (False, "", "zone not found"),  # Zone check
+            (True, "", ""),  # Create zone
+            (True, "", ""),  # Set priority
+            (True, "", ""),  # Add source (192.168.178.0/24)
+            (True, "", ""),  # DROP rule with destination IPv4
+            (True, "", ""),  # DROP rule with destination IPv6 (should not be created for IPv4 CIDR)
+            (True, "", "")   # Reload
+        ]
+        
+        result = integration.setup_knocker_zone()
+        assert result is True
+        
+        # Find the call that adds the default DROP rule
+        drop_rule_calls = [call for call in mock_cmd.call_args_list 
+                          if '--add-rich-rule=' in str(call) and 'drop' in str(call).lower()]
+        
+        # Should have at least one DROP rule call
+        assert len(drop_rule_calls) > 0
+        
+        # Check that the DROP rule includes destination address
+        drop_rule_str = str(drop_rule_calls[0])
+        assert 'destination address=' in drop_rule_str or 'destination address=' in drop_rule_str
+        assert '192.168.178.0/24' in drop_rule_str
+    
+    @patch.object(firewalld.FirewalldIntegration, 'is_firewalld_available')
+    @patch.object(firewalld.FirewalldIntegration, '_run_firewall_cmd')
+    def test_default_rules_include_destination_addresses_multiple_ips(self, mock_cmd, mock_available):
+        """Test that default action rules are created for each monitored_ip."""
+        mock_available.return_value = True
+        
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "zone_name": "test-zone",
+                "default_action": "drop",
+                "monitored_ports": [
+                    {"port": 80, "protocol": "tcp"},
+                ],
+                "monitored_ips": [
+                    "192.168.178.0/24",
+                    "10.0.0.0/8",
+                ]
+            }
+        }
+        
+        integration = firewalld.FirewalldIntegration(settings)
+        
+        # Setup with enough mock responses
+        mock_responses = [
+            (False, "", "zone not found"),  # Zone check
+            (True, "", ""),  # Create zone
+            (True, "", ""),  # Set priority
+        ]
+        # Add source responses
+        for _ in range(2):
+            mock_responses.append((True, "", ""))
+        # Add rule responses: 2 monitored_ips x 2 families (IPv4/IPv6) = 4 rules per port
+        # But IPv4 CIDRs only get IPv4 rules, so 2 monitored_ips x 1 family each = 2 rules
+        for _ in range(4):  # Being generous with the count
+            mock_responses.append((True, "", ""))
+        mock_responses.append((True, "", ""))  # Reload
+        
+        mock_cmd.side_effect = mock_responses
+        
+        result = integration.setup_knocker_zone()
+        assert result is True
+        
+        # Find the calls that add default DROP rules
+        drop_rule_calls = [call for call in mock_cmd.call_args_list 
+                          if '--add-rich-rule=' in str(call) and 'drop' in str(call).lower()]
+        
+        # Should have DROP rules for both monitored IPs
+        assert len(drop_rule_calls) >= 2
+        
+        # Check that rules include destination addresses
+        all_drop_rules = ' '.join([str(call) for call in drop_rule_calls])
+        assert '192.168.178.0/24' in all_drop_rules
+        assert '10.0.0.0/8' in all_drop_rules
+    
+    @patch.object(firewalld.FirewalldIntegration, 'is_firewalld_available')
+    @patch.object(firewalld.FirewalldIntegration, '_run_firewall_cmd')
+    def test_default_rules_with_ipv6_monitored_ip(self, mock_cmd, mock_available):
+        """Test that default action rules work correctly with IPv6 monitored_ips."""
+        mock_available.return_value = True
+        
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "zone_name": "test-zone",
+                "default_action": "reject",
+                "monitored_ports": [
+                    {"port": 443, "protocol": "tcp"},
+                ],
+                "monitored_ips": [
+                    "2001:db8::/32",
+                ]
+            }
+        }
+        
+        integration = firewalld.FirewalldIntegration(settings)
+        
+        # Setup with enough mock responses
+        mock_responses = [
+            (False, "", "zone not found"),  # Zone check
+            (True, "", ""),  # Create zone
+            (True, "", ""),  # Set priority
+            (True, "", ""),  # Add source
+            (True, "", ""),  # REJECT rule IPv6
+            (True, "", "")   # Reload
+        ]
+        
+        mock_cmd.side_effect = mock_responses
+        
+        result = integration.setup_knocker_zone()
+        assert result is True
+        
+        # Find the calls that add REJECT rules
+        reject_rule_calls = [call for call in mock_cmd.call_args_list 
+                            if '--add-rich-rule=' in str(call) and 'reject' in str(call).lower()]
+        
+        # Should have at least one REJECT rule
+        assert len(reject_rule_calls) > 0
+        
+        # Check that the REJECT rule includes IPv6 destination address
+        reject_rule_str = str(reject_rule_calls[0])
+        assert 'destination address=' in reject_rule_str
+        assert '2001:db8::/32' in reject_rule_str or '2001:db8::/32' in reject_rule_str
+        assert 'family="ipv6"' in reject_rule_str
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

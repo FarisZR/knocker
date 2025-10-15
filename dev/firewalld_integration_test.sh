@@ -115,6 +115,30 @@ test_knocker_zone_creation() {
     done
 }
 
+test_default_rules_include_destination() {
+    info "Testing that default DROP/REJECT rules include destination addresses..."
+    
+    # Get all rich rules from the knocker zone
+    rich_rules=$(docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules 2>/dev/null || true)
+    
+    # Check if default action rules (priority 9999) include destination addresses
+    # These rules should have both "destination address=" and "priority=\"9999\""
+    if echo "$rich_rules" | grep 'priority="9999"' | grep -q 'destination address='; then
+        success "Default action rules include destination addresses"
+    else
+        fail "Default action rules missing destination address filters (Issue #15)"
+    fi
+    
+    # Verify each monitored port has rules with destination addresses
+    for port in 80 443 22; do
+        if echo "$rich_rules" | grep "port=\"$port\"" | grep 'priority="9999"' | grep -q 'destination address='; then
+            success "Port $port has default rule with destination address"
+        else
+            warning "Port $port default rule may be missing destination address"
+        fi
+    done
+}
+
 test_successful_knock_creates_rules() {
     info "Testing that successful knock creates firewalld rules..."
     
@@ -250,6 +274,7 @@ main() {
     
     test_firewalld_daemon_access
     test_knocker_zone_creation
+    test_default_rules_include_destination
     test_successful_knock_creates_rules
     test_rule_expiration
     test_startup_rule_recovery
