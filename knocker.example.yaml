@@ -43,6 +43,13 @@ firewalld:
                         # WARNING: Zone won't be cleaned up automatically on shutdown
   zone_priority: -100  # Zone priority (negative numbers = higher priority)
                        # Default -100 ensures knocker rules take precedence
+  # zone_target: "default"  # Optional: Set the zone target (default: not set)
+                            # Options: "default", "ACCEPT", "REJECT", "DROP"
+                            # "default" = Let packets through to next zone (recommended for most use cases)
+                            # "ACCEPT" = Accept all packets not matched by specific rules
+                            # "REJECT" = Reject all packets not matched by specific rules
+                            # "DROP" = Silently drop all packets not matched by specific rules
+                            # Note: When not specified, the zone target is not set (firewalld default)
   default_action: "drop"  # Action for blocked traffic:
                           # "drop" = silently discard (attackers don't know service exists)
                           # "reject" = refuse connection (faster for legitimate clients)

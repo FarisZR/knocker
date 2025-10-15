@@ -196,6 +196,82 @@ class TestFirewalldIntegrationInit:
         # Should not raise exception and default to "drop"
         integration = firewalld.FirewalldIntegration(settings)
         assert integration.default_action == "drop"
+    
+    def test_zone_target_validation_default(self):
+        """Test zone_target validation succeeds for 'default'."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "zone_target": "default",
+                "monitored_ips": ["192.168.1.0/24"]
+            }
+        }
+        # Should not raise exception
+        integration = firewalld.FirewalldIntegration(settings)
+        assert integration.zone_target == "default"
+    
+    def test_zone_target_validation_accept(self):
+        """Test zone_target validation succeeds for 'ACCEPT'."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "zone_target": "ACCEPT",
+                "monitored_ips": ["192.168.1.0/24"]
+            }
+        }
+        # Should not raise exception
+        integration = firewalld.FirewalldIntegration(settings)
+        assert integration.zone_target == "ACCEPT"
+    
+    def test_zone_target_validation_reject(self):
+        """Test zone_target validation succeeds for 'REJECT'."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "zone_target": "REJECT",
+                "monitored_ips": ["192.168.1.0/24"]
+            }
+        }
+        # Should not raise exception
+        integration = firewalld.FirewalldIntegration(settings)
+        assert integration.zone_target == "REJECT"
+    
+    def test_zone_target_validation_drop(self):
+        """Test zone_target validation succeeds for 'DROP'."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "zone_target": "DROP",
+                "monitored_ips": ["192.168.1.0/24"]
+            }
+        }
+        # Should not raise exception
+        integration = firewalld.FirewalldIntegration(settings)
+        assert integration.zone_target == "DROP"
+    
+    def test_zone_target_validation_invalid(self):
+        """Test zone_target validation fails for invalid target."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "zone_target": "invalid",
+                "monitored_ips": ["192.168.1.0/24"]
+            }
+        }
+        with pytest.raises(ValueError, match="Invalid zone_target.*Must be one of"):
+            firewalld.FirewalldIntegration(settings)
+    
+    def test_zone_target_not_set_by_default(self):
+        """Test zone_target is None when not specified."""
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "monitored_ips": ["192.168.1.0/24"]
+            }
+        }
+        # Should not raise exception and zone_target should be None
+        integration = firewalld.FirewalldIntegration(settings)
+        assert integration.zone_target is None
 
 
 class TestFirewalldCommands:
@@ -345,6 +421,95 @@ class TestZoneSetup:
         result = firewalld_disabled.setup_knocker_zone()
         
         assert result is True  # Returns True when disabled (no-op)
+    
+    @patch.object(firewalld.FirewalldIntegration, 'is_firewalld_available')
+    @patch.object(firewalld.FirewalldIntegration, '_run_firewall_cmd')
+    def test_setup_zone_with_zone_target(self, mock_cmd, mock_available):
+        """Test zone setup with zone_target configuration."""
+        mock_available.return_value = True
+        
+        # Create settings with zone_target
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "zone_name": "knocker-test",
+                "zone_priority": -100,
+                "zone_target": "DROP",
+                "default_action": "drop",
+                "monitored_ports": [
+                    {"port": 80, "protocol": "tcp"}
+                ],
+                "monitored_ips": ["0.0.0.0/0"]
+            }
+        }
+        integration = firewalld.FirewalldIntegration(settings)
+        
+        # Simulate zone doesn't exist, then successful creation with zone_target
+        mock_cmd.side_effect = [
+            (False, "", "zone not found"),  # Zone check
+            (True, "", ""),  # Create zone
+            (True, "", ""),  # Set priority
+            (True, "", ""),  # Set target (NEW)
+            (True, "", ""),  # Add source 1
+            (True, "", ""),  # DROP rule port 80 IPv4
+            (True, "", ""),  # DROP rule port 80 IPv6
+            (True, "", "")   # Reload
+        ]
+        
+        result = integration.setup_knocker_zone()
+        
+        assert result is True
+        # Should have 8 calls total (including set-target)
+        assert mock_cmd.call_count == 8
+        
+        # Verify that set-target was called
+        calls = mock_cmd.call_args_list
+        set_target_call = [call for call in calls if "--set-target=" in str(call)]
+        assert len(set_target_call) == 1
+        assert "--set-target=DROP" in str(set_target_call[0])
+    
+    @patch.object(firewalld.FirewalldIntegration, 'is_firewalld_available')
+    @patch.object(firewalld.FirewalldIntegration, '_run_firewall_cmd')
+    def test_setup_zone_without_zone_target(self, mock_cmd, mock_available):
+        """Test zone setup without zone_target (default behavior)."""
+        mock_available.return_value = True
+        
+        # Create settings without zone_target
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "zone_name": "knocker-test",
+                "zone_priority": -100,
+                "default_action": "drop",
+                "monitored_ports": [
+                    {"port": 80, "protocol": "tcp"}
+                ],
+                "monitored_ips": ["0.0.0.0/0"]
+            }
+        }
+        integration = firewalld.FirewalldIntegration(settings)
+        
+        # Simulate zone doesn't exist, then successful creation without zone_target
+        mock_cmd.side_effect = [
+            (False, "", "zone not found"),  # Zone check
+            (True, "", ""),  # Create zone
+            (True, "", ""),  # Set priority
+            (True, "", ""),  # Add source 1
+            (True, "", ""),  # DROP rule port 80 IPv4
+            (True, "", ""),  # DROP rule port 80 IPv6
+            (True, "", "")   # Reload
+        ]
+        
+        result = integration.setup_knocker_zone()
+        
+        assert result is True
+        # Should have 7 calls total (no set-target)
+        assert mock_cmd.call_count == 7
+        
+        # Verify that set-target was NOT called
+        calls = mock_cmd.call_args_list
+        set_target_calls = [call for call in calls if "--set-target=" in str(call)]
+        assert len(set_target_calls) == 0
 
 
 class TestWhitelistRules:
