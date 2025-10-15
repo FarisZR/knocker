@@ -118,22 +118,25 @@ test_knocker_zone_creation() {
 test_zone_target_configuration() {
     info "Testing zone_target configuration..."
     
-    # Check if zone_target is set in the config
-    # For the default test config (knocker.firewalld.yaml), zone_target is not set
-    # So we just verify the zone was created without errors
+    # The default test config (dev/knocker.firewalld.yaml) does not specify zone_target,
+    # so we verify that the zone was created successfully without a zone_target set.
+    # This tests the default behavior (zone_target not specified = None = no --set-target command).
     
     # Get zone target - if not set, firewalld typically shows "default" or nothing
     zone_target=$(docker compose exec -T knocker firewall-cmd --permanent --zone=knocker --get-target 2>/dev/null || echo "")
     
-    # For the test config without zone_target specified, this is expected behavior
-    # The zone should work regardless of target setting
-    info "Zone target is: ${zone_target:-not set}"
-    success "Zone created successfully (zone_target handling works)"
+    # Verify the zone was created successfully (regardless of target setting)
+    if docker compose exec -T knocker firewall-cmd --zone=knocker --list-all &>/dev/null; then
+        info "Zone target is: ${zone_target:-not explicitly set}"
+        success "Zone created successfully without zone_target (default behavior)"
+    else
+        fail "Zone was not created properly"
+    fi
     
-    # Note: To test with an explicit zone_target, you would need to:
-    # 1. Add zone_target: "DROP" (or other value) to dev/knocker.firewalld.yaml
-    # 2. Restart the services
-    # 3. Verify the target is set correctly with: firewall-cmd --zone=knocker --get-target
+    # Note: Testing with an explicit zone_target would require a separate test configuration.
+    # The unit tests (tests/test_firewalld.py) comprehensively test all zone_target values
+    # including validation, setup with zone_target, and setup without zone_target.
+    # This integration test verifies the default case (zone_target not specified).
 }
 
 test_successful_knock_creates_rules() {
