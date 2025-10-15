@@ -38,12 +38,20 @@ whitelist:
 # Firewalld integration for advanced network-level firewall control
 # This creates dynamic firewall rules that automatically expire based on TTL
 firewalld:
-  enabled: false  # Set to true to enable firewalld integration (requires root container)
+  enabled: false  # Set to true to enable firewalld integration (requires container to run as root and have access to system dbus socket)
   zone_name: "knocker"  # Name of the firewalld zone to create
                         # WARNING: Zone won't be cleaned up automatically on shutdown
   zone_priority: -100  # Zone priority (negative numbers = higher priority)
                        # Default -100 ensures knocker rules take precedence
-  default_action: "drop"  # Action for blocked traffic:
+  # zone_target: "default"  # Optional: Set the zone target (default: not set)
+                            # Options: "default", "ACCEPT", "REJECT", "DROP"
+                            # "default" = practically matches reject behavior
+                            # "ACCEPT" = Accept all packets not matched by rules set by knocker
+                            # "REJECT" = Reject all packets not matched by rules set by knocker
+                            # "DROP" = Silently drop all packets not matched by rules set by knocker
+                            # Note: When not specified, the zone target is not set, and the default target will be used.
+                            # Firewalld docs: https://firewalld.org/documentation/zone/options.html
+  default_action: "drop"  # Action for blocked traffic on monitored ports:
                           # "drop" = silently discard (attackers don't know service exists)
                           # "reject" = refuse connection (faster for legitimate clients)
   monitored_ports:

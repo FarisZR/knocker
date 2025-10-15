@@ -48,6 +48,7 @@ firewalld:
 - **`enabled`**: Boolean flag to enable/disable firewalld integration
 - **`zone_name`**: Name of the firewalld zone to create (default: "knocker")
 - **`zone_priority`**: Priority of the zone (negative numbers = higher priority, default: -100)
+- **`zone_target`**: (Optional) The target for the zone - controls what happens to packets not matched by specific rules. Valid values: "default", "ACCEPT", "REJECT", "DROP". When not specified, the zone target is not set (firewalld default)
 - **`default_action`**: Action for blocked traffic - "drop" (silent discard) or "reject" (connection refused with response) (default: "drop")
 - **`monitored_ports`**: List of port/protocol combinations to protect
 - **`monitored_ips`**: List of IP ranges the zone will apply to (**must include network mask**)
@@ -136,8 +137,20 @@ On startup, knocker creates a firewalld zone with the following properties:
 
 - **Name**: Configurable (default: "knocker")
 - **Priority**: Configurable (default: -100, negative numbers = higher priority)
-- **Target**: Default (not DROP) - only specific ports are affected
+- **Target**: Optional configuration - controls what happens to packets not matched by specific rules
 - **Sources**: Configured IP ranges from `monitored_ips`
+
+#### Zone Target Options
+
+The `zone_target` configuration option allows you to set the default behavior for packets that don't match any specific rich rules in the zone. This is set using `firewall-cmd --zone=ZONE_NAME --set-target=TARGET`.
+
+- **Not specified** (default): The zone target is not set - firewalld uses its default behavior (usually "default")
+- **`default`**: Let packets through to the next zone for processing
+- **`ACCEPT`**: Accept all packets not matched by specific rules
+- **`REJECT`**: Reject all packets not matched by specific rules (connection refused with response)
+- **`DROP`**: Silently drop all packets not matched by specific rules
+
+**Important**: In most cases, you should leave `zone_target` unspecified or set it to "default". Knocker uses port-specific rich rules with priorities for fine-grained control, so setting a blanket ACCEPT/REJECT/DROP target is usually unnecessary and may interfere with the expected behavior.
 
 ### Port-Specific Rules Configuration
 

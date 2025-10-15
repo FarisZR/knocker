@@ -115,6 +115,30 @@ test_knocker_zone_creation() {
     done
 }
 
+test_zone_target_configuration() {
+    info "Testing zone_target configuration..."
+    
+    # The default test config (dev/knocker.firewalld.yaml) does not specify zone_target,
+    # so we verify that the zone was created successfully without a zone_target set.
+    # This tests the default behavior (zone_target not specified = None = no --set-target command).
+    
+    # Get zone target - if not set, firewalld typically shows "default" or nothing
+    zone_target=$(docker compose exec -T knocker firewall-cmd --permanent --zone=knocker --get-target 2>/dev/null || echo "")
+    
+    # Verify the zone was created successfully (regardless of target setting)
+    if docker compose exec -T knocker firewall-cmd --zone=knocker --list-all &>/dev/null; then
+        info "Zone target is: ${zone_target:-not configured in knocker (using firewalld default)}"
+        success "Zone created successfully without zone_target (default behavior)"
+    else
+        fail "Zone was not created properly"
+    fi
+    
+    # Note: Testing with an explicit zone_target would require a separate test configuration.
+    # The unit tests (tests/test_firewalld.py) comprehensively test all zone_target values
+    # including validation, setup with zone_target, and setup without zone_target.
+    # This integration test verifies the default case (zone_target not specified).
+}
+
 test_successful_knock_creates_rules() {
     info "Testing that successful knock creates firewalld rules..."
     
@@ -250,6 +274,7 @@ main() {
     
     test_firewalld_daemon_access
     test_knocker_zone_creation
+    test_zone_target_configuration
     test_successful_knock_creates_rules
     test_rule_expiration
     test_startup_rule_recovery

@@ -40,6 +40,7 @@ class FirewalldIntegration:
         self.zone_name = self.firewalld_config.get("zone_name", "knocker")
         self.zone_priority = self.firewalld_config.get("zone_priority", -100)
         self.default_action = self.firewalld_config.get("default_action", "drop")
+        self.zone_target = self.firewalld_config.get("zone_target", None)
         self.monitored_ports = self.firewalld_config.get("monitored_ports", [])
         self.monitored_ips = self.firewalld_config.get("monitored_ips", [])
         
@@ -52,6 +53,12 @@ class FirewalldIntegration:
             # Validate default action
             if self.default_action not in ["drop", "reject"]:
                 raise ValueError(f"Invalid default_action '{self.default_action}'. Must be 'drop' or 'reject'")
+            
+            # Validate zone_target if specified
+            if self.zone_target is not None:
+                valid_targets = ["default", "ACCEPT", "REJECT", "DROP"]
+                if self.zone_target not in valid_targets:
+                    raise ValueError(f"Invalid zone_target '{self.zone_target}'. Must be one of: {', '.join(valid_targets)}")
         
     def _validate_monitored_ips(self):
         """Validate that all monitored IPs have proper CIDR notation."""
@@ -246,6 +253,16 @@ class FirewalldIntegration:
             ])
             if not success:
                 self.logger.warning(f"Failed to set zone priority: {stderr}")
+            
+            # Set zone target if specified
+            if self.zone_target is not None:
+                success, _, stderr = self._run_firewall_cmd([
+                    "--permanent", f"--zone={self.zone_name}", f"--set-target={self.zone_target}"
+                ])
+                if not success:
+                    self.logger.warning(f"Failed to set zone target: {stderr}")
+                else:
+                    self.logger.info(f"Set zone target to: {self.zone_target}")
             
             # Don't set DROP as default target - instead use specific port rules
             # This ensures only monitored ports are affected, not all traffic
