@@ -154,9 +154,9 @@ It's available in Debian 13, Ubuntu 24.04 LTS and other recent stable distros.
 
 ### Why FirewallD?
 
-FirewallD was chosen for the ability to separates the cli interface from the daemon. This allows Knocker to control firewalld from within a Docker container by mounting the system's D-Bus socket, and also FirewallD is the only firewall that integrates correctly with docker, meaning docker doesn't just ignore it's rules like UFW.
+FirewallD was chosen for the ability to separates the cli interface from the daemon. This allows Knocker to control firewalld from within a Docker container by mounting the system's D-Bus socket, and FirewallD also has support for timed rules, so knocker rules automatically expire by the end of the TTL.
 
-[https://docs.docker.com/engine/network/packet-filtering-firewalls/#integration-with-firewalld](https://docs.docker.com/engine/network/packet-filtering-firewalls/#integration-with-firewalld)
+**FIREWALLD WILL NOT WORK WITH DOCKER PUBLISHED PORTS**, check [this issue](https://github.com/FarisZR/knocker/issues/17) for more details
 
 ### How It Works
 
