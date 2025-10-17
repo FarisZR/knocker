@@ -1,6 +1,7 @@
 ![](./assets/knocker-banner.webp)
 
-Knocker is a configurable, and self-hosted service that provides an HTTP based "knock-knock" single-packet authorization (SPA) gateway for your Homelab, it can be used as authentication for your reverse proxy like Caddy, or even on the firewall level using the FirewallD integration. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses AKA networks.
+Knocker is a configurable, and self-hosted service that provides an HTTP based "knock-knock" single-packet authorization (SPA) gateway for your Homelab with web, cli and android clients.
+it can be used as authentication for your reverse proxy like Caddy, or even on the firewall level using the FirewallD integration. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses.
 
 This is ideal for homelab environments where you want to expose services to the internet without a persistent VPN connection, while minimizing your public-facing attack surface.
  
@@ -43,9 +44,18 @@ sequenceDiagram
 *   **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
 *   **Firewalld Integration**: Advanced firewall control with timed rules that automatically expire based on TTL. Creates dynamic firewall rules using firewalld rich rules for enhanced security. (Optional, requires root container access)
 
+### Knocker Clients
+
+* [Knocker-Web](https://github.com/FarisZR/knocker-web)
+  Static PWA web app that supports knocking(whitelisting) on reload
+* [Knocker-CLI](https://github.com/FarisZR/knocker-cli)
+  A cli written in go with support for background knocks optionally trigged by ip chanages.
+* [Knocker-EXPO](https://github.com/FarisZR/knocker-EXPO)
+  An experimental Android App written in React EXPO with support for background knocking requests
+
 ## Deployment
 
-This project is designed to be deployed as a set of Docker containers using the provided `docker-compose.yml` file. It uses the pre-built docker images with support for AMD64, Armv8 and ARMv7
+This project is designed to be deployed as a set of Docker containers using the provided `docker-compose.yml` file. It uses the pre-built docker images with support for AMD64, ARMv8 and ARMv7
 
 ### Docker Image Tags
 
