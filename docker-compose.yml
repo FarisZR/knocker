@@ -18,7 +18,7 @@ services:
 
   knocker:
     # Use 'latest' for stable releases or 'main' for development builds
-    image: ghcr.io/fariszr/knocker:latest
+    image: oci.fariszr.com/fariszr/knocker:latest
     restart: unless-stopped
     networks:
       - caddy_net
