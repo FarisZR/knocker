@@ -64,13 +64,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log into registry quay.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v2
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USER }}
+          password: ${{ secrets.QUAY_PASS }}
+
       # Extract metadata (tags, labels) for Docker
       # https://github.com/docker/metadata-action
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: |
+            ghcr.io/${{ env.IMAGE_NAME }}
+            quay.io/${{ env.IMAGE_NAME }}
           # Tag strategy:
           # - main branch -> :main (rolling development builds)
           # - version tags (v1.2.3) -> :v1.2.3, :1.2.3, :1.2, :1, :latest (stable releases)
