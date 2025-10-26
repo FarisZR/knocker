@@ -65,6 +65,11 @@ Knocker provides different image tags for different use cases:
 - **`v1.2.3`** - Specific version tags (pinned versions)
 - **`main`** - Development branch (rolling updates, may be unstable)
 
+#### Registeries
+
+- oci.fariszr.com (quay.io)
+- ghcr.io
+
 ### 1. Prerequisites
 
 -   Docker and Docker Compose installed.
