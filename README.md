@@ -1,10 +1,32 @@
 ![](./assets/knocker-banner.webp)
 
-Knocker is a configurable, and self-hosted service that provides an HTTP based "knock-knock" single-packet authorization (SPA) gateway for your Homelab with web, cli and android clients.
+Knocker is a self-hosted service that provides an HTTP based "knock-knock" single-packet authorization (SPA) gateway for your Homelab with web, cli + gnome and android clients.
 it can be used as authentication for your reverse proxy like Caddy, or even on the firewall level using the FirewallD integration. It allows you to keep your services completely private, opening them up on-demand only for authorized IP addresses.
 
 This is ideal for homelab environments where you want to expose services to the internet without a persistent VPN connection, while minimizing your public-facing attack surface.
- 
+
+
+## Features
+
+- **API Key Authentication**: Secure your knock endpoint with multiple, configurable API keys.
+- **Configurable TTL**: Each API key can have its own Time-To-Live (TTL), defining how long a whitelisted IP remains active.
+- **Remote Whitelisting**: Grant specific admin keys permission to whitelist any IP or CIDR range, not just their own.
+- **Static IP/CIDR Whitelisting**: Always allow certain IP addresses or ranges to bypass the dynamic whitelist.
+- **Path-Based Exclusion**: Exclude specific URL paths (like health checks or public APIs) from authentication entirely.
+- **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
+- **Firewalld Integration**: Advanced firewall control with timed rules that automatically expire based on TTL. Creates dynamic firewall rules using firewalld rich rules for enhanced security. (Optional, requires root container access)
+
+### Knocker Clients
+
+- [Knocker-Web](https://github.com/FarisZR/knocker-web)
+  Static PWA web app that supports knocking(whitelisting) on reload
+- [Knocker-CLI](https://github.com/FarisZR/knocker-cli)
+  A cli written in go with support for background knocks optionally trigged by ip chanages.
+
+- [Knocker-gnome](https://github.com/FarisZR/Knocker-gnome) a gnome extension built on top of the Knocker-cli.
+- [Knocker-EXPO](https://github.com/FarisZR/knocker-EXPO)
+  An experimental Android App written in React EXPO with support for background knocking requests
+
 ## Sequence diagram
 
 ```mermaid
@@ -34,36 +56,17 @@ sequenceDiagram
     Knocker-->>User: 200 OK (whitelisted_entry, expires_at, expires_in_seconds)
 ```
 
-## Features
-
-*   **API Key Authentication**: Secure your knock endpoint with multiple, configurable API keys.
-*   **Configurable TTL**: Each API key can have its own Time-To-Live (TTL), defining how long a whitelisted IP remains active.
-*   **Remote Whitelisting**: Grant specific admin keys permission to whitelist any IP or CIDR range, not just their own.
-*   **Static IP/CIDR Whitelisting**: Always allow certain IP addresses or ranges to bypass the dynamic whitelist.
-*   **Path-Based Exclusion**: Exclude specific URL paths (like health checks or public APIs) from authentication entirely.
-*   **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
-*   **Firewalld Integration**: Advanced firewall control with timed rules that automatically expire based on TTL. Creates dynamic firewall rules using firewalld rich rules for enhanced security. (Optional, requires root container access)
-
-### Knocker Clients
-
-* [Knocker-Web](https://github.com/FarisZR/knocker-web)
-  Static PWA web app that supports knocking(whitelisting) on reload
-* [Knocker-CLI](https://github.com/FarisZR/knocker-cli)
-  A cli written in go with support for background knocks optionally trigged by ip chanages.
-* [Knocker-EXPO](https://github.com/FarisZR/knocker-EXPO)
-  An experimental Android App written in React EXPO with support for background knocking requests
-
 ## Deployment
 
-This project is designed to be deployed as a set of Docker containers using the provided `docker-compose.yml` file. It uses the pre-built docker images with support for AMD64, ARMv8 and ARMv7
+This project is designed to be deployed as a Docker container using the provided `docker-compose.yml` file. It uses the pre-built docker images with support for AMD64, ARMv8 and ARMv7
 
 ### Docker Image Tags
 
 Knocker provides different image tags for different use cases:
 
-- **`latest`** - Latest stable release (recommended for production)
-- **`v1.2.3`** - Specific version tags (pinned versions)
-- **`main`** - Development branch (rolling updates, may be unstable)
+- `latest`  Latest stable release (recommended for production)
+- `v1.2.3`  Specific version tags (pinned versions)
+- `main` Development branch (rolling updates, may be unstable)
 
 #### Registeries
 
@@ -77,10 +80,10 @@ Knocker provides different image tags for different use cases:
 -   (Optional) Firewalld 2.0+ installed and running on the host for advanced firewall integration.
 
 1.  **Configuration**:
-    *   Rename `knocker.example.yaml` to `knocker.yaml`.
-    *   **Crucially, change the default API keys** in `knocker.yaml` to your own secure, random strings.
-    *   Review the `trusted_proxies` list in `knocker.yaml`, they should match the subnet of the reverse proxy's network (`docker network inspect xxx`)
-    *   (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
+    - Rename `knocker.example.yaml` to `knocker.yaml`.
+    - **Crucially, change the default API keys** in `knocker.yaml` to your own secure, random strings.
+    - Review the `trusted_proxies` list in `knocker.yaml`, they should match the subnet of the reverse proxy's network (`docker network inspect xxx`)
+    - (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
 
 2.  **Run the Service**:
     ```bash
@@ -183,11 +186,11 @@ FirewallD was chosen for the ability to separates the cli interface from the dae
 
 ### Enabling FirewallD Integration
 
-1. **Prerequisites**:
+1. **Prerequisites**
    - FirewallD 2.0+ installed and running on the host system
    - Docker container must run as root for D-Bus access
 
-2. **Configuration** 
+2. **Configuration**
 
   - enable FirewallD in the knocker.yaml config, settings are already available in the [example config](./knocker.example.yaml)
   - Mount the Dbus socket into the docker container, and make sure it runs as root, the required entires are commented out in the [docker-compose.yml](./docker-compose.yml) file.
@@ -221,21 +224,21 @@ You could also use host networking.
 
 This endpoint validates an API key and whitelists an IP.
 
-*   **Headers**:
-    *   `X-Api-Key`: Your secret API key.
+- **Headers**:
+    - `X-Api-Key`: Your secret API key.
 
-*   **Body (Optional)**:
-    *   To whitelist a remote IP/CIDR (requires `allow_remote_whitelist: true`):
+- **Body (Optional)**:
+    - To whitelist a remote IP/CIDR (requires `allow_remote_whitelist: true`):
         ```json
         {"ip_address": "YOUR_TARGET_IP_OR_CIDR"}
         ```
 
-*   **Example (Whitelisting your own IP)**:
+- **Example (Whitelisting your own IP)**:
     ```bash
     curl -i -H "X-Api-Key: YOUR_SECRET_KEY" https://knock.your-domain.com/knock
     ```
 
-*   **Success Response (`200 OK`)**:
+- **Success Response (`200 OK`)**:
     ```json
     {
       "whitelisted_entry": "1.2.3.4",
@@ -262,6 +265,7 @@ To run the tests locally:
 2.  **Run Pytest**:
     ```bash
     python3 -m pytest
+    ```
 
 ### Integration Tests
 There's a dev environment under [dev](./dev/), with bash scripts for integrations tests with caddy and a separate one with firewalld.
@@ -286,6 +290,6 @@ For a formal API specification and a summary of the architectural choices, pleas
 Knocker was fully vibe coded.
 The initial implementation was done with Gemini 2.5 pro, thanks to the tokens provided in the roo code/requesty hackathon.
 
-Further features were mostly done with the GitHub copilot Agent (sonnet 4/later 4.5), which needed a lot of fixes, done mostly by GPT-5 mini/CODEX.
+Further features were mostly done with the GitHub copilot Agent (sonnet 4/later 4.5), which needed a lot of fixes, done mostly by GPT-5 mini/CODEX in Roo code, Opencode and the standard Copilot extension.
 
-If you're Anti-AI please don't use this.
+I tried my best with this, always planing changes and testing everything after every change, but If you're Anti-AI i probably wouldn't be able to change your opinion of this.

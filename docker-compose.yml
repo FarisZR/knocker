@@ -1,20 +1,20 @@
 services:
-  caddy:
-    image: caddy:latest
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp" # For HTTP/3
-    networks:
-      - caddy_net
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - ./knocker.yaml:/app/knocker.yaml
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - knocker
+  # caddy:
+  #   image: caddy:latest
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #     - "443:443/udp" # For HTTP/3
+  #   networks:
+  #     - caddy_net
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile
+  #     - ./knocker.yaml:/app/knocker.yaml
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   depends_on:
+  #     - knocker
 
   knocker:
     # Use 'latest' for stable releases or 'main' for development builds
@@ -25,8 +25,8 @@ services:
     volumes:
       - ./knocker.yaml:/knocker.yaml
       - ./knocker_data:/data
-      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
-    # REQUIRED OPTIONS for firewalld integration
+      # REQUIRED OPTIONS for firewalld integration
+      # - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
     # user: "0:0"  # Run as root
     # userns_mode: host
     # cap_add:

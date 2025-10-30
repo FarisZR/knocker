@@ -4,13 +4,13 @@ server:
   host: "0.0.0.0"
   port: 8000
   trusted_proxies:
-    # Trust the default Docker IPv4 and IPv6 subnets.
+    # Trust the IPv4 and IPv6 subnets of the caddy_net docker network
     # Adjust these to match your specific Docker network configuration.
     - "172.29.238.0/24"
     - "fd00:dead:c0de::/64"
 
 cors:
-  allowed_origin: "*"  # SECURITY: Set to your Knocker EXPO webapp's origin (e.g., "https://your-web-app.com") in production instead of "*"
+  allowed_origin: "https://knocker.fariszr.com"  # SECURITY: Set to your Knocker web webapp's origin if you are hosting your own.
 
 security:
   always_allowed_ips:
