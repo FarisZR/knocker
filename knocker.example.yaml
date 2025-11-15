@@ -6,8 +6,8 @@ server:
   trusted_proxies:
     # Trust the IPv4 and IPv6 subnets of the caddy_net docker network
     # Adjust these to match your specific Docker network configuration.
-    - "172.29.238.0/24"
-    - "fd00:dead:c0de::/64"
+    - "172.16.238.0/24"
+    - "fd00:dead:beef::/64"
 
 cors:
   allowed_origin: "https://knocker.fariszr.com"  # SECURITY: Set to your Knocker web webapp's origin if you are hosting your own.
@@ -17,8 +17,8 @@ security:
     # These IPs/CIDRs are always allowed to pass through the /verify endpoint
     # without needing to be dynamically whitelisted.
     # It's recommended to include your reverse proxy's IP here.
-    - "172.29.238.0/24"
-    - "fd00:dead:c0de::/64"
+    - "172.16.238.0/24"
+    - "fd00:dead:beef::/64"
   excluded_paths:
     # Request paths that start with any of these values will bypass
     # the IP whitelist check entirely.
