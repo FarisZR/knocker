@@ -504,6 +504,9 @@ async def knock(
     expiry_time = int(time.time()) + effective_ttl
 
     # Generate token_id from API key to enforce one-IP-per-token policy
+    # Use SHA256 to generate a deterministic ID for the token.
+    # This is NOT for password hashing, but for unique identification of the token
+    # to enforce the one-IP-per-token policy. The token itself is the secret.
     token_id = hashlib.sha256(api_key.encode()).hexdigest() if api_key else None
 
     # Add to whitelist with firewalld integration
@@ -586,7 +589,7 @@ async def health_check(settings: dict = Depends(get_settings)):
                 if whitelist_path.exists():
                     whitelist = core.load_whitelist(settings)
             except Exception as e:
-                logging.error(
+                logging.exception(
                     f"Health check failed: Could not read whitelist storage: {e}"
                 )
                 return JSONResponse(
@@ -600,7 +603,7 @@ async def health_check(settings: dict = Depends(get_settings)):
             try:
                 core.save_whitelist(whitelist, settings)
             except Exception as e:
-                logging.error(
+                logging.exception(
                     f"Health check failed: Could not write to whitelist storage: {e}"
                 )
                 return JSONResponse(
@@ -611,7 +614,9 @@ async def health_check(settings: dict = Depends(get_settings)):
                     },
                 )
         except Exception as e:
-            logging.error(f"Health check failed: Whitelist storage not accessible: {e}")
+            logging.exception(
+                f"Health check failed: Whitelist storage not accessible: {e}"
+            )
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={
@@ -622,7 +627,7 @@ async def health_check(settings: dict = Depends(get_settings)):
 
         return HealthResponse(status="ok")
     except Exception as e:
-        logging.error(f"Health check failed with unexpected error: {e}")
+        logging.exception(f"Health check failed with unexpected error: {e}")
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"status": "unhealthy", "error": "Internal error"},

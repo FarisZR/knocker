@@ -198,7 +198,9 @@ def normalize_path(path: str) -> str:
 def load_whitelist(settings: Dict[str, Any]) -> Dict[str, Union[int, Dict[str, Any]]]:
     """Loads the whitelist from the JSON file with thread safety."""
     with _whitelist_lock:
-        path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+        path = Path(
+            settings.get("whitelist", {}).get("storage_path", "whitelist.json")
+        ).resolve()
         if not path.exists():
             return {}
 
@@ -221,7 +223,9 @@ def save_whitelist(
 ):
     """Saves the whitelist to the JSON file with thread safety and size limits."""
     with _whitelist_lock:
-        path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+        path = Path(
+            settings.get("whitelist", {}).get("storage_path", "whitelist.json")
+        ).resolve()
 
         # Security check: limit whitelist size to prevent DoS
         max_entries = settings.get("security", {}).get("max_whitelist_entries", 10000)
@@ -298,7 +302,7 @@ def add_ip_to_whitelist(
     # Get whitelist path for cross-process locking
     whitelist_path = Path(
         settings.get("whitelist", {}).get("storage_path", "whitelist.json")
-    )
+    ).resolve()
 
     # Use both in-process and cross-process locks
     with _whitelist_lock:
@@ -383,7 +387,9 @@ def add_ip_to_whitelist_with_firewalld(
                     f"Removed old firewall rule for {old_ip} (replaced by {ip_or_cidr})"
                 )
             except Exception as e:
-                logging.error(f"Failed to remove old firewall rule for {old_ip}: {e}")
+                logging.exception(
+                    f"Failed to remove old firewall rule for {old_ip}: {e}"
+                )
 
         return True
     except Exception as e:
@@ -391,15 +397,15 @@ def add_ip_to_whitelist_with_firewalld(
         if firewalld_integration and firewalld_integration.is_enabled():
             try:
                 firewalld_integration.remove_whitelist_rule(ip_or_cidr)
-                logging.error(
+                logging.exception(
                     f"Rolled back firewalld rules for {ip_or_cidr} due to whitelist persistence failure: {e}"
                 )
             except Exception as rollback_error:
-                logging.error(
+                logging.exception(
                     f"Failed to rollback firewalld rules for {ip_or_cidr}: {rollback_error}"
                 )
 
-        logging.error(f"Failed to persist whitelist entry for {ip_or_cidr}: {e}")
+        logging.exception(f"Failed to persist whitelist entry for {ip_or_cidr}: {e}")
         return False
 
 
@@ -413,7 +419,7 @@ def cleanup_expired_ips(settings: Dict[str, Any]):
     # Get whitelist path for cross-process locking
     whitelist_path = Path(
         settings.get("whitelist", {}).get("storage_path", "whitelist.json")
-    )
+    ).resolve()
 
     # Use both in-process and cross-process locks
     with _whitelist_lock:
@@ -491,12 +497,16 @@ def is_valid_api_key(api_key: str, settings: Dict[str, Any]) -> bool:
 
 def get_api_key_name(api_key: str, settings: Dict[str, Any]) -> str:
     """
-    Returns the configured name for an API key, falling back to the key string
-    if no explicit name is provided. Returns an empty string if api_key is falsy.
+    Returns the configured name for an API key.
+    If no name is provided, returns a masked version of the key.
     """
     if not api_key:
         return ""
+
+    masked_key = f"***{api_key[-4:]}" if len(api_key) > 4 else "***"
+
     for key_info in settings.get("api_keys", []):
         if key_info.get("key") == api_key:
-            return key_info.get("name") or key_info.get("key")
-    return api_key
+            return key_info.get("name") or masked_key
+
+    return masked_key
