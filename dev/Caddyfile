@@ -26,7 +26,7 @@
 			# Use forward_auth to send a verification request to the knocker service.
 			# Caddy will copy the original request's method and headers.
 			forward_auth knocker:8000 {
-				uri /verify
+				uri /verify?
 				copy_headers X-Forwarded-For X-Forwarded-Proto X-Forwarded-Host
 				trusted_proxies 172.29.238.0/24 fd00:dead:c0de::/64
 			}

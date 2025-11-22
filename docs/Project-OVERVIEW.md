@@ -71,7 +71,7 @@ To protect your services, you will use Caddy's `forward_auth` directive.
 # It points to the knocker service using Docker's internal DNS.
 (knocker_auth) {
   forward_auth knocker:8000 {
-    uri /verify
+    uri /verify?
     copy_headers X-Forwarded-For
   }
 }
