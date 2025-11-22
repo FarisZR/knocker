@@ -113,7 +113,7 @@ Caddy has the `forward_auth` directive to check connections using an auth endpoi
 # It points to the knocker service using Docker's internal DNS.
 (knocker_auth) {
   forward_auth knocker:8000 {
-    uri /verify
+    uri /verify?
     copy_headers X-Forwarded-For
   }
 }
