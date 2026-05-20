@@ -139,9 +139,68 @@ def test_knock_options_cors():
     assert response.status_code == 204
     assert response.headers["Access-Control-Allow-Origin"] == "*"
     assert response.headers["Access-Control-Allow-Methods"] == "POST, OPTIONS"
-    assert response.headers["Access-Control-Allow-Headers"] == (
-        "X-Api-Key, X-Key-Id, X-Knock-Nonce, X-Knock-Timestamp, Content-Type"
+    allow_headers = {
+        header.strip()
+        for header in response.headers["Access-Control-Allow-Headers"].split(",")
+    }
+    assert allow_headers == {
+        "X-Api-Key",
+        "X-Key-Id",
+        "X-Knock-Nonce",
+        "X-Knock-Timestamp",
+        "Content-Type",
+    }
+
+def test_knock_success_rate_limit_is_atomic(monkeypatch, mock_settings):
+    """Concurrent successes should not bypass the configured success limit."""
+    import threading
+
+    mock_settings["security"]["knock_rate_limit"] = {
+        "window_seconds": 60,
+        "successful_requests": 1,
+        "failed_requests": 30,
+    }
+
+    first_started = threading.Event()
+    release_first = threading.Event()
+    call_count = 0
+    call_lock = threading.Lock()
+    responses = {}
+
+    def fake_add(*args, **kwargs):
+        nonlocal call_count
+        with call_lock:
+            call_count += 1
+            current_call = call_count
+        if current_call == 1:
+            first_started.set()
+            assert release_first.wait(timeout=5)
+        return True
+
+    monkeypatch.setattr("src.main.core.add_ip_to_whitelist_with_firewalld", fake_add)
+
+    def issue_first_request():
+        responses["first"] = client.post(
+            "/knock",
+            headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"},
+        )
+
+    first_thread = threading.Thread(target=issue_first_request)
+    first_thread.start()
+    assert first_started.wait(timeout=5)
+
+    second_response = client.post(
+        "/knock",
+        headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"},
     )
+
+    release_first.set()
+    first_thread.join(timeout=5)
+
+    assert not first_thread.is_alive()
+    assert responses["first"].status_code == 200
+    assert second_response.status_code == 429
+    assert call_count == 1
 
 def test_knock_post_cors_header():
     """POST /knock should include Access-Control-Allow-Origin header."""

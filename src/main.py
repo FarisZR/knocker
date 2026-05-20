@@ -542,7 +542,8 @@ async def knock(
 
     expiry_time = int(time.time()) + effective_ttl
 
-    if not core.can_record_knock_attempt(settings, rate_limit_actor, "success"):
+    success_reservation = core.reserve_knock_attempt(settings, rate_limit_actor, "success")
+    if success_reservation is None:
         return JSONResponse(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             content={"error": "Too many knock attempts."},
@@ -551,7 +552,14 @@ async def knock(
     
     # Add to whitelist with firewalld integration
     # This will add firewalld rules BEFORE updating whitelist.json if firewalld is enabled
-    if not core.add_ip_to_whitelist_with_firewalld(ip_to_whitelist, expiry_time, settings):
+    try:
+        whitelisted = core.add_ip_to_whitelist_with_firewalld(ip_to_whitelist, expiry_time, settings)
+    except Exception:
+        core.release_knock_attempt(settings, rate_limit_actor, "success", success_reservation)
+        raise
+
+    if not whitelisted:
+        core.release_knock_attempt(settings, rate_limit_actor, "success", success_reservation)
         if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -573,8 +581,6 @@ async def knock(
     logger.debug("Successfully whitelisted %s for %d seconds. Requested by %s.", ip_to_whitelist, effective_ttl, client_ip)
     if api_key_name:
         logger.debug("API key used: %s", api_key_name)
-
-    core.record_knock_attempt(settings, rate_limit_actor, "success")
 
     # Ensure CORS and response_model validation
     response.headers["Access-Control-Allow-Origin"] = allowed_origin

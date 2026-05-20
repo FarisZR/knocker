@@ -120,6 +120,7 @@ cors:
 
 - **Use strong, random API keys**: Generate cryptographically secure random strings
 - **Prefer hashed keys**: Store `api_keys[].key_hash` with `X-Key-Id` instead of plaintext `key`
+- **Do not reuse secrets across entries**: Avoid configuring the same secret twice, including mixed `key` and `key_hash` forms
 - **Principle of least privilege**: Set `allow_remote_whitelist: false` for most keys
 - **Regular rotation**: Rotate API keys periodically
 - **Separate keys for different purposes**: Use different keys for admin vs user access

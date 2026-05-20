@@ -700,7 +700,7 @@ class APIKeyRegistry:
                     raise ValueError(f"API key at index {index} has a non-string key value")
                 secret_kind = "plaintext"
                 secret_value = plain_secret
-                secret_fingerprint = f"plaintext:{plain_secret}"
+                secret_fingerprint = hash_api_key(plain_secret)
             else:
                 if not isinstance(hashed_secret, str):
                     raise ValueError(f"API key at index {index} has a non-string key_hash value")
@@ -763,8 +763,9 @@ class SlidingWindowRateLimiter:
     window_seconds: int
     successful_requests: int
     failed_requests: int
-    _events: Dict[Tuple[str, str], Deque[int]] = field(default_factory=lambda: defaultdict(deque))
+    _events: Dict[Tuple[str, str], Deque[Tuple[int, int]]] = field(default_factory=lambda: defaultdict(deque))
     _lock: threading.RLock = field(default_factory=threading.RLock)
+    _token_counter: int = field(default=0, init=False)
 
     @classmethod
     def from_settings(cls, security_settings: Dict[str, Any]) -> "SlidingWindowRateLimiter":
@@ -782,22 +783,49 @@ class SlidingWindowRateLimiter:
             failed_requests=failed_requests,
         )
 
-    def allow(self, actor: str, outcome: str, now: Optional[int] = None) -> bool:
-        limit = self.successful_requests if outcome == "success" else self.failed_requests
-        if limit == 0:
-            return True
+    def _prune_bucket(self, bucket: Deque[Tuple[int, int]], cutoff: int) -> None:
+        while bucket and bucket[0][0] <= cutoff:
+            bucket.popleft()
 
+    def reserve(self, actor: str, outcome: str, now: Optional[int] = None) -> Optional[Tuple[int, int]]:
+        limit = self.successful_requests if outcome == "success" else self.failed_requests
         timestamp = int(time.time()) if now is None else now
+        if limit == 0:
+            return (timestamp, 0)
+
         cutoff = timestamp - self.window_seconds
         bucket_key = (outcome, actor)
         with self._lock:
             bucket = self._events[bucket_key]
-            while bucket and bucket[0] <= cutoff:
-                bucket.popleft()
+            self._prune_bucket(bucket, cutoff)
             if len(bucket) >= limit:
-                return False
-            bucket.append(timestamp)
-            return True
+                return None
+            self._token_counter += 1
+            reservation = (timestamp, self._token_counter)
+            bucket.append(reservation)
+            return reservation
+
+    def release(self, actor: str, outcome: str, reservation: Tuple[int, int]) -> None:
+        if reservation[1] == 0:
+            return
+
+        bucket_key = (outcome, actor)
+        with self._lock:
+            bucket = self._events.get(bucket_key)
+            if not bucket:
+                return
+            try:
+                bucket.remove(reservation)
+            except ValueError:
+                return
+            if not bucket:
+                self._events.pop(bucket_key, None)
+
+    def allow(self, actor: str, outcome: str, now: Optional[int] = None) -> bool:
+        reservation = self.reserve(actor, outcome, now)
+        if reservation is None:
+            return False
+        return True
 
     def can_allow(self, actor: str, outcome: str, now: Optional[int] = None) -> bool:
         limit = self.successful_requests if outcome == "success" else self.failed_requests
@@ -809,8 +837,7 @@ class SlidingWindowRateLimiter:
         bucket_key = (outcome, actor)
         with self._lock:
             bucket = self._events[bucket_key]
-            while bucket and bucket[0] <= cutoff:
-                bucket.popleft()
+            self._prune_bucket(bucket, cutoff)
             return len(bucket) < limit
 
 
@@ -865,7 +892,7 @@ class ReplayGuard:
             if key in self._entries:
                 return False, "Replay detected."
 
-            self._entries[key] = timestamp_int
+            self._entries[key] = current_time
             return True, None
 
 
@@ -1081,6 +1108,20 @@ def is_ip_whitelisted(ip: str, whitelist: Dict[str, int], settings: Dict[str, An
 def record_knock_attempt(settings: Dict[str, Any], actor: str, outcome: str) -> bool:
     runtime_state = ensure_runtime_state(settings)
     return runtime_state.rate_limiter.allow(actor, outcome, int(time.time()))
+
+
+def reserve_knock_attempt(
+    settings: Dict[str, Any], actor: str, outcome: str
+) -> Optional[Tuple[int, int]]:
+    runtime_state = ensure_runtime_state(settings)
+    return runtime_state.rate_limiter.reserve(actor, outcome, int(time.time()))
+
+
+def release_knock_attempt(
+    settings: Dict[str, Any], actor: str, outcome: str, reservation: Tuple[int, int]
+) -> None:
+    runtime_state = ensure_runtime_state(settings)
+    runtime_state.rate_limiter.release(actor, outcome, reservation)
 
 
 def can_record_knock_attempt(settings: Dict[str, Any], actor: str, outcome: str) -> bool:

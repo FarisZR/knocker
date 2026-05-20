@@ -15,10 +15,10 @@ import ipaddress
 from typing import Dict, Any, List, Tuple, Optional
 from dataclasses import dataclass
 
-try:
-    from . import core
-except ImportError:  # pragma: no cover - fallback for direct module execution
+if __package__ in (None, ""):  # pragma: no cover - fallback for direct module execution
     import core
+else:
+    from . import core
 
 
 @dataclass

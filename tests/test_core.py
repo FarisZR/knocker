@@ -115,3 +115,35 @@ def test_is_valid_api_key(mock_settings):
 def test_is_invalid_api_key(mock_settings):
     """Tests that an invalid key is rejected."""
     assert core.is_valid_api_key("fake_key", mock_settings) == False
+
+def test_duplicate_api_key_material_detected_across_plaintext_and_hash():
+    """The same secret must be rejected even across key and key_hash forms."""
+    with pytest.raises(ValueError, match="Duplicate API key material"):
+        core.APIKeyRegistry.from_settings([
+            {"key": "duplicate_key", "max_ttl": 3600, "allow_remote_whitelist": True},
+            {
+                "key_hash": core.hash_api_key("duplicate_key"),
+                "max_ttl": 600,
+                "allow_remote_whitelist": False,
+            },
+        ])
+
+def test_rate_limiter_reservation_can_be_released():
+    """A released reservation should free the success slot immediately."""
+    limiter = core.SlidingWindowRateLimiter(window_seconds=60, successful_requests=1, failed_requests=1)
+
+    reservation = limiter.reserve("actor", "success", now=100)
+
+    assert reservation is not None
+    assert limiter.reserve("actor", "success", now=100) is None
+
+    limiter.release("actor", "success", reservation)
+
+    assert limiter.reserve("actor", "success", now=100) is not None
+
+def test_replay_guard_prunes_using_server_receive_time():
+    """Nonce reuse should be allowed once the server-side max age window has passed."""
+    guard = core.ReplayGuard(enabled=True, max_age_seconds=10)
+
+    assert guard.validate("actor", "nonce", "110", now=100) == (True, None)
+    assert guard.validate("actor", "nonce", "111", now=111) == (True, None)

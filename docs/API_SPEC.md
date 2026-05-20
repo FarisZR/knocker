@@ -122,6 +122,7 @@ This endpoint is used to verify the operational status of the Knocker service.
     - **`key`** (string, optional): Plaintext secret API key. Supported for backward compatibility.
     - **`key_hash`** (string, optional): SHA-256 hash in the format `sha256:<64 lowercase hex chars>`. Prefer this over `key`.
     - Exactly one of `key` or `key_hash` must be present.
+    - Duplicate key material is rejected, including the same secret configured once as `key` and once as `key_hash`.
     - **`max_ttl`** (integer, required): The maximum time-to-live for whitelisted IPs in seconds.
     - **`allow_remote_whitelist`** (boolean, required): If `true`, the key can whitelist any IP/CIDR. If `false`, it can only whitelist the source IP of the request.
 - **`security`** (object, optional): Security-related settings.
