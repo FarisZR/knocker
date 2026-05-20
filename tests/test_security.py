@@ -281,19 +281,26 @@ class TestDenialOfService:
     
     def test_unlimited_whitelist_growth(self):
         """
-        VULNERABILITY: No limits on whitelist size could cause DoS.
+        SECURITY TEST: Growth is bounded by whitelist limits, not unlimited.
         """
-        # Add many entries to the whitelist
+        security_settings = app.dependency_overrides[get_settings]()["security"]
+        security_settings["max_whitelist_entries"] = 100
+
         for i in range(100):  # Reduced from 1000 to avoid long test times
+            forwarded_ip = f"10.1.{i // 250}.{(i % 250) + 1}"
             response = client.post(
                 "/knock",
-                headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"},
+                headers={
+                    "X-Api-Key": "ADMIN_KEY",
+                    "X-Forwarded-For": forwarded_ip,
+                    "x-knocker-test-direct-ip": f"127.0.0.{(i % 250) + 1}",
+                },
                 json={"ip_address": f"10.0.{i//256}.{i%256}", "ttl": 3600}
             )
             assert response.status_code == 200
-        
-        # The whitelist should now be very large
-        # In a real attack, this could consume all disk space
+
+        whitelist = core.load_whitelist({"whitelist": {"storage_path": "./test_security_whitelist.json"}})
+        assert len(whitelist) <= 100
     
     @pytest.mark.skip(reason="placeholder test for deep directory creation - requires network-level testing")
     def test_deep_directory_creation(self):

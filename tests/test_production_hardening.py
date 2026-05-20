@@ -293,8 +293,11 @@ class TestHealthCheckDependencies:
         """Health check should detect inaccessible storage."""
         bad_settings = {**test_settings, "whitelist": {"storage_path": "./will_fail.json"}}
         app.dependency_overrides[get_settings] = lambda: bad_settings
-        # Simulate write failure
-        monkeypatch.setattr(core, "save_whitelist", lambda wl, st: (_ for _ in ()).throw(PermissionError("denied")))
+
+        def fail_probe(*args, **kwargs):
+            raise PermissionError("denied")
+
+        monkeypatch.setattr("pathlib.Path.write_text", fail_probe)
         resp = client.get("/health")
         assert resp.status_code == 503
         app.dependency_overrides = {}

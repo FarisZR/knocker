@@ -12,7 +12,9 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
 *   **Method**: `POST`, `OPTIONS`
 *   **Headers**:
     *   `X-Api-Key` (string, **required** for POST): The secret API key for authentication.
-    *   `X-Forwarded-For` (string, **required** for POST): The client's real IP address. This is expected to be set by a trusted proxy like Caddy.
+    *   `X-Key-Id` (string, optional): Recommended when the configured key uses `key_hash`.
+    *   `X-Forwarded-For` (string, proxy-provided): The client's real IP address. This is only trusted when the direct peer is listed in `server.trusted_proxies`.
+    *   `X-Knock-Nonce` and `X-Knock-Timestamp` (strings, conditional): Required when replay protection is enabled.
 *   **Request Body** (optional, JSON):
     ```json
     {
@@ -46,7 +48,7 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
     *   **Headers**:
         *   `Access-Control-Allow-Origin`: The configured allowed origin (or "*" for any).
         *   `Access-Control-Allow-Methods`: "POST, OPTIONS"
-        *   `Access-Control-Allow-Headers`: "X-Api-Key, Content-Type"
+        *   `Access-Control-Allow-Headers`: "X-Api-Key, X-Key-Id, X-Knock-Nonce, X-Knock-Timestamp, Content-Type"
 
 *   **`400 Bad Request`**
     *   Returned if the client IP cannot be determined or if the `ip_address` in the request body is malformed.
@@ -55,6 +57,10 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
 *   **`401 Unauthorized`**
     *   Returned if the `X-Api-Key` is missing or invalid.
     *   **Body**: `{"error": "string"}`
+
+*   **`429 Too Many Requests`**
+    *   Returned when the request exceeds `security.knock_rate_limit`.
+    *   **Body**: `{"error": "Too many knock attempts."}`
 
 *   **`403 Forbidden`**
     *   Returned if an API key without `allow_remote_whitelist` permission attempts to whitelist a specific `ip_address`.
@@ -69,7 +75,8 @@ This endpoint is used by Caddy's `forward_auth` directive to verify if a client'
 *   **URL**: `/verify`
 *   **Method**: `GET`
 *   **Headers**:
-    *   `X-Forwarded-For` (string, **required**): The client's real IP address, set by the proxy.
+    *   `X-Forwarded-For` (string, proxy-provided): The client's real IP address, trusted only from `server.trusted_proxies`.
+    *   `X-Forwarded-Host` and `X-Forwarded-Uri` (strings, proxy-provided): Used for host-aware excluded path checks when sent by a trusted proxy.
 
 #### Responses
 
@@ -108,13 +115,21 @@ This endpoint is used to verify the operational status of the Knocker service.
     - **`trusted_proxies`** (array of strings, required): A list of trusted proxy IPs/CIDRs.
 - **`whitelist`** (object, required): Whitelist settings.
     - **`storage_path`** (string, required): Path to the whitelist JSON file.
+    - **`cleanup_interval_seconds`** (integer, optional): Background cleanup cadence for expired whitelist entries. Defaults to `60`.
 - **`api_keys`** (array of objects, required): A list of API key configurations.
-    - **`name`** (string, required): A friendly name for the key.
-    - **`key`** (string, required): The secret API key.
+    - **`id`** (string, optional): Stable identifier used with `X-Key-Id`.
+    - **`name`** (string, optional): A friendly name for the key.
+    - **`key`** (string, optional): Plaintext secret API key. Supported for backward compatibility.
+    - **`key_hash`** (string, optional): SHA-256 hash in the format `sha256:<64 lowercase hex chars>`. Prefer this over `key`.
+    - Exactly one of `key` or `key_hash` must be present.
     - **`max_ttl`** (integer, required): The maximum time-to-live for whitelisted IPs in seconds.
     - **`allow_remote_whitelist`** (boolean, required): If `true`, the key can whitelist any IP/CIDR. If `false`, it can only whitelist the source IP of the request.
 - **`security`** (object, optional): Security-related settings.
     - **`always_allowed_ips`** (array of strings, optional): A list of IPs or CIDR ranges that are always permitted by the `/verify` endpoint, bypassing the dynamic whitelist.
     - **`excluded_paths`** (array of strings, optional): A list of URL paths (e.g., `/api/health`) that are exempt from any IP-based authentication at the `/verify` endpoint.
+    - **`excluded_paths_by_host`** (mapping, optional): Host-specific excluded path prefixes, evaluated only for trusted forwarded host metadata.
+    - **`max_whitelist_entries`** (integer, optional): Maximum retained whitelist entries. Defaults to `10000`.
+    - **`knock_rate_limit`** (object, optional): Sliding-window rate limits with `window_seconds`, `successful_requests`, and `failed_requests`.
+    - **`replay_protection`** (object, optional): Replay protection settings with `enabled` and `max_age_seconds`.
 - **`cors`** (object, optional): CORS settings for the `/knock` endpoint.
     - **`allowed_origin`** (string, optional): The allowed origin for CORS requests. Defaults to "*" (any origin). Set to your web app's origin (e.g., "https://your-web-app.com") for security.

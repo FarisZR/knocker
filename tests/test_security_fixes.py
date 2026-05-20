@@ -220,9 +220,14 @@ class TestWhitelistSizeLimits:
         
         # Add entries beyond the limit
         for i in range(max_entries + 10):
+            forwarded_ip = f"10.1.{i // 250}.{(i % 250) + 1}"
             response = client.post(
                 "/knock",
-                headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"},
+                headers={
+                    "X-Api-Key": "ADMIN_KEY",
+                    "X-Forwarded-For": forwarded_ip,
+                    "x-knocker-test-direct-ip": f"127.0.0.{(i % 250) + 1}",
+                },
                 json={"ip_address": f"10.0.{i//256}.{i%256}", "ttl": 3600}
             )
             assert response.status_code == 200

@@ -1,9 +1,9 @@
 import time
 import logging
-import ipaddress
 import json
+import os
 from pathlib import Path
-from typing import Optional, Dict, Union
+from typing import Optional, Dict, Union, Tuple
 from functools import lru_cache
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, status, Depends, HTTPException
@@ -34,6 +34,7 @@ def get_settings() -> Dict:
     """
     settings = config.load_config()
     config.setup_logging(settings)
+    core.ensure_runtime_state(settings)
     return settings
 
 @asynccontextmanager
@@ -45,7 +46,8 @@ async def lifespan(app: FastAPI):
     logging.info("Knocker service starting up...")
     
     settings = get_settings()
-    core.cleanup_expired_ips(settings)
+    runtime_state = core.start_runtime_state(settings)
+    runtime_state.whitelist.compact_expired()
     
     # Generate and persist OpenAPI schema
     await generate_and_persist_openapi(app, settings)
@@ -60,7 +62,7 @@ async def lifespan(app: FastAPI):
             logging.info("Firewalld zone setup completed successfully")
             
             # Restore missing rules from whitelist
-            whitelist = core.load_whitelist(settings)
+            whitelist = runtime_state.whitelist.active_snapshot()
             if firewalld_integration.restore_missing_rules(whitelist):
                 logging.info("Firewalld rule restoration completed successfully")
             else:
@@ -71,6 +73,7 @@ async def lifespan(app: FastAPI):
         logging.info("Firewalld integration is disabled")
     
     yield
+    core.stop_runtime_state(settings)
     logging.info("Knocker service shutting down.")
 
 
@@ -225,7 +228,8 @@ app = FastAPI(**app_config)
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Convert Pydantic validation errors to 400 Bad Request for backward compatibility."""
-    settings = get_settings()
+    settings_provider = app.dependency_overrides.get(get_settings, get_settings)
+    settings = settings_provider()
     allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
     
     # Extract a user-friendly error message
@@ -246,47 +250,59 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 # --- Dependency for getting the real client IP ---
+def _resolve_request_context(request: Request, settings: dict) -> Tuple[Optional[str], bool, Optional[str], str]:
+    """Resolve client IP and forwarded request metadata from trusted proxies only."""
+    direct_ip = request.client.host if request.client else None
+
+    # Starlette's TestClient uses a synthetic peer name. Keep the override scoped
+    # to that sentinel value so production traffic cannot influence the direct IP.
+    if direct_ip == "testclient":
+        direct_ip = request.headers.get("x-knocker-test-direct-ip", "127.0.0.1")
+
+    runtime_state = core.ensure_runtime_state(settings)
+    client_ip, forwarded_headers_trusted = core.resolve_client_ip(
+        direct_ip,
+        request.headers.get("x-forwarded-for"),
+        runtime_state.trusted_proxies,
+    )
+    request_host = core.resolve_request_host(
+        request.headers.get("host"),
+        request.headers.get("x-forwarded-host"),
+        forwarded_headers_trusted,
+    )
+    request_path = core.resolve_request_path(
+        request.url.path,
+        request.headers.get("x-forwarded-uri"),
+        forwarded_headers_trusted,
+    )
+    return client_ip, forwarded_headers_trusted, request_host, request_path
+
+
 def get_client_ip(request: Request, settings: Optional[dict] = None) -> Optional[str]:
     """
     Returns the client's real IP address with trusted proxy validation.
     Only trusts X-Forwarded-For header if the request comes from a trusted proxy.
     """
-    # Get the actual client IP (the direct connection IP)
-    direct_ip = request.client.host if request.client else None
-    
-    # Special case for testing: if direct_ip is "testclient", trust X-Forwarded-For
-    if direct_ip == "testclient" and "x-forwarded-for" in request.headers:
-        return request.headers["x-forwarded-for"].split(",")[0].strip()
-    
-    # If settings are provided, validate trusted proxies
     if settings:
-        trusted_proxies = settings.get("server", {}).get("trusted_proxies", [])
-        
-        # If we have a X-Forwarded-For header, validate the direct IP is trusted
-        if "x-forwarded-for" in request.headers and direct_ip:
-            if core.is_trusted_proxy(direct_ip, trusted_proxies):
-                # Take the first IP in case of a chain
-                forwarded_ip = request.headers["x-forwarded-for"].split(",")[0].strip()
-                # Validate the forwarded IP
-                try:
-                    ipaddress.ip_address(forwarded_ip)
-                    return forwarded_ip
-                except ValueError:
-                    # Invalid IP, fall back to direct_ip
-                    return direct_ip
-            else:
-                # Direct IP is not trusted, ignore X-Forwarded-For
-                return direct_ip
-    
-    # Fallback: check X-Forwarded-For for backward compatibility only when no settings provided
-    if settings is None and "x-forwarded-for" in request.headers:
-        return request.headers["x-forwarded-for"].split(",")[0].strip()
-    
+        client_ip, _, _, _ = _resolve_request_context(request, settings)
+        return client_ip
+
+    direct_ip = request.client.host if request.client else None
+    if direct_ip == "testclient":
+        direct_ip = request.headers.get("x-knocker-test-direct-ip", "127.0.0.1")
     return direct_ip
 
 def get_client_ip_dependency(request: Request, settings: dict = Depends(get_settings)) -> Optional[str]:
     """Dependency wrapper for get_client_ip that includes settings."""
     return get_client_ip(request, settings)
+
+
+def get_request_context_dependency(
+    request: Request,
+    settings: dict = Depends(get_settings),
+) -> Tuple[Optional[str], bool, Optional[str], str]:
+    """Dependency wrapper for trusted proxy metadata resolution."""
+    return _resolve_request_context(request, settings)
 
 # --- API Endpoints ---
 
@@ -307,7 +323,7 @@ async def knock_options(settings: dict = Depends(get_settings)):
         headers={
             "Access-Control-Allow-Origin": allowed_origin,
             "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "X-Api-Key, Content-Type",
+            "Access-Control-Allow-Headers": "X-Api-Key, X-Key-Id, X-Knock-Nonce, X-Knock-Timestamp, Content-Type",
         }
     )
 
@@ -341,17 +357,49 @@ async def knock(
     settings: dict = Depends(get_settings)
 ):
     api_key = request.headers.get("X-Api-Key")
+    api_key_id = request.headers.get("X-Key-Id")
     allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
+    direct_ip = request.client.host if request.client else None
+    if direct_ip == "testclient":
+        direct_ip = request.headers.get("x-knocker-test-direct-ip", "127.0.0.1")
+    rate_limit_actor = client_ip or direct_ip or "unknown"
 
     if not client_ip:
         logging.warning("Could not determine client IP.")
+        core.record_knock_attempt(settings, rate_limit_actor, "failure")
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"error": "Could not determine client IP."},
             headers={"Access-Control-Allow-Origin": allowed_origin}
         )
 
-    if not api_key or not core.is_valid_api_key(api_key, settings):
+    replay_ok, replay_error = core.validate_replay_protection(
+        settings,
+        rate_limit_actor,
+        request.headers.get("X-Knock-Nonce"),
+        request.headers.get("X-Knock-Timestamp"),
+    )
+    if not replay_ok:
+        if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"error": "Too many knock attempts."},
+                headers={"Access-Control-Allow-Origin": allowed_origin},
+            )
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"error": replay_error},
+            headers={"Access-Control-Allow-Origin": allowed_origin},
+        )
+
+    api_key_record = core.get_api_key_record(api_key, settings, api_key_id)
+    if not api_key_record:
+        if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"error": "Too many knock attempts."},
+                headers={"Access-Control-Allow-Origin": allowed_origin},
+            )
         logging.warning(f"Invalid or missing API key provided by {client_ip}.")
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -367,6 +415,12 @@ async def knock(
             # Security: Validate input size to prevent DoS
             if not isinstance(ip_address, str):
                 logging.warning(f"Invalid IP address type from {client_ip}.")
+                if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+                    return JSONResponse(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        content={"error": "Too many knock attempts."},
+                        headers={"Access-Control-Allow-Origin": allowed_origin},
+                    )
                 return JSONResponse(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     content={"error": "IP address must be a string."},
@@ -375,14 +429,26 @@ async def knock(
             
             if len(ip_address) > 100:  # Max length for IPv6 with CIDR
                 logging.warning(f"IP address too long ({len(ip_address)} chars) from {client_ip}.")
+                if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+                    return JSONResponse(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        content={"error": "Too many knock attempts."},
+                        headers={"Access-Control-Allow-Origin": allowed_origin},
+                    )
                 return JSONResponse(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     content={"error": "IP address or CIDR notation too long."},
                     headers={"Access-Control-Allow-Origin": allowed_origin}
                 )
             
-            if not core.can_whitelist_remote(api_key, settings):
+            if not api_key_record.allow_remote_whitelist:
                 logging.warning(f"API key used by {client_ip} lacks remote whitelist permission.")
+                if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+                    return JSONResponse(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        content={"error": "Too many knock attempts."},
+                        headers={"Access-Control-Allow-Origin": allowed_origin},
+                    )
                 return JSONResponse(
                     status_code=status.HTTP_403_FORBIDDEN,
                     content={"error": "API key lacks remote whitelist permission."},
@@ -391,6 +457,12 @@ async def knock(
             
             if not core.is_valid_ip_or_cidr(ip_address):
                 logging.warning(f"Invalid IP address or CIDR notation '{ip_address}' in request body from {client_ip}.")
+                if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+                    return JSONResponse(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        content={"error": "Too many knock attempts."},
+                        headers={"Access-Control-Allow-Origin": allowed_origin},
+                    )
                 return JSONResponse(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     content={"error": "Invalid IP address or CIDR notation in request body."},
@@ -400,6 +472,12 @@ async def knock(
             # Security check: prevent overly broad CIDR ranges
             if not core.is_safe_cidr_range(ip_address):
                 logging.warning(f"Unsafe CIDR range '{ip_address}' rejected from {client_ip}.")
+                if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+                    return JSONResponse(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        content={"error": "Too many knock attempts."},
+                        headers={"Access-Control-Allow-Origin": allowed_origin},
+                    )
                 return JSONResponse(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     content={"error": "CIDR range too broad. Maximum 65536 addresses allowed."},
@@ -408,7 +486,7 @@ async def knock(
             
             ip_to_whitelist = ip_address
 
-    max_ttl = core.get_max_ttl_for_key(api_key, settings)
+    max_ttl = api_key_record.max_ttl
     requested_ttl = getattr(body, 'ttl', None) if hasattr(body, 'ttl') else (body.get('ttl') if body else None)
     
     effective_ttl = max_ttl
@@ -417,6 +495,12 @@ async def knock(
         # Comprehensive TTL validation
         if not isinstance(requested_ttl, int):
             logging.warning(f"Invalid TTL type '{type(requested_ttl).__name__}' specified by {client_ip}.")
+            if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+                return JSONResponse(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    content={"error": "Too many knock attempts."},
+                    headers={"Access-Control-Allow-Origin": allowed_origin},
+                )
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={"error": "Invalid TTL specified. Must be a positive integer."},
@@ -426,6 +510,12 @@ async def knock(
         # Check for edge cases: 0, negative, and excessively large values
         if requested_ttl <= 0:
             logging.warning(f"Invalid TTL '{requested_ttl}' (must be positive) specified by {client_ip}.")
+            if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+                return JSONResponse(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    content={"error": "Too many knock attempts."},
+                    headers={"Access-Control-Allow-Origin": allowed_origin},
+                )
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={"error": "Invalid TTL specified. Must be a positive integer."},
@@ -436,6 +526,12 @@ async def knock(
         MAX_TTL = 315360000
         if requested_ttl > MAX_TTL:
             logging.warning(f"TTL {requested_ttl} exceeds maximum allowed ({MAX_TTL}) from {client_ip}.")
+            if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+                return JSONResponse(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    content={"error": "Too many knock attempts."},
+                    headers={"Access-Control-Allow-Origin": allowed_origin},
+                )
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={"error": f"TTL too large. Maximum allowed is {MAX_TTL} seconds (10 years)."},
@@ -445,10 +541,23 @@ async def knock(
         effective_ttl = min(requested_ttl, max_ttl)
 
     expiry_time = int(time.time()) + effective_ttl
+
+    if not core.can_record_knock_attempt(settings, rate_limit_actor, "success"):
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={"error": "Too many knock attempts."},
+            headers={"Access-Control-Allow-Origin": allowed_origin},
+        )
     
     # Add to whitelist with firewalld integration
     # This will add firewalld rules BEFORE updating whitelist.json if firewalld is enabled
     if not core.add_ip_to_whitelist_with_firewalld(ip_to_whitelist, expiry_time, settings):
+        if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"error": "Too many knock attempts."},
+                headers={"Access-Control-Allow-Origin": allowed_origin},
+            )
         logging.error(f"Failed to whitelist {ip_to_whitelist}. Request from {client_ip} rejected.")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -458,15 +567,14 @@ async def knock(
     
     # Log with limited information; avoid logging API key names at INFO level.
     # API key name is available at DEBUG level for troubleshooting only.
-    try:
-        api_key_name = core.get_api_key_name(api_key, settings)
-    except Exception:
-        api_key_name = None
+    api_key_name = api_key_record.name
     logger = logging.getLogger("uvicorn.error")
     # Reduce logging to DEBUG only to avoid information disclosure in INFO-level logs.
     logger.debug("Successfully whitelisted %s for %d seconds. Requested by %s.", ip_to_whitelist, effective_ttl, client_ip)
     if api_key_name:
         logger.debug("API key used: %s", api_key_name)
+
+    core.record_knock_attempt(settings, rate_limit_actor, "success")
 
     # Ensure CORS and response_model validation
     response.headers["Access-Control-Allow-Origin"] = allowed_origin
@@ -490,49 +598,40 @@ async def health_check(settings: dict = Depends(get_settings)):
     Validates that critical configuration and dependencies are available.
     """
     try:
-        # Verify critical configuration sections exist
-        if not settings.get('api_keys'):
+        runtime_state = core.ensure_runtime_state(settings)
+        if not runtime_state.api_keys.records:
             logging.error("Health check failed: No API keys configured")
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={"status": "unhealthy", "error": "No API keys configured"}
             )
-        
-        # Verify whitelist storage is accessible
-        whitelist_path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
-        try:
-            # Try to create parent directory if it doesn't exist
-            whitelist_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Verify we can read and write the whitelist storage by performing
-            # a safe read-then-write roundtrip. This detects permission errors
-            # and other I/O problems (e.g., disk is read-only).
-            whitelist = {}
-            try:
-                if whitelist_path.exists():
-                    whitelist = core.load_whitelist(settings)
-            except Exception as e:
-                logging.error(f"Health check failed: Could not read whitelist storage: {e}")
-                return JSONResponse(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    content={"status": "unhealthy", "error": "Whitelist storage not accessible"}
-                )
-
-            try:
-                core.save_whitelist(whitelist, settings)
-            except Exception as e:
-                logging.error(f"Health check failed: Could not write to whitelist storage: {e}")
-                return JSONResponse(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    content={"status": "unhealthy", "error": "Whitelist storage not accessible"}
-                )
-        except Exception as e:
-            logging.error(f"Health check failed: Whitelist storage not accessible: {e}")
+        whitelist_path = runtime_state.whitelist.storage_path
+        storage_probe_path = whitelist_path.parent / ".knocker-healthcheck"
+        if whitelist_path.exists() and not os.access(whitelist_path, os.R_OK | os.W_OK):
+            logging.error("Health check failed: Whitelist storage is not readable and writable")
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={"status": "unhealthy", "error": "Whitelist storage not accessible"}
             )
-        
+
+        if not os.access(whitelist_path.parent, os.R_OK | os.W_OK | os.X_OK):
+            logging.error("Health check failed: Whitelist storage directory is not accessible")
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "unhealthy", "error": "Whitelist storage not accessible"}
+            )
+
+        try:
+            storage_probe_path.write_text("ok", encoding="utf-8")
+            storage_probe_path.unlink(missing_ok=True)
+        except OSError as exc:
+            logging.error(f"Health check failed: Whitelist storage probe failed: {exc}")
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "unhealthy", "error": "Whitelist storage not accessible"}
+            )
+
         return HealthResponse(status="ok")
     except Exception as e:
         logging.error(f"Health check failed with unexpected error: {e}")
@@ -565,24 +664,23 @@ async def health_check(settings: dict = Depends(get_settings)):
 )
 async def verify(
     request: Request,
-    client_ip: str = Depends(get_client_ip_dependency),
+    request_context: Tuple[Optional[str], bool, Optional[str], str] = Depends(get_request_context_dependency),
     settings: dict = Depends(get_settings)
 ):
-    # 1. Check if the path is excluded from authentication
-    # Use the X-Forwarded-Uri header if present, which Caddy should send.
-    path_to_check = request.headers.get("x-forwarded-uri", request.url.path)
-    if core.is_path_excluded(path_to_check, settings):
+    client_ip, forwarded_headers_trusted, request_host, request_path = request_context
+    runtime_state = core.ensure_runtime_state(settings)
+    exclusion_host = request_host if forwarded_headers_trusted else None
+
+    # 1. Check if the path is excluded from authentication.
+    if runtime_state.path_exclusions.matches(exclusion_host, request_path):
         return Response(status_code=status.HTTP_200_OK)
 
-    # 2. Proceed with standard IP check
+    # 2. Proceed with standard IP check.
     if not client_ip:
         return Response(status_code=status.HTTP_401_UNAUTHORIZED)
-        
-    core.cleanup_expired_ips(settings)
-    whitelist = core.load_whitelist(settings) 
-    
-    # 3. Check if IP is whitelisted (this now includes always-allowed)
-    if not core.is_ip_whitelisted(client_ip, whitelist, settings):
+
+    # 3. Check if the resolved client IP is authorized.
+    if not runtime_state.is_authorized_ip(client_ip):
         return Response(status_code=status.HTTP_401_UNAUTHORIZED)
 
     return Response(status_code=status.HTTP_200_OK)

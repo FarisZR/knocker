@@ -81,12 +81,13 @@ When testing endpoints that require API keys (like `/knock`):
 
 1. Click the "Authorize" button in Swagger UI
 2. Enter your API key in the `X-Api-Key` field
-3. Test protected endpoints with proper authentication
+3. If your configuration uses `api_keys[].key_hash`, also send the matching `X-Key-Id` header manually from the request editor
+4. Test protected endpoints with proper authentication
 
 Example API keys are defined in `knocker.example.yaml`:
-- `CHANGE_ME_SUPER_SECRET_ADMIN_KEY` (admin access)
-- `CHANGE_ME_SECRET_PHONE_KEY` (personal access)
-- `CHANGE_ME_TEMPORARY_GUEST_KEY` (guest access)
+- `admin` / `CHANGE_ME_SUPER_SECRET_ADMIN_KEY`
+- `phone` / `CHANGE_ME_SECRET_PHONE_KEY`
+- `guest` / `CHANGE_ME_TEMPORARY_GUEST_KEY`
 
 **Security Note**: Change these default keys in production!
 
@@ -133,6 +134,7 @@ All endpoints now include properly typed request and response schemas:
 ```bash
 # Test the knock endpoint
 curl -X POST "http://localhost:8000/knock" \
+  -H "X-Key-Id: admin" \
   -H "X-Api-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{"ip_address": "192.168.1.100", "ttl": 3600}'
@@ -144,7 +146,7 @@ import requests
 
 response = requests.post(
     "http://localhost:8000/knock",
-    headers={"X-Api-Key": "your-api-key"},
+    headers={"X-Key-Id": "admin", "X-Api-Key": "your-api-key"},
     json={"ip_address": "192.168.1.100", "ttl": 3600}
 )
 data = response.json()

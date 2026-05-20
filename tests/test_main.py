@@ -139,7 +139,9 @@ def test_knock_options_cors():
     assert response.status_code == 204
     assert response.headers["Access-Control-Allow-Origin"] == "*"
     assert response.headers["Access-Control-Allow-Methods"] == "POST, OPTIONS"
-    assert response.headers["Access-Control-Allow-Headers"] == "X-Api-Key, Content-Type"
+    assert response.headers["Access-Control-Allow-Headers"] == (
+        "X-Api-Key, X-Key-Id, X-Knock-Nonce, X-Knock-Timestamp, Content-Type"
+    )
 
 def test_knock_post_cors_header():
     """POST /knock should include Access-Control-Allow-Origin header."""

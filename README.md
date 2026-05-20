@@ -113,8 +113,7 @@ Caddy has the `forward_auth` directive to check connections using an auth endpoi
 # It points to the knocker service using Docker's internal DNS.
 (knocker_auth) {
   forward_auth knocker:8000 {
-    uri /verify?
-    copy_headers X-Forwarded-For
+    uri /verify
   }
 }
 
@@ -226,6 +225,8 @@ This endpoint validates an API key and whitelists an IP.
 
 - **Headers**:
     - `X-Api-Key`: Your secret API key.
+    - `X-Key-Id`: Optional key identifier. Recommended when using `api_keys[].key_hash`.
+    - `X-Knock-Nonce` and `X-Knock-Timestamp`: Required only when `security.replay_protection.enabled: true`.
 
 - **Body (Optional)**:
     - To whitelist a remote IP/CIDR (requires `allow_remote_whitelist: true`):
@@ -236,6 +237,14 @@ This endpoint validates an API key and whitelists an IP.
 - **Example (Whitelisting your own IP)**:
     ```bash
     curl -i -H "X-Api-Key: YOUR_SECRET_KEY" https://knock.your-domain.com/knock
+    ```
+
+- **Example (Using hashed key config)**:
+    ```bash
+    curl -i \
+      -H "X-Key-Id: phone" \
+      -H "X-Api-Key: YOUR_SECRET_KEY" \
+      https://knock.your-domain.com/knock
     ```
 
 - **Success Response (`200 OK`)**:
@@ -249,7 +258,9 @@ This endpoint validates an API key and whitelists an IP.
 
 ### `/verify` (GET)
 
-This endpoint is used by Caddy's `forward_auth` to check if the client's IP is whitelisted. It returns `200 OK` on success and `401 Unauthorized` on failure.
+This endpoint is used by Caddy's `forward_auth` to check if the client's IP is whitelisted. It returns `200 OK` on success and `401 Unauthorized` on failure. `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Uri` are only trusted when the request originates from `server.trusted_proxies`.
+
+Caddy's `forward_auth` already forwards the relevant `X-Forwarded-*` request headers to Knocker. The `copy_headers` subdirective is only needed when you want to copy headers from Knocker's auth response back onto the original upstream request.
 
 ## Tests
 The project includes a full test suite
@@ -264,7 +275,7 @@ To run the tests locally:
 
 2.  **Run Pytest**:
     ```bash
-    python3 -m pytest
+    PYTHONPATH=src python3 -m pytest
     ```
 
 ### Integration Tests

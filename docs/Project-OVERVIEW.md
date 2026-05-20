@@ -71,8 +71,7 @@ To protect your services, you will use Caddy's `forward_auth` directive.
 # It points to the knocker service using Docker's internal DNS.
 (knocker_auth) {
   forward_auth knocker:8000 {
-    uri /verify?
-    copy_headers X-Forwarded-For
+    uri /verify
   }
 }
 
@@ -191,6 +190,7 @@ This endpoint validates an API key and whitelists an IP.
 
 *   **Headers**:
     *   `X-Api-Key`: Your secret API key.
+    *   `X-Key-Id`: Optional key identifier for hashed API keys.
 
 *   **Body (Optional)**:
     *   To whitelist a remote IP/CIDR (requires `allow_remote_whitelist: true`):
@@ -200,7 +200,7 @@ This endpoint validates an API key and whitelists an IP.
 
 *   **Example (Whitelisting your own IP)**:
     ```bash
-    curl -i -H "X-Api-Key: YOUR_SECRET_KEY" https://knock.your-domain.com/knock
+    curl -i -H "X-Key-Id: admin" -H "X-Api-Key: YOUR_SECRET_KEY" https://knock.your-domain.com/knock
     ```
 
 *   **Success Response (`200 OK`)**:
@@ -216,6 +216,8 @@ This endpoint validates an API key and whitelists an IP.
 
 This endpoint is used by Caddy's `forward_auth` to check if the client's IP is whitelisted. It returns `200 OK` on success and `401 Unauthorized` on failure.
 
+With Caddy, the original request metadata is already forwarded as `X-Forwarded-*` headers to the auth backend. You only need `copy_headers` if you want Knocker to return headers that should be copied onto the protected upstream request.
+
 ## Tests
 The project includes a full test suite
 
@@ -229,7 +231,8 @@ To run the tests locally:
 
 2.  **Run Pytest**:
     ```bash
-    python3 -m pytest
+    PYTHONPATH=src python3 -m pytest
+    ```
 
 ### Integration Tests
 There's a dev environment under [dev](./dev/), with bash scripts for integrations tests with caddy and a separate one with firewalld.

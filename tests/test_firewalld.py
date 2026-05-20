@@ -110,7 +110,7 @@ class TestFirewalldIntegrationInit:
                 "monitored_ips": ["192.168.1.1"]  # Missing /32
             }
         }
-        with pytest.raises(ValueError, match="IPv4 address.*must include network mask"):
+        with pytest.raises(ValueError, match="explicit network mask"):
             firewalld.FirewalldIntegration(settings)
     
     def test_cidr_validation_ipv6_missing_mask(self):
@@ -121,7 +121,7 @@ class TestFirewalldIntegrationInit:
                 "monitored_ips": ["2001:db8::1"]  # Missing /128
             }
         }
-        with pytest.raises(ValueError, match="IPv6 address.*must include network mask"):
+        with pytest.raises(ValueError, match="explicit network mask"):
             firewalld.FirewalldIntegration(settings)
     
     def test_cidr_validation_invalid_ip(self):
@@ -915,7 +915,7 @@ class TestSecurityAndValidation:
     @patch.object(firewalld.FirewalldIntegration, '_run_firewall_cmd')
     @patch('time.time')
     def test_zone_name_injection_protection(self, mock_time, mock_cmd, mock_available):
-        """Test that zone names are handled safely (passed as-is to subprocess)."""
+        """Invalid zone names should be rejected before subprocess execution."""
         mock_available.return_value = True
         mock_time.return_value = 1000
         mock_cmd.return_value = (True, "", "")
@@ -929,15 +929,10 @@ class TestSecurityAndValidation:
             }
         }
         
-        integration = firewalld.FirewalldIntegration(malicious_settings)
-        result = integration.add_whitelist_rule("192.168.1.1", 1600)
-        
-        # Should succeed because valid IP and subprocess handles escaping
-        assert result is True
-        
-        # Verify zone name is passed as-is (subprocess handles escaping)
-        call_args = mock_cmd.call_args[0][0]
-        assert "--zone=test; rm -rf /" in call_args
+        with pytest.raises(ValueError, match="Invalid zone_name"):
+            firewalld.FirewalldIntegration(malicious_settings)
+
+        mock_cmd.assert_not_called()
 
 
 if __name__ == "__main__":

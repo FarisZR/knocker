@@ -26,7 +26,7 @@ server:
 
 **Limits**:
 - IPv4: Maximum 65,536 addresses per range
-- IPv6: Minimum /96 prefix (larger ranges rejected based on prefix length)
+- IPv6: Minimum /64 prefix (broader ranges are rejected)
 
 ### 3. Path Traversal Protection (Medium)
 
@@ -63,9 +63,29 @@ server:
 ```yaml
 security:
   max_whitelist_entries: 10000  # Default limit
+  knock_rate_limit:
+    window_seconds: 60
+    successful_requests: 20
+    failed_requests: 30
 ```
 
-### 7. Secure CORS Policy (Low)
+### 7. Replay Protection (Low)
+
+**Issue**: A captured knock request could be replayed while it is still valid.
+
+**Fix**: Optional nonce-plus-timestamp validation rejects duplicate or stale knock attempts.
+
+**Configuration**:
+```yaml
+security:
+  replay_protection:
+    enabled: true
+    max_age_seconds: 300
+```
+
+When enabled, clients must send `X-Knock-Nonce` and `X-Knock-Timestamp` with each `POST /knock` request.
+
+### 8. Secure CORS Policy (Low)
 
 **Issue**: Default CORS policy used wildcard origin (`*`), allowing any website to make requests.
 
@@ -88,6 +108,7 @@ cors:
 ### 2. API Key Management
 
 - **Use strong, random API keys**: Generate cryptographically secure random strings
+- **Prefer hashed keys**: Store `api_keys[].key_hash` with `X-Key-Id` instead of plaintext `key`
 - **Principle of least privilege**: Set `allow_remote_whitelist: false` for most keys
 - **Regular rotation**: Rotate API keys periodically
 - **Separate keys for different purposes**: Use different keys for admin vs user access
@@ -119,6 +140,7 @@ The project includes comprehensive security tests in `tests/test_security_fixes.
 - Path traversal prevention
 - Information disclosure protection
 - Size limits and DoS prevention
+- Replay protection and rate limiting
 
 Run security tests with:
 ```bash
