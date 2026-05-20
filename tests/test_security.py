@@ -343,7 +343,7 @@ class TestDenialOfService:
                     except:
                         pass
                     assert False, f"Dangerous file was created at {dangerous_path}"
-            except (PermissionError, OSError, FileNotFoundError, NotADirectoryError):
+            except (PermissionError, OSError, FileNotFoundError, NotADirectoryError, ValueError):
                 # These exceptions are expected and good - the system is protecting us
                 pass
         
@@ -355,22 +355,9 @@ class TestDenialOfService:
             "security": {"trusted_proxies": ["127.0.0.1"], "excluded_paths": []}
         }
         
-        # This should work (might create directories) but should resolve to a safe location
-        try:
+        # Relative traversal outside the working tree should be rejected.
+        with pytest.raises(ValueError):
             core.save_whitelist({"127.0.0.1": int(time.time()) + 3600}, safe_settings)
-            # Clean up any files created
-            from pathlib import Path
-            path = Path(safe_traversal_path)
-            if path.exists():
-                path.unlink()
-            # Clean up any directories created during the test
-            try:
-                path.parent.rmdir()
-            except:
-                pass
-        except Exception:
-            # If it fails, that's also acceptable for security
-            pass
 
 
 class TestConfigurationSecurity:

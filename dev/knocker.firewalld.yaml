@@ -34,7 +34,7 @@ security:
 
 whitelist:
   # The path where the whitelist file will be stored.
-  # This path is relative to the container's file system.
+  # This path must stay under /data, /tmp, or the process working directory.
   # The docker-compose.yml file will mount a volume to this location.
   storage_path: "/data/whitelist.json"
 

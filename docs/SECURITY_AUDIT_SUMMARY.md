@@ -26,13 +26,13 @@
 - Proper error reporting without exposing sensitive details
 
 **Production Readiness:**
-- 163 comprehensive tests covering all security features
-- 24 new tests for production hardening scenarios
-- Zero tolerance for edge case failures
+- Automated tests cover the security features and production hardening paths
+- Regression coverage protects both API behavior and whitelist persistence logic
+- Edge-case validation is part of the regular test suite
 
 ## Overview
 
-A comprehensive security audit was performed on the Caddy Knocker project from an offensive security perspective. This audit identified 7 security vulnerabilities ranging from Critical to Low severity, all of which have been successfully remediated.
+A comprehensive security audit was performed on the Caddy Knocker project from an offensive security perspective. The current hardening work addresses 9 security vulnerabilities ranging from Critical to Low severity, all of which have been successfully remediated.
 
 ## Vulnerabilities Identified and Fixed
 
@@ -66,7 +66,17 @@ A comprehensive security audit was performed on the Caddy Knocker project from a
 - **Fix**: Added configurable size limits with automatic cleanup
 - **Test**: Verified size limits are enforced
 
-### 7. Insecure Default CORS Policy (Low)
+### 7. Whitelist Storage Path Validation (Low)
+- **Impact**: A hostile configuration could point whitelist persistence at an unexpected path on disk
+- **Fix**: Storage paths are normalized with `realpath()` and constrained to the working tree, `/data`, or `/tmp`
+- **Test**: Added storage path acceptance and rejection cases, including traversal attempts
+
+### 8. Replay Protection (Low)
+- **Impact**: A captured knock request could be replayed while it remains valid
+- **Fix**: Optional nonce-plus-timestamp validation rejects duplicate and stale knock attempts
+- **Test**: Replay protection cases are covered by the security-focused test suite
+
+### 9. Insecure Default CORS Policy (Low)
 - **Impact**: Wildcard CORS policy allows any origin
 - **Fix**: Updated documentation to encourage explicit origins
 - **Test**: Verified configuration options work correctly
@@ -85,10 +95,9 @@ A comprehensive security audit was performed on the Caddy Knocker project from a
 
 ## Test Coverage
 
-- **69 total tests** across all test files
-- **40 regression tests** ensure existing functionality works
-- **16 security fix tests** validate that protections work correctly
-- **13 vulnerability tests** (5 now fail as expected, confirming fixes work)
+- The full suite currently collects 191 tests, with 188 passing and 3 skipped in this workspace
+- Coverage includes core whitelist behavior, FastAPI request handling, firewalld integration, and security regressions
+- Storage path validation is exercised with accepted paths, suffix checks, and traversal rejection cases
 
 ## Backward Compatibility
 

@@ -69,7 +69,18 @@ security:
     failed_requests: 30
 ```
 
-### 7. Replay Protection (Low)
+### 7. Whitelist Storage Path Validation (Low)
+
+**Issue**: A hostile configuration could point whitelist persistence at an unexpected path on disk.
+
+**Fix**: Whitelist storage is normalized with `realpath` and constrained to known-safe roots before any file operation.
+
+**Allowed roots**:
+- The current working directory
+- `/data`
+- `/tmp`
+
+### 8. Replay Protection (Low)
 
 **Issue**: A captured knock request could be replayed while it is still valid.
 
@@ -85,7 +96,7 @@ security:
 
 When enabled, clients must send `X-Knock-Nonce` and `X-Knock-Timestamp` with each `POST /knock` request.
 
-### 8. Secure CORS Policy (Low)
+### 9. Secure CORS Policy (Low)
 
 **Issue**: Default CORS policy used wildcard origin (`*`), allowing any website to make requests.
 
@@ -160,7 +171,7 @@ If you discover security vulnerabilities not covered by these protections:
 
 This security audit identified and fixed multiple vulnerabilities:
 
-- **7 security issues** ranging from Critical to Low severity
+- **9 security issues** ranging from Critical to Low severity
 - **100% of identified vulnerabilities** have been addressed
 - **Comprehensive test coverage** added for all security controls
 - **Documentation** updated with security best practices

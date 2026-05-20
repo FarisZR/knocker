@@ -36,6 +36,31 @@ def cleanup_whitelist(test_settings):
 
 class TestInputValidation:
     """Test input validation for add_ip_to_whitelist."""
+
+    def test_accept_valid_storage_path_in_worktree(self, test_settings):
+        settings = {"whitelist": {"storage_path": "test_validation_whitelist.json"}}
+        path = core.get_whitelist_storage_path(settings)
+        assert path == (Path.cwd() / "test_validation_whitelist.json").resolve()
+
+    def test_accept_valid_storage_path_in_tmp(self):
+        settings = {"whitelist": {"storage_path": "/tmp/test_validation_whitelist.json"}}
+        path = core.get_whitelist_storage_path(settings)
+        assert path == Path("/tmp/test_validation_whitelist.json")
+
+    def test_reject_storage_path_outside_allowed_roots(self):
+        settings = {"whitelist": {"storage_path": "/etc/test_validation_whitelist.json"}}
+        with pytest.raises(ValueError, match="must stay within"):
+            core.get_whitelist_storage_path(settings)
+
+    def test_reject_storage_path_traversal(self):
+        settings = {"whitelist": {"storage_path": "../../escape.json"}}
+        with pytest.raises(ValueError, match="must stay within"):
+            core.get_whitelist_storage_path(settings)
+
+    def test_reject_storage_path_with_wrong_suffix(self):
+        settings = {"whitelist": {"storage_path": "/tmp/test_validation_whitelist.txt"}}
+        with pytest.raises(ValueError, match="must use one of these suffixes"):
+            core.get_whitelist_storage_path(settings)
     
     def test_reject_invalid_ip_address(self, test_settings):
         """Invalid IP addresses should be rejected."""

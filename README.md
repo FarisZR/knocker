@@ -83,6 +83,7 @@ Knocker provides different image tags for different use cases:
     - Rename `knocker.example.yaml` to `knocker.yaml`.
     - **Crucially, change the default API keys** in `knocker.yaml` to your own secure, random strings.
     - Review the `trusted_proxies` list in `knocker.yaml`, they should match the subnet of the reverse proxy's network (`docker network inspect xxx`)
+    - Keep `whitelist.storage_path` under the app working directory, `/data`, or `/tmp`.
     - (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
 
 2.  **Run the Service**:

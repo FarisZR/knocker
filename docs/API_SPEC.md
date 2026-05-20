@@ -114,7 +114,7 @@ This endpoint is used to verify the operational status of the Knocker service.
     - **`port`** (integer, required): The port to listen on.
     - **`trusted_proxies`** (array of strings, required): A list of trusted proxy IPs/CIDRs.
 - **`whitelist`** (object, required): Whitelist settings.
-    - **`storage_path`** (string, required): Path to the whitelist JSON file.
+    - **`storage_path`** (string, required): Path to the whitelist JSON file. Must stay under the process working directory, `/data`, or `/tmp`.
     - **`cleanup_interval_seconds`** (integer, optional): Background cleanup cadence for expired whitelist entries. Defaults to `60`.
 - **`api_keys`** (array of objects, required): A list of API key configurations.
     - **`id`** (string, optional): Stable identifier used with `X-Key-Id`.

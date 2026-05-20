@@ -1,0 +1,49 @@
+services:
+  caddy:
+    image: caddy:alpine
+    restart: unless-stopped
+    ports:
+      - "18080:80"
+      - "18443:443"
+      - "18443:443/udp"
+    networks:
+      - caddy_net
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--watch"]
+    depends_on:
+      - knocker
+
+  knocker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - caddy_net
+    ports:
+      - "8000:8000"
+    environment:
+      - KNOCKER_CONFIG_PATH=/app/knocker.yaml
+    volumes:
+      - ./knocker.firewalld.yaml:/app/knocker.yaml:ro
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+    user: "0:0"
+    cap_add:
+      - NET_ADMIN
+
+networks:
+  caddy_net:
+    enable_ipv6: true
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.29.238.0/24
+        - subnet: fd00:dead:c0de::/64
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -27,10 +27,70 @@ _NONCE_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _ZONE_NAME_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 
 
+def _allowed_whitelist_storage_roots() -> Tuple[str, ...]:
+    roots: list[str] = []
+    seen: set[str] = set()
+    for candidate in (os.getcwd(), "/data", "/tmp"):
+        resolved = os.path.realpath(candidate)
+        if resolved in seen:
+            continue
+        roots.append(resolved)
+        seen.add(resolved)
+    return tuple(roots)
+
+
+def validate_whitelist_storage_path(
+    path_value: Union[str, os.PathLike[str]],
+    *,
+    allowed_suffixes: Tuple[str, ...] = (".json",),
+) -> Path:
+    """Restrict whitelist storage to known-safe roots and file types."""
+    try:
+        raw_path = os.fspath(path_value)
+    except TypeError as exc:
+        raise ValueError("whitelist.storage_path must be a non-empty string") from exc
+
+    if not isinstance(raw_path, str) or not raw_path:
+        raise ValueError("whitelist.storage_path must be a non-empty string")
+    if "\x00" in raw_path:
+        raise ValueError("whitelist.storage_path contains invalid characters")
+    if not any(raw_path.endswith(suffix) for suffix in allowed_suffixes):
+        allowed = ", ".join(allowed_suffixes)
+        raise ValueError(f"whitelist.storage_path must use one of these suffixes: {allowed}")
+
+    joined_path = raw_path if os.path.isabs(raw_path) else os.path.join(os.getcwd(), raw_path)
+    resolved_path = os.path.realpath(joined_path)
+    allowed_roots = _allowed_whitelist_storage_roots()
+    if not any(
+        resolved_path == root or resolved_path.startswith(f"{root}{os.sep}")
+        for root in allowed_roots
+    ):
+        allowed = ", ".join(allowed_roots)
+        raise ValueError(
+            f"whitelist.storage_path must stay within one of these roots: {allowed}"
+        )
+
+    return Path(resolved_path)
+
+
+def get_whitelist_storage_path(settings: Dict[str, Any]) -> Path:
+    whitelist_settings = settings.setdefault("whitelist", {})
+    if not isinstance(whitelist_settings, dict):
+        raise ValueError("whitelist configuration must be a mapping")
+
+    storage_path = validate_whitelist_storage_path(whitelist_settings.get("storage_path", "whitelist.json"))
+    whitelist_settings["storage_path"] = str(storage_path)
+    return storage_path
+
+
 @contextmanager
 def _interprocess_whitelist_lock(whitelist_path: Path):
     """Hold a cross-process lock for whitelist mutations."""
-    lock_file_path = whitelist_path.with_suffix(".lock")
+    whitelist_path = validate_whitelist_storage_path(whitelist_path)
+    lock_file_path = validate_whitelist_storage_path(
+        whitelist_path.with_suffix(".lock"),
+        allowed_suffixes=(".lock",),
+    )
     lock_file_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_file_path.open("w", encoding="utf-8") as lock_file:
         try:
@@ -208,6 +268,7 @@ def _limit_whitelist_entries(whitelist: Dict[str, int], max_entries: int) -> Dic
 
 
 def _read_whitelist_file(whitelist_path: Path) -> Dict[str, int]:
+    whitelist_path = validate_whitelist_storage_path(whitelist_path)
     if not whitelist_path.exists():
         return {}
 
@@ -232,8 +293,12 @@ def _read_whitelist_file(whitelist_path: Path) -> Dict[str, int]:
 
 
 def _write_whitelist_file(whitelist_path: Path, whitelist: Dict[str, int]) -> None:
+    whitelist_path = validate_whitelist_storage_path(whitelist_path)
     whitelist_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = whitelist_path.with_suffix(".tmp")
+    temp_path = validate_whitelist_storage_path(
+        whitelist_path.with_suffix(".tmp"),
+        allowed_suffixes=(".tmp",),
+    )
     try:
         with temp_path.open("w", encoding="utf-8") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
@@ -259,6 +324,7 @@ class WhitelistStore:
     _pending_compaction: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
+        self.storage_path = validate_whitelist_storage_path(self.storage_path)
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         if self.storage_path.exists():
             if not os.access(self.storage_path, os.R_OK | os.W_OK):
@@ -330,14 +396,14 @@ class WhitelistStore:
 
 def load_whitelist(settings: Dict[str, Any]) -> Dict[str, int]:
     """Load the persisted whitelist from disk."""
-    path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+    path = get_whitelist_storage_path(settings)
     with _whitelist_lock:
         return _read_whitelist_file(path)
 
 
 def save_whitelist(whitelist: Dict[str, int], settings: Dict[str, Any]):
     """Persist the whitelist to disk and refresh in-memory state when available."""
-    path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+    path = get_whitelist_storage_path(settings)
     max_entries = settings.get("security", {}).get("max_whitelist_entries", 10000)
     with _whitelist_lock:
         normalized, _ = _normalize_serialized_whitelist(whitelist, drop_expired=False)
@@ -356,7 +422,7 @@ def add_ip_to_whitelist(ip_or_cidr: str, expiry_time: int, settings: Dict[str, A
         runtime_state.whitelist.add(ip_or_cidr, expiry_time)
         return
 
-    path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+    path = get_whitelist_storage_path(settings)
     max_entries = settings.get("security", {}).get("max_whitelist_entries", 10000)
     if not is_valid_ip_or_cidr(ip_or_cidr):
         raise ValueError(f"Invalid IP address or CIDR notation: {ip_or_cidr}")
@@ -382,7 +448,7 @@ def cleanup_expired_ips(settings: Dict[str, Any]):
         runtime_state.whitelist.compact_expired()
         return
 
-    path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+    path = get_whitelist_storage_path(settings)
     with _whitelist_lock:
         with _interprocess_whitelist_lock(path):
             persisted = _read_whitelist_file(path)
@@ -913,7 +979,7 @@ def ensure_runtime_state(settings: Dict[str, Any]) -> RuntimeState:
 
     _validate_firewalld_config(settings)
 
-    storage_path = Path(whitelist_settings.get("storage_path", "whitelist.json"))
+    storage_path = get_whitelist_storage_path(settings)
     max_entries = int(security_settings.get("max_whitelist_entries", 10000))
     if max_entries <= 0:
         raise ValueError("security.max_whitelist_entries must be positive")
