@@ -552,11 +552,19 @@ async def knock(
     
     # Add to whitelist with firewalld integration
     # This will add firewalld rules BEFORE updating whitelist.json if firewalld is enabled
+    error_content = ErrorResponse(
+        error="Internal server error: whitelist persistence or firewall configuration failed."
+    ).model_dump()
     try:
         whitelisted = core.add_ip_to_whitelist_with_firewalld(ip_to_whitelist, expiry_time, settings)
     except Exception:
         core.release_knock_attempt(settings, rate_limit_actor, "success", success_reservation)
-        raise
+        logging.exception("Failed to whitelist %s. Request from %s rejected.", ip_to_whitelist, client_ip)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=error_content,
+            headers={"Access-Control-Allow-Origin": allowed_origin},
+        )
 
     if not whitelisted:
         core.release_knock_attempt(settings, rate_limit_actor, "success", success_reservation)
@@ -569,7 +577,7 @@ async def knock(
         logging.error(f"Failed to whitelist {ip_to_whitelist}. Request from {client_ip} rejected.")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"error": "Internal server error: whitelist persistence or firewall configuration failed."},
+            content=error_content,
             headers={"Access-Control-Allow-Origin": allowed_origin}
         )
     

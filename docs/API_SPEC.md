@@ -66,6 +66,12 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
     *   Returned if an API key without `allow_remote_whitelist` permission attempts to whitelist a specific `ip_address`.
     *   **Body**: `{"error": "string"}`
 
+*   **`500 Internal Server Error`**
+    *   Returned if whitelist persistence or firewall configuration fails.
+    *   **Headers**:
+        *   `Access-Control-Allow-Origin`: The configured allowed origin (or "*" for any).
+    *   **Body**: `{"error": "Internal server error: whitelist persistence or firewall configuration failed."}`
+
 ---
 
 ### 2. Verify
@@ -114,7 +120,7 @@ This endpoint is used to verify the operational status of the Knocker service.
     - **`port`** (integer, required): The port to listen on.
     - **`trusted_proxies`** (array of strings, required): A list of trusted proxy IPs/CIDRs.
 - **`whitelist`** (object, required): Whitelist settings.
-    - **`storage_path`** (string, required): Path to the whitelist JSON file. Must stay under the process working directory, `/data`, or `/tmp`.
+    - **`storage_path`** (string, required): Path to the whitelist JSON file. Must end with `.json` and stay under the process working directory, `/data`, or `/tmp`.
     - **`cleanup_interval_seconds`** (integer, optional): Background cleanup cadence for expired whitelist entries. Defaults to `60`.
 - **`api_keys`** (array of objects, required): A list of API key configurations.
     - **`id`** (string, optional): Stable identifier used with `X-Key-Id`.

@@ -1,5 +1,6 @@
 import pytest
 import time
+import ipaddress
 from src import core
 
 # --- Test IP/CIDR Validation ---
@@ -128,6 +129,12 @@ def test_duplicate_api_key_material_detected_across_plaintext_and_hash():
             },
         ])
 
+def test_allow_remote_whitelist_must_be_boolean():
+    with pytest.raises(ValueError, match="must define boolean allow_remote_whitelist"):
+        core.APIKeyRegistry.from_settings([
+            {"key": "admin_key", "max_ttl": 3600, "allow_remote_whitelist": "false"},
+        ])
+
 def test_rate_limiter_reservation_can_be_released():
     """A released reservation should free the success slot immediately."""
     limiter = core.SlidingWindowRateLimiter(window_seconds=60, successful_requests=1, failed_requests=1)
@@ -141,9 +148,53 @@ def test_rate_limiter_reservation_can_be_released():
 
     assert limiter.reserve("actor", "success", now=100) is not None
 
+def test_rate_limiter_prunes_stale_actor_buckets():
+    limiter = core.SlidingWindowRateLimiter(window_seconds=10, successful_requests=1, failed_requests=1)
+
+    assert limiter.reserve("actor-a", "success", now=10) is not None
+
+    assert limiter.can_allow("actor-b", "success", now=25) is True
+    assert ("success", "actor-a") not in limiter._events
+
 def test_replay_guard_prunes_using_server_receive_time():
     """Nonce reuse should be allowed once the server-side max age window has passed."""
     guard = core.ReplayGuard(enabled=True, max_age_seconds=10)
 
     assert guard.validate("actor", "nonce", "110", now=100) == (True, None)
     assert guard.validate("actor", "nonce", "111", now=111) == (True, None)
+
+def test_whitelist_store_contains_reloads_shared_state(tmp_path):
+    whitelist_path = tmp_path / "whitelist.json"
+    store = core.WhitelistStore(storage_path=whitelist_path, max_entries=10)
+    address = ipaddress.ip_address("203.0.113.10")
+    now = int(time.time())
+
+    assert store.contains(address, now=now) is False
+
+    core._write_whitelist_file(whitelist_path, {"203.0.113.10": now + 60})
+
+    assert store.contains(address, now=now) is True
+
+def test_ensure_runtime_state_is_initialized_once(tmp_path):
+    settings = {
+        "server": {"trusted_proxies": ["127.0.0.1"]},
+        "api_keys": [{"key": "admin_key", "max_ttl": 3600, "allow_remote_whitelist": True}],
+        "whitelist": {"storage_path": str(tmp_path / "whitelist.json")},
+        "security": {"always_allowed_ips": []},
+    }
+
+    states = []
+    import threading
+
+    def worker():
+        states.append(core.ensure_runtime_state(settings))
+
+    first = threading.Thread(target=worker)
+    second = threading.Thread(target=worker)
+    first.start()
+    second.start()
+    first.join()
+    second.join()
+
+    assert len(states) == 2
+    assert states[0] is states[1]

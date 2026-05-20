@@ -356,7 +356,7 @@ class TestDenialOfService:
         }
         
         # Relative traversal outside the working tree should be rejected.
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="must stay within"):
             core.save_whitelist({"127.0.0.1": int(time.time()) + 3600}, safe_settings)
 
 

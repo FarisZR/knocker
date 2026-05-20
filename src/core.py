@@ -21,6 +21,7 @@ IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
 
 _whitelist_lock = threading.RLock()
+_runtime_state_lock = threading.Lock()
 _RUNTIME_STATE_KEY = "_knocker_runtime_state"
 _API_KEY_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _NONCE_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -334,13 +335,14 @@ class WhitelistStore:
         self.reload_from_disk()
 
     def reload_from_disk(self) -> None:
-        raw = _read_whitelist_file(self.storage_path)
-        normalized, changed = _normalize_serialized_whitelist(raw, drop_expired=True)
         with self._lock:
+            raw = _read_whitelist_file(self.storage_path)
+            normalized, changed = _normalize_serialized_whitelist(raw, drop_expired=True)
             self._index = DynamicWhitelistIndex.from_serialized(normalized)
             self._pending_compaction = changed
 
     def contains(self, address: IPAddress, now: Optional[int] = None) -> bool:
+        self.reload_from_disk()
         with self._lock:
             return self._index.contains(address, now)
 
@@ -716,7 +718,11 @@ class APIKeyRegistry:
             if not isinstance(max_ttl, int) or max_ttl <= 0:
                 raise ValueError(f"API key at index {index} must define a positive integer max_ttl")
 
-            allow_remote_whitelist = bool(key_info.get("allow_remote_whitelist", False))
+            allow_remote_whitelist = key_info.get("allow_remote_whitelist", False)
+            if not isinstance(allow_remote_whitelist, bool):
+                raise ValueError(
+                    f"API key at index {index} must define boolean allow_remote_whitelist"
+                )
             name = str(key_info.get("name") or identifier or f"key-{index + 1}")
             cache_key = identifier or name or secret_fingerprint
 
@@ -766,6 +772,7 @@ class SlidingWindowRateLimiter:
     _events: Dict[Tuple[str, str], Deque[Tuple[int, int]]] = field(default_factory=lambda: defaultdict(deque))
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _token_counter: int = field(default=0, init=False)
+    _last_global_prune: int = field(default=0, init=False)
 
     @classmethod
     def from_settings(cls, security_settings: Dict[str, Any]) -> "SlidingWindowRateLimiter":
@@ -787,6 +794,21 @@ class SlidingWindowRateLimiter:
         while bucket and bucket[0][0] <= cutoff:
             bucket.popleft()
 
+    def _prune_all_buckets(self, cutoff: int, now: int) -> None:
+        if self._last_global_prune and now - self._last_global_prune < self.window_seconds:
+            return
+
+        empty_keys: list[Tuple[str, str]] = []
+        for bucket_key, bucket in self._events.items():
+            self._prune_bucket(bucket, cutoff)
+            if not bucket:
+                empty_keys.append(bucket_key)
+
+        for bucket_key in empty_keys:
+            self._events.pop(bucket_key, None)
+
+        self._last_global_prune = now
+
     def reserve(self, actor: str, outcome: str, now: Optional[int] = None) -> Optional[Tuple[int, int]]:
         limit = self.successful_requests if outcome == "success" else self.failed_requests
         timestamp = int(time.time()) if now is None else now
@@ -796,9 +818,12 @@ class SlidingWindowRateLimiter:
         cutoff = timestamp - self.window_seconds
         bucket_key = (outcome, actor)
         with self._lock:
+            self._prune_all_buckets(cutoff, timestamp)
             bucket = self._events[bucket_key]
             self._prune_bucket(bucket, cutoff)
             if len(bucket) >= limit:
+                if not bucket:
+                    self._events.pop(bucket_key, None)
                 return None
             self._token_counter += 1
             reservation = (timestamp, self._token_counter)
@@ -836,8 +861,11 @@ class SlidingWindowRateLimiter:
         cutoff = timestamp - self.window_seconds
         bucket_key = (outcome, actor)
         with self._lock:
+            self._prune_all_buckets(cutoff, timestamp)
             bucket = self._events[bucket_key]
             self._prune_bucket(bucket, cutoff)
+            if not bucket:
+                self._events.pop(bucket_key, None)
             return len(bucket) < limit
 
 
@@ -988,52 +1016,57 @@ def ensure_runtime_state(settings: Dict[str, Any]) -> RuntimeState:
     if isinstance(runtime_state, RuntimeState):
         return runtime_state
 
-    server_settings = settings.get("server", {}) or {}
-    security_settings = settings.get("security", {}) or {}
-    whitelist_settings = settings.get("whitelist", {}) or {}
+    with _runtime_state_lock:
+        runtime_state = settings.get(_RUNTIME_STATE_KEY)
+        if isinstance(runtime_state, RuntimeState):
+            return runtime_state
 
-    trusted_proxies = ParsedNetworkSet.from_entries(server_settings.get("trusted_proxies", []) or [], "trusted_proxies")
-    always_allowed = ParsedNetworkSet.from_entries(
-        security_settings.get("always_allowed_ips", []) or [],
-        "always_allowed_ips",
-    )
-    path_exclusions = PathExclusions.from_settings(security_settings)
+        server_settings = settings.get("server", {}) or {}
+        security_settings = settings.get("security", {}) or {}
+        whitelist_settings = settings.get("whitelist", {}) or {}
 
-    api_keys_config = settings.get("api_keys", []) or []
-    if not api_keys_config:
-        raise ValueError("Configuration must contain at least one API key")
-    api_keys = APIKeyRegistry.from_settings(api_keys_config)
+        trusted_proxies = ParsedNetworkSet.from_entries(server_settings.get("trusted_proxies", []) or [], "trusted_proxies")
+        always_allowed = ParsedNetworkSet.from_entries(
+            security_settings.get("always_allowed_ips", []) or [],
+            "always_allowed_ips",
+        )
+        path_exclusions = PathExclusions.from_settings(security_settings)
 
-    _validate_firewalld_config(settings)
+        api_keys_config = settings.get("api_keys", []) or []
+        if not api_keys_config:
+            raise ValueError("Configuration must contain at least one API key")
+        api_keys = APIKeyRegistry.from_settings(api_keys_config)
 
-    storage_path = get_whitelist_storage_path(settings)
-    max_entries = int(security_settings.get("max_whitelist_entries", 10000))
-    if max_entries <= 0:
-        raise ValueError("security.max_whitelist_entries must be positive")
+        _validate_firewalld_config(settings)
 
-    cleanup_interval_seconds = int(whitelist_settings.get("cleanup_interval_seconds", 60))
-    if cleanup_interval_seconds <= 0:
-        raise ValueError("whitelist.cleanup_interval_seconds must be positive")
+        storage_path = get_whitelist_storage_path(settings)
+        max_entries = int(security_settings.get("max_whitelist_entries", 10000))
+        if max_entries <= 0:
+            raise ValueError("security.max_whitelist_entries must be positive")
 
-    runtime_state = RuntimeState(
-        trusted_proxies=trusted_proxies,
-        always_allowed_ips=always_allowed,
-        path_exclusions=path_exclusions,
-        api_keys=api_keys,
-        whitelist=WhitelistStore(storage_path=storage_path, max_entries=max_entries),
-        rate_limiter=SlidingWindowRateLimiter.from_settings(security_settings),
-        replay_guard=ReplayGuard.from_settings(security_settings),
-        cleanup_interval_seconds=cleanup_interval_seconds,
-    )
+        cleanup_interval_seconds = int(whitelist_settings.get("cleanup_interval_seconds", 60))
+        if cleanup_interval_seconds <= 0:
+            raise ValueError("whitelist.cleanup_interval_seconds must be positive")
 
-    settings[_RUNTIME_STATE_KEY] = runtime_state
-
-    if any(record.secret_kind == "plaintext" for record in api_keys.records):
-        logging.getLogger(__name__).warning(
-            "Plaintext API keys are deprecated. Prefer api_keys[].key_hash with X-Key-Id."
+        runtime_state = RuntimeState(
+            trusted_proxies=trusted_proxies,
+            always_allowed_ips=always_allowed,
+            path_exclusions=path_exclusions,
+            api_keys=api_keys,
+            whitelist=WhitelistStore(storage_path=storage_path, max_entries=max_entries),
+            rate_limiter=SlidingWindowRateLimiter.from_settings(security_settings),
+            replay_guard=ReplayGuard.from_settings(security_settings),
+            cleanup_interval_seconds=cleanup_interval_seconds,
         )
 
-    return runtime_state
+        settings[_RUNTIME_STATE_KEY] = runtime_state
+
+        if any(record.secret_kind == "plaintext" for record in api_keys.records):
+            logging.getLogger(__name__).warning(
+                "Plaintext API keys are deprecated. Prefer api_keys[].key_hash with X-Key-Id."
+            )
+
+        return runtime_state
 
 
 def start_runtime_state(settings: Dict[str, Any]) -> RuntimeState:

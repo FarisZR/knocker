@@ -151,6 +151,23 @@ def test_knock_options_cors():
         "Content-Type",
     }
 
+def test_knock_firewalld_exception_returns_json_error(monkeypatch):
+    def fake_add(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("src.main.core.add_ip_to_whitelist_with_firewalld", fake_add)
+
+    response = client.post(
+        "/knock",
+        headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"},
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": "Internal server error: whitelist persistence or firewall configuration failed."
+    }
+    assert response.headers["Access-Control-Allow-Origin"] == "*"
+
 def test_knock_success_rate_limit_is_atomic(monkeypatch, mock_settings):
     """Concurrent successes should not bypass the configured success limit."""
     import threading

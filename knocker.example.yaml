@@ -45,7 +45,8 @@ security:
 
 whitelist:
   # The path where the whitelist file will be stored.
-  # This path must stay under /data, /tmp, or the process working directory.
+  # Use a .json file under /data, /tmp, or the process working directory.
+  # Set KNOCKER_CONFIG_PATH to your real knocker.yaml; this example file is the schema reference.
   # The docker-compose.yml file will mount a volume to this location.
   storage_path: "/data/whitelist.json"
   cleanup_interval_seconds: 60
