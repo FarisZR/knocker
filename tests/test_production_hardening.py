@@ -162,10 +162,11 @@ class TestTimingAttackResistance:
         assert core.is_valid_api_key("", test_settings) == False
         assert core.is_valid_api_key(None, test_settings) == False
     
-    def test_empty_api_keys_list_handled(self):
-        """Empty API keys list should be handled gracefully."""
+    def test_empty_api_keys_list_raises_configuration_error(self):
+        """Empty API keys list should surface a configuration error."""
         settings = {"api_keys": []}
-        assert core.is_valid_api_key("any_key", settings) == False
+        with pytest.raises(ValueError, match="Configuration must contain at least one API key"):
+            core.is_valid_api_key("any_key", settings)
 
 
 class TestTTLEdgeCases:

@@ -323,6 +323,7 @@ class WhitelistStore:
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False)
     _index: DynamicWhitelistIndex = field(default_factory=DynamicWhitelistIndex, init=False)
     _pending_compaction: bool = field(default=False, init=False)
+    _storage_version: Optional[Tuple[int, int, int]] = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self.storage_path = validate_whitelist_storage_path(self.storage_path)
@@ -334,16 +335,29 @@ class WhitelistStore:
             raise ValueError(f"Whitelist storage directory is not accessible: {self.storage_path.parent}")
         self.reload_from_disk()
 
+    def _storage_version_token(self) -> Optional[Tuple[int, int, int]]:
+        try:
+            stat_result = self.storage_path.stat()
+        except OSError:
+            return None
+        return (stat_result.st_mtime_ns, stat_result.st_size, stat_result.st_ino)
+
+    def _reload_from_disk_locked(self, storage_version: Optional[Tuple[int, int, int]] = None) -> None:
+        raw = _read_whitelist_file(self.storage_path)
+        normalized, changed = _normalize_serialized_whitelist(raw, drop_expired=True)
+        self._index = DynamicWhitelistIndex.from_serialized(normalized)
+        self._pending_compaction = changed
+        self._storage_version = storage_version if storage_version is not None else self._storage_version_token()
+
     def reload_from_disk(self) -> None:
         with self._lock:
-            raw = _read_whitelist_file(self.storage_path)
-            normalized, changed = _normalize_serialized_whitelist(raw, drop_expired=True)
-            self._index = DynamicWhitelistIndex.from_serialized(normalized)
-            self._pending_compaction = changed
+            self._reload_from_disk_locked()
 
     def contains(self, address: IPAddress, now: Optional[int] = None) -> bool:
-        self.reload_from_disk()
         with self._lock:
+            current_version = self._storage_version_token()
+            if current_version != self._storage_version:
+                self._reload_from_disk_locked(current_version)
             return self._index.contains(address, now)
 
     def add(self, ip_or_cidr: str, expiry_time: int) -> None:
@@ -364,6 +378,7 @@ class WhitelistStore:
                 _write_whitelist_file(self.storage_path, normalized)
                 self._index = DynamicWhitelistIndex.from_serialized(normalized)
                 self._pending_compaction = False
+                self._storage_version = self._storage_version_token()
 
     def replace(self, whitelist: Dict[str, Any]) -> Dict[str, int]:
         now = int(time.time())
@@ -375,6 +390,7 @@ class WhitelistStore:
                 active, changed = _normalize_serialized_whitelist(normalized, drop_expired=True, now=now)
                 self._index = DynamicWhitelistIndex.from_serialized(active)
                 self._pending_compaction = changed
+                self._storage_version = self._storage_version_token()
         return normalized
 
     def compact_expired(self, now: Optional[int] = None) -> bool:
@@ -389,6 +405,7 @@ class WhitelistStore:
                 _write_whitelist_file(self.storage_path, after)
             self._index = DynamicWhitelistIndex.from_serialized(after)
             self._pending_compaction = False
+            self._storage_version = self._storage_version_token()
             return True
 
     def active_snapshot(self) -> Dict[str, int]:
@@ -1087,33 +1104,21 @@ def get_api_key_record(api_key: str, settings: Dict[str, Any], key_id: Optional[
 
 
 def is_valid_api_key(api_key: str, settings: Dict[str, Any], key_id: Optional[str] = None) -> bool:
-    try:
-        return get_api_key_record(api_key, settings, key_id) is not None
-    except ValueError:
-        return False
+    return get_api_key_record(api_key, settings, key_id) is not None
 
 
 def can_whitelist_remote(api_key: str, settings: Dict[str, Any], key_id: Optional[str] = None) -> bool:
-    try:
-        record = get_api_key_record(api_key, settings, key_id)
-    except ValueError:
-        return False
+    record = get_api_key_record(api_key, settings, key_id)
     return bool(record and record.allow_remote_whitelist)
 
 
 def get_max_ttl_for_key(api_key: str, settings: Dict[str, Any], key_id: Optional[str] = None) -> int:
-    try:
-        record = get_api_key_record(api_key, settings, key_id)
-    except ValueError:
-        return 0
+    record = get_api_key_record(api_key, settings, key_id)
     return record.max_ttl if record else 0
 
 
 def get_api_key_name(api_key: str, settings: Dict[str, Any], key_id: Optional[str] = None) -> str:
-    try:
-        record = get_api_key_record(api_key, settings, key_id)
-    except ValueError:
-        return ""
+    record = get_api_key_record(api_key, settings, key_id)
     return record.name if record else ""
 
 

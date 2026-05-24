@@ -175,6 +175,33 @@ def test_whitelist_store_contains_reloads_shared_state(tmp_path):
 
     assert store.contains(address, now=now) is True
 
+def test_whitelist_store_contains_skips_reload_when_storage_unchanged(tmp_path, monkeypatch):
+    whitelist_path = tmp_path / "whitelist.json"
+    store = core.WhitelistStore(storage_path=whitelist_path, max_entries=10)
+    address = ipaddress.ip_address("203.0.113.10")
+
+    def unexpected_read(_: object) -> dict[str, int]:
+        pytest.fail("contains reloaded whitelist without a storage change")
+
+    monkeypatch.setattr(core, "_read_whitelist_file", unexpected_read)
+
+    assert store.contains(address, now=int(time.time())) is False
+    assert store.contains(address, now=int(time.time())) is False
+
+
+@pytest.mark.parametrize(
+    "helper, expected_message",
+    [
+        (core.is_valid_api_key, "Configuration must contain at least one API key"),
+        (core.can_whitelist_remote, "Configuration must contain at least one API key"),
+        (core.get_max_ttl_for_key, "Configuration must contain at least one API key"),
+        (core.get_api_key_name, "Configuration must contain at least one API key"),
+    ],
+)
+def test_api_key_helpers_propagate_configuration_errors(helper, expected_message):
+    with pytest.raises(ValueError, match=expected_message):
+        helper("any_key", {"api_keys": []})
+
 def test_ensure_runtime_state_is_initialized_once(tmp_path):
     settings = {
         "server": {"trusted_proxies": ["127.0.0.1"]},
