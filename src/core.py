@@ -32,6 +32,8 @@ def _allowed_whitelist_storage_roots() -> Tuple[str, ...]:
     seen: set[str] = set()
     for candidate in (os.getcwd(), "/data", "/tmp"):
         resolved = os.path.realpath(candidate)
+        if resolved == os.sep:
+            continue
         if resolved in seen:
             continue
         roots.append(resolved)

@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from src.main import app, get_settings
+from src.main import app, get_client_ip_dependency, get_settings
 
 # --- Test Fixtures ---
 
@@ -85,6 +85,25 @@ def test_knock_fail_invalid_api_key():
     """A request with a bad API key should be rejected."""
     response = client.post("/knock", headers={"X-Api-Key": "INVALID_KEY", "X-Forwarded-For": "1.2.3.4"})
     assert response.status_code == 401
+
+def test_knock_unresolved_client_ip_is_rate_limited(mock_settings):
+    """Requests without a resolved client IP should eventually hit the failure limiter."""
+    mock_settings["server"]["trusted_proxies"] = []
+    mock_settings["security"]["knock_rate_limit"] = {
+        "window_seconds": 60,
+        "successful_requests": 20,
+        "failed_requests": 1,
+    }
+
+    app.dependency_overrides[get_client_ip_dependency] = lambda: None
+
+    first = client.post("/knock", headers={"X-Api-Key": "USER_KEY_1"})
+    second = client.post("/knock", headers={"X-Api-Key": "USER_KEY_1"})
+
+    assert first.status_code == 400
+    assert first.json() == {"error": "Could not determine client IP."}
+    assert second.status_code == 429
+    assert second.json() == {"error": "Too many knock attempts."}
 
 def test_knock_fail_invalid_ip_in_body():
     """A request with a malformed IP in the body should be rejected."""

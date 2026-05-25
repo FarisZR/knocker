@@ -57,6 +57,13 @@ class TestInputValidation:
         with pytest.raises(ValueError, match="must stay within"):
             core.get_whitelist_storage_path(settings)
 
+    def test_reject_storage_path_when_cwd_is_root(self, monkeypatch):
+        monkeypatch.setattr(core.os, "getcwd", lambda: "/")
+        settings = {"whitelist": {"storage_path": "/etc/test_validation_whitelist.json"}}
+
+        with pytest.raises(ValueError, match="must stay within"):
+            core.get_whitelist_storage_path(settings)
+
     def test_reject_storage_path_with_wrong_suffix(self):
         settings = {"whitelist": {"storage_path": "/tmp/test_validation_whitelist.txt"}}
         with pytest.raises(ValueError, match="must use one of these suffixes"):

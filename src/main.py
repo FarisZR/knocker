@@ -366,7 +366,12 @@ async def knock(
 
     if not client_ip:
         logging.warning("Could not determine client IP.")
-        core.record_knock_attempt(settings, rate_limit_actor, "failure")
+        if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"error": "Too many knock attempts."},
+                headers={"Access-Control-Allow-Origin": allowed_origin},
+            )
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"error": "Could not determine client IP."},
