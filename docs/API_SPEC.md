@@ -14,7 +14,6 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
     *   `X-Api-Key` (string, **required** for POST): The secret API key for authentication.
     *   `X-Key-Id` (string, optional): Recommended when the configured key uses `key_hash`.
     *   `X-Forwarded-For` (string, proxy-provided): The client's real IP address. This is only trusted when the direct peer is listed in `server.trusted_proxies`.
-    *   `X-Knock-Nonce` and `X-Knock-Timestamp` (strings, conditional): Required when replay protection is enabled.
 *   **Request Body** (optional, JSON):
     ```json
     {
@@ -48,7 +47,7 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
     *   **Headers**:
         *   `Access-Control-Allow-Origin`: The configured allowed origin (or "*" for any).
         *   `Access-Control-Allow-Methods`: "POST, OPTIONS"
-        *   `Access-Control-Allow-Headers`: "X-Api-Key, X-Key-Id, X-Knock-Nonce, X-Knock-Timestamp, Content-Type"
+        *   `Access-Control-Allow-Headers`: "X-Api-Key, X-Key-Id, Content-Type"
 
 *   **`400 Bad Request`**
     *   Returned if the client IP cannot be determined or if the `ip_address` in the request body is malformed.
@@ -137,6 +136,5 @@ This endpoint is used to verify the operational status of the Knocker service.
     - **`excluded_paths_by_host`** (mapping, optional): Host-specific excluded path prefixes, evaluated only for trusted forwarded host metadata.
     - **`max_whitelist_entries`** (integer, optional): Maximum retained whitelist entries. Defaults to `10000`.
     - **`knock_rate_limit`** (object, optional): Sliding-window rate limits with `window_seconds`, `successful_requests`, and `failed_requests`.
-    - **`replay_protection`** (object, optional): Replay protection settings with `enabled` and `max_age_seconds`.
 - **`cors`** (object, optional): CORS settings for the `/knock` endpoint.
     - **`allowed_origin`** (string, optional): The allowed origin for CORS requests. Defaults to "*" (any origin). Set to your web app's origin (e.g., "https://your-web-app.com") for security.

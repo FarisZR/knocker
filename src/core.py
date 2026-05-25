@@ -24,7 +24,6 @@ _whitelist_lock = threading.RLock()
 _runtime_state_lock = threading.Lock()
 _RUNTIME_STATE_KEY = "_knocker_runtime_state"
 _API_KEY_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
-_NONCE_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _ZONE_NAME_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 
 
@@ -887,61 +886,6 @@ class SlidingWindowRateLimiter:
 
 
 @dataclass
-class ReplayGuard:
-    enabled: bool
-    max_age_seconds: int
-    _entries: Dict[Tuple[str, str], int] = field(default_factory=dict)
-    _lock: threading.RLock = field(default_factory=threading.RLock)
-
-    @classmethod
-    def from_settings(cls, security_settings: Dict[str, Any]) -> "ReplayGuard":
-        config = security_settings.get("replay_protection", {}) or {}
-        enabled = bool(config.get("enabled", False))
-        max_age_seconds = int(config.get("max_age_seconds", 300))
-        if max_age_seconds <= 0:
-            raise ValueError("security.replay_protection.max_age_seconds must be positive")
-        return cls(enabled=enabled, max_age_seconds=max_age_seconds)
-
-    def validate(
-        self,
-        actor: str,
-        nonce: Optional[str],
-        timestamp: Optional[str],
-        now: Optional[int] = None,
-    ) -> Tuple[bool, Optional[str]]:
-        if not self.enabled:
-            return True, None
-
-        if not nonce or not timestamp:
-            return False, "Missing replay protection headers."
-
-        if not _NONCE_RE.fullmatch(nonce):
-            return False, "Invalid replay protection headers."
-
-        try:
-            timestamp_int = int(timestamp)
-        except (TypeError, ValueError):
-            return False, "Invalid replay protection headers."
-
-        current_time = int(time.time()) if now is None else now
-        if abs(current_time - timestamp_int) > self.max_age_seconds:
-            return False, "Replay protection timestamp expired."
-
-        key = (actor, nonce)
-        cutoff = current_time - self.max_age_seconds
-        with self._lock:
-            expired_keys = [entry for entry, seen_at in self._entries.items() if seen_at <= cutoff]
-            for entry in expired_keys:
-                self._entries.pop(entry, None)
-
-            if key in self._entries:
-                return False, "Replay detected."
-
-            self._entries[key] = current_time
-            return True, None
-
-
-@dataclass
 class RuntimeState:
     trusted_proxies: ParsedNetworkSet
     always_allowed_ips: ParsedNetworkSet
@@ -949,7 +893,6 @@ class RuntimeState:
     api_keys: APIKeyRegistry
     whitelist: WhitelistStore
     rate_limiter: SlidingWindowRateLimiter
-    replay_guard: ReplayGuard
     cleanup_interval_seconds: int
     _stop_event: threading.Event = field(default_factory=threading.Event, init=False)
     _cleanup_thread: Optional[threading.Thread] = field(default=None, init=False)
@@ -1072,7 +1015,6 @@ def ensure_runtime_state(settings: Dict[str, Any]) -> RuntimeState:
             api_keys=api_keys,
             whitelist=WhitelistStore(storage_path=storage_path, max_entries=max_entries),
             rate_limiter=SlidingWindowRateLimiter.from_settings(security_settings),
-            replay_guard=ReplayGuard.from_settings(security_settings),
             cleanup_interval_seconds=cleanup_interval_seconds,
         )
 
@@ -1165,16 +1107,6 @@ def release_knock_attempt(
 def can_record_knock_attempt(settings: Dict[str, Any], actor: str, outcome: str) -> bool:
     runtime_state = ensure_runtime_state(settings)
     return runtime_state.rate_limiter.can_allow(actor, outcome, int(time.time()))
-
-
-def validate_replay_protection(
-    settings: Dict[str, Any],
-    actor: str,
-    nonce: Optional[str],
-    timestamp: Optional[str],
-) -> Tuple[bool, Optional[str]]:
-    runtime_state = ensure_runtime_state(settings)
-    return runtime_state.replay_guard.validate(actor, nonce, timestamp, int(time.time()))
 
 
 def add_ip_to_whitelist_with_firewalld(ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]) -> bool:

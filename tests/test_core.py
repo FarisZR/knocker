@@ -156,13 +156,6 @@ def test_rate_limiter_prunes_stale_actor_buckets():
     assert limiter.can_allow("actor-b", "success", now=25) is True
     assert ("success", "actor-a") not in limiter._events
 
-def test_replay_guard_prunes_using_server_receive_time():
-    """Nonce reuse should be allowed once the server-side max age window has passed."""
-    guard = core.ReplayGuard(enabled=True, max_age_seconds=10)
-
-    assert guard.validate("actor", "nonce", "110", now=100) == (True, None)
-    assert guard.validate("actor", "nonce", "111", now=111) == (True, None)
-
 def test_whitelist_store_contains_reloads_shared_state(tmp_path):
     whitelist_path = tmp_path / "whitelist.json"
     store = core.WhitelistStore(storage_path=whitelist_path, max_entries=10)

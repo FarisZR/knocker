@@ -323,7 +323,7 @@ async def knock_options(settings: dict = Depends(get_settings)):
         headers={
             "Access-Control-Allow-Origin": allowed_origin,
             "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "X-Api-Key, X-Key-Id, X-Knock-Nonce, X-Knock-Timestamp, Content-Type",
+            "Access-Control-Allow-Headers": "X-Api-Key, X-Key-Id, Content-Type",
         }
     )
 
@@ -371,25 +371,6 @@ async def knock(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"error": "Could not determine client IP."},
             headers={"Access-Control-Allow-Origin": allowed_origin}
-        )
-
-    replay_ok, replay_error = core.validate_replay_protection(
-        settings,
-        rate_limit_actor,
-        request.headers.get("X-Knock-Nonce"),
-        request.headers.get("X-Knock-Timestamp"),
-    )
-    if not replay_ok:
-        if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-            return JSONResponse(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                content={"error": "Too many knock attempts."},
-                headers={"Access-Control-Allow-Origin": allowed_origin},
-            )
-        return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"error": replay_error},
-            headers={"Access-Control-Allow-Origin": allowed_origin},
         )
 
     api_key_record = core.get_api_key_record(api_key, settings, api_key_id)

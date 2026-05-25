@@ -32,7 +32,7 @@
 
 ## Overview
 
-A comprehensive security audit was performed on the Caddy Knocker project from an offensive security perspective. The current hardening work addresses 9 security vulnerabilities ranging from Critical to Low severity, all of which have been successfully remediated.
+A comprehensive security audit was performed on the Caddy Knocker project from an offensive security perspective. The current hardening work addresses 8 security vulnerabilities ranging from Critical to Low severity, all of which have been successfully remediated.
 
 ## Vulnerabilities Identified and Fixed
 
@@ -71,12 +71,7 @@ A comprehensive security audit was performed on the Caddy Knocker project from a
 - **Fix**: Storage paths are normalized with `realpath()` and constrained to the working tree, `/data`, or `/tmp`
 - **Test**: Added storage path acceptance and rejection cases, including traversal attempts
 
-### 8. Replay Protection (Low)
-- **Impact**: A captured knock request could be replayed while it remains valid
-- **Fix**: Optional nonce-plus-timestamp validation rejects duplicate and stale knock attempts
-- **Test**: Replay protection cases are covered by the security-focused test suite
-
-### 9. Insecure Default CORS Policy (Low)
+### 8. Insecure Default CORS Policy (Low)
 - **Impact**: Wildcard CORS policy allows any origin
 - **Fix**: Updated documentation to encourage explicit origins
 - **Test**: Verified configuration options work correctly

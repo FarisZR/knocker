@@ -17,7 +17,7 @@ If you discover a security vulnerability in Knocker, please report it privately:
 
 1. **Email the maintainer**: Create a security advisory through GitHub's private reporting feature
 2. **Provide details**: Include steps to reproduce, potential impact, and any suggested fixes
-3. **Wait for acknowledgment**: i'll try my best to replay asap
+3. **Wait for acknowledgment**: I'll respond as quickly as I can
 4. **Responsible disclosure**: Please allow me time to address the issue before public disclosure
 
 ## Security Docs

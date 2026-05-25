@@ -38,10 +38,6 @@ security:
     window_seconds: 60
     successful_requests: 20
     failed_requests: 30
-  replay_protection:
-    # Optional replay protection for browser or scripted clients.
-    enabled: false
-    max_age_seconds: 300
 
 whitelist:
   # The path where the whitelist file will be stored.

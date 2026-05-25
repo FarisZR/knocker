@@ -146,8 +146,6 @@ def test_knock_options_cors():
     assert allow_headers == {
         "X-Api-Key",
         "X-Key-Id",
-        "X-Knock-Nonce",
-        "X-Knock-Timestamp",
         "Content-Type",
     }
 

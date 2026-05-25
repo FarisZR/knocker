@@ -80,23 +80,7 @@ security:
 - `/data`
 - `/tmp`
 
-### 8. Replay Protection (Low)
-
-**Issue**: A captured knock request could be replayed while it is still valid.
-
-**Fix**: Optional nonce-plus-timestamp validation rejects duplicate or stale knock attempts.
-
-**Configuration**:
-```yaml
-security:
-  replay_protection:
-    enabled: true
-    max_age_seconds: 300
-```
-
-When enabled, clients must send `X-Knock-Nonce` and `X-Knock-Timestamp` with each `POST /knock` request.
-
-### 9. Secure CORS Policy (Low)
+### 8. Secure CORS Policy (Low)
 
 **Issue**: Default CORS policy used wildcard origin (`*`), allowing any website to make requests.
 
@@ -152,7 +136,7 @@ The project includes comprehensive security tests in `tests/test_security_fixes.
 - Path traversal prevention
 - Information disclosure protection
 - Size limits and DoS prevention
-- Replay protection and rate limiting
+- Rate limiting
 
 Run security tests with:
 ```bash

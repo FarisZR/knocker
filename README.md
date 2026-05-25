@@ -227,7 +227,6 @@ This endpoint validates an API key and whitelists an IP.
 - **Headers**:
     - `X-Api-Key`: Your secret API key.
     - `X-Key-Id`: Optional key identifier. Recommended when using `api_keys[].key_hash`.
-    - `X-Knock-Nonce` and `X-Knock-Timestamp`: Required only when `security.replay_protection.enabled: true`.
 
 - **Body (Optional)**:
     - To whitelist a remote IP/CIDR (requires `allow_remote_whitelist: true`):
