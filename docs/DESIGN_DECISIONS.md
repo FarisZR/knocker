@@ -51,3 +51,5 @@ The FastAPI entrypoint (`main.py`) supports both relative (`from . import core`)
 ### 8. Astral Python Toolchain
 
 Project dependencies and lockfile management now use uv through `pyproject.toml` and `uv.lock`. Ruff is the canonical formatter/import linter, and Ty is the project type-checking entry point. This keeps local development, CI-style checks, and Docker dependency installation on the same toolchain.
+
+Docker installs uv from the PyPI wheel instead of copying from the `ghcr.io/astral-sh/uv` image. The Astral image currently covers amd64 and arm64, while Knocker also publishes armv7 images; the PyPI uv wheel supports that target and lets the multi-arch Docker build keep the same uv-based dependency install on all published platforms.

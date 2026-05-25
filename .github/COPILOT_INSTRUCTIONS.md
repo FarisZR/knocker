@@ -44,14 +44,14 @@ Knocker is a dynamic IP whitelisting service that integrates with reverse proxie
 
 ### Unit Tests
 
-- **Testing Requires `PYTHONPATH`**: Unit tests must be run with `PYTHONPATH=src python3 -m pytest`. Without this, imports will fail.
-- **Run All Tests After Changes**: After making any code changes, you must run both the local unit tests (`PYTHONPATH=src python3 -m pytest`) and the full Docker-based integration tests.
+- **Astral Toolchain**: Dependencies, tests, linting, formatting, and type checks are managed with uv, Ruff, and Ty.
+- **Run All Tests After Changes**: After making any code changes, run `uv run pytest`, `uv run ruff check`, `uv run ruff format --check`, `uv run ty check`, and the full Docker-based integration tests.
 
 ### Integration Tests
 
 - **Development Environment**: The only reliable way to run the full stack for development is with `docker compose -f dev/docker-compose.yml up`. This includes the Caddy reverse proxy, which is essential for testing the full request flow.
 - **`dev/docker-compose.yml` for development**: The `docker-compose.yml` in the root is for production deployment. The `dev/docker-compose.yml` is specifically for the development environment and includes the Caddy reverse proxy for full end-to-end testing.
-- **CI workflow shows integration tests**: The `.github/workflows/ci.yml` file contains the `curl` commands that serve as the project's integration tests. This is the best place to understand the expected request/response flow.
+- **CI workflow shows integration tests**: The `.github/workflows/tests.yml` workflow runs the project's integration tests. This is the best place to understand the expected request/response flow.
 - **Integration tests are authoritative**: Integration tests (dev/firewalld_integration_test.sh and dev/docker-compose.yml) exercise real interactions with the system (firewalld, Caddy). Use them as the final verification step for changes that touch networking, firewall rules, or startup/restore logic.
 
 ## Firewalld Integration
@@ -73,7 +73,7 @@ Knocker is a dynamic IP whitelisting service that integrates with reverse proxie
 ## Workflow
 
 - **Create Git Commits**: All work should be committed to Git.
-- **Run All Tests After Changes**: After making any code changes, you must run both the local unit tests (`PYTHONPATH=src python3 -m pytest`) and the full Docker-based integration tests (`docker compose -f dev/docker-compose.yml up -d --build` followed by the scripts under dev).
+- **Run All Tests After Changes**: After making any code changes, you must run the local uv/Ruff/Ty checks (`uv run pytest`, `uv run ruff check`, `uv run ruff format --check`, `uv run ty check`) and the full Docker-based integration tests (`docker compose -f dev/docker-compose.yml up -d --build` followed by the scripts under dev).
 
 ## Repository Information
 

@@ -4,15 +4,21 @@ on:
   pull_request:
     branches: [ "main" ]
     paths:
+      - pyproject.toml
+      - uv.lock
       - src/**
       - dev/**
       - tests/**
+      - .github/workflows/tests.yml
   push:
     branches: [ "main" ]
     paths:
+      - pyproject.toml
+      - uv.lock
       - src/**
       - dev/**
       - tests/**
+      - .github/workflows/tests.yml
   workflow_dispatch:
 
 jobs:
@@ -28,11 +34,25 @@ jobs:
       with:
         python-version: '3.13'
 
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v8
+      with:
+        enable-cache: true
+
     - name: Install dependencies
-      run: pip install -r src/requirements.txt
+      run: uv sync --locked --dev
 
     - name: Run unit tests
-      run: PYTHONPATH=src python3 -m pytest
+      run: uv run pytest
+
+    - name: Run Ruff lint
+      run: uv run ruff check
+
+    - name: Check Ruff formatting
+      run: uv run ruff format --check
+
+    - name: Run Ty type checks
+      run: uv run ty check --output-format concise
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3

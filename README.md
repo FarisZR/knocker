@@ -58,7 +58,7 @@ sequenceDiagram
 
 ## Deployment
 
-This project is designed to be deployed as a Docker container using the provided `docker-compose.yml` file. It uses the pre-built docker images with support for AMD64, ARMv8 and ARMv7
+This project is designed to be deployed as a Docker container using the provided `docker-compose.yml` file. It uses the pre-built docker images with support for AMD64, ARM64 and ARMv7
 
 ### Docker Image Tags
 

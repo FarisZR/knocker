@@ -1,7 +1,7 @@
 # Use a specific, stable version of Python for reproducibility
 FROM python:3.13-slim
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+ARG UV_VERSION=0.11.2
 
 # Set the working directory in the container
 WORKDIR /app
@@ -16,6 +16,7 @@ RUN groupadd --gid 1001 appuser && \
 COPY pyproject.toml uv.lock ./
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl firewalld && \
+    python -m pip install --no-cache-dir "uv==${UV_VERSION}" && \
     uv sync --locked --no-dev --no-cache && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
