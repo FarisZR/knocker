@@ -1,0 +1,45 @@
+[project]
+name = "knocker"
+version = "0.1.0"
+description = "HTTP knock-knock single-packet authorization gateway"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi",
+    "pyyaml",
+    "uvicorn",
+]
+
+[dependency-groups]
+dev = [
+    "httpx",
+    "pytest",
+    "ruff",
+    "ty",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E4", "E9", "F", "I"]
+
+[tool.ty.environment]
+python-version = "3.13"
+python-platform = "linux"
+root = ["."]
+extra-paths = ["./src"]
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ty.rules]
+unresolved-import = "warn"
+invalid-argument-type = "warn"

@@ -1,8 +1,10 @@
-import yaml
-import sys
-import os
 import logging
-from typing import Dict, Any
+import os
+import sys
+from typing import Any, Dict
+
+import yaml
+
 
 def setup_logging(settings: Dict[str, Any]):
     """
@@ -19,13 +21,14 @@ def setup_logging(settings: Dict[str, Any]):
         level=log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         stream=sys.stdout,
-        force=True
+        force=True,
     )
 
     # Ensure the root logger and common framework loggers follow the configured level.
     logging.getLogger().setLevel(log_level)
     for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logging.getLogger(logger_name).setLevel(log_level)
+
 
 def load_config() -> Dict[str, Any]:
     """
@@ -41,7 +44,7 @@ def load_config() -> Dict[str, Any]:
     try:
         resolved_path = os.path.realpath(path)
         # Ensure the path doesn't contain suspicious patterns
-        if '..' in path or not os.path.isabs(resolved_path):
+        if ".." in path or not os.path.isabs(resolved_path):
             logging.critical(f"Invalid configuration path: {path}")
             sys.exit(1)
     except (OSError, ValueError) as e:
@@ -49,38 +52,42 @@ def load_config() -> Dict[str, Any]:
         sys.exit(1)
 
     try:
-        with open(resolved_path, 'r') as f:
+        with open(resolved_path, "r") as f:
             config = yaml.safe_load(f)
-            
+
         # Validate configuration structure
         if not isinstance(config, dict):
             logging.critical("Configuration file must contain a valid YAML dictionary")
             sys.exit(1)
-            
+
         # Validate critical configuration sections
-        if not config.get('api_keys'):
-            logging.critical("Configuration must contain at least one API key in 'api_keys' section")
+        if not config.get("api_keys"):
+            logging.critical(
+                "Configuration must contain at least one API key in 'api_keys' section"
+            )
             sys.exit(1)
-            
-        if not isinstance(config.get('api_keys'), list) or len(config['api_keys']) == 0:
+
+        if not isinstance(config.get("api_keys"), list) or len(config["api_keys"]) == 0:
             logging.critical("'api_keys' must be a non-empty list")
             sys.exit(1)
-        
+
         # Check for duplicate API keys
         seen_keys = set()
-        for idx, key_info in enumerate(config['api_keys']):
+        for idx, key_info in enumerate(config["api_keys"]):
             if not isinstance(key_info, dict):
                 logging.critical(f"API key at index {idx} must be a dictionary")
                 sys.exit(1)
-            key = key_info.get('key')
+            key = key_info.get("key")
             if not key:
                 logging.critical(f"API key at index {idx} is missing 'key' field")
                 sys.exit(1)
             if key in seen_keys:
-                logging.critical(f"Duplicate API key detected: {key[:8]}... (showing first 8 chars)")
+                logging.critical(
+                    f"Duplicate API key detected: {key[:8]}... (showing first 8 chars)"
+                )
                 sys.exit(1)
             seen_keys.add(key)
-            
+
         return config
     except FileNotFoundError:
         logging.critical(f"Configuration file not found at {resolved_path}")

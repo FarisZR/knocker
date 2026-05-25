@@ -257,19 +257,26 @@ The project includes a full test suite
 ### Unit tests
 To run the tests locally:
 
-1.  **Install Dependencies**:
+1.  **Install uv**:
+    Follow the official uv installation instructions if `uv --version` does not work.
+
+2.  **Install Dependencies**:
     ```bash
-    pip install -r src/requirements.txt
+    uv sync
     ```
 
-2.  **Run Pytest**:
+3.  **Run Checks**:
     ```bash
-    python3 -m pytest
+    uv run pytest
+    uv run ruff check
+    uv run ruff format --check
+    uv run ty check
     ```
 
 ### Integration Tests
 There's a dev environment under [dev](./dev/), with bash scripts for integrations tests with caddy and a separate one with firewalld.
 The CI runs the caddy tests, but firewalld needs a privileged runner, which is why it needs to be run locally and isn't a part of the CI.
+If ports 80 or 443 are already in use, set `KNOCKER_HTTP_PORT`, `KNOCKER_HTTPS_PORT`, and `BASE_URL` before starting the dev compose stack or running `dev/local_integration_tests.sh`.
 
 ## Docs
 

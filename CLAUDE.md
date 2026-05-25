@@ -11,14 +11,24 @@ Knocker is a self-hosted single-packet authorization (SPA) gateway for homelabs.
 ### Testing
 
 ```bash
-# Run unit tests (must set PYTHONPATH)
-PYTHONPATH=src python3 -m pytest
+# Install dependencies
+uv sync
+
+# Run unit tests
+uv run pytest
 
 # Run specific test file
-PYTHONPATH=src python3 -m pytest tests/test_core.py
+uv run pytest tests/test_core.py
 
 # Run with verbose output
-PYTHONPATH=src python3 -m pytest -v
+uv run pytest -v
+
+# Run Ruff lint and format checks
+uv run ruff check
+uv run ruff format --check
+
+# Run Ty type checking
+uv run ty check
 
 # Run integration tests (requires Docker)
 cd dev && ./local_integration_tests.sh
@@ -40,7 +50,7 @@ docker compose -f dev/docker-compose.yml logs -f
 docker compose -f dev/docker-compose.yml down
 
 # Install dependencies locally
-pip install -r src/requirements.txt
+uv sync
 ```
 
 ### Running Locally (without Docker)
@@ -127,7 +137,7 @@ See [docs/FIREWALLD_INTEGRATION.md](docs/FIREWALLD_INTEGRATION.md) for detailed 
 
 ### Unit Tests
 
-- **MUST** set `PYTHONPATH=src` or imports will fail
+- Use `uv run pytest`; uv supplies the managed environment used by the rest of the toolchain.
 - Tests use fixtures in `conftest.py` (if present) and mock external dependencies
 - Security tests validate IP spoofing prevention, CIDR range limits, and API key permissions
 
@@ -181,7 +191,7 @@ Keys are IPs/CIDRs, values are Unix timestamps for expiration.
 ## Workflow
 
 After making changes:
-1. Run unit tests: `PYTHONPATH=src python3 -m pytest`
+1. Run local checks: `uv run pytest && uv run ruff check && uv run ruff format --check && uv run ty check`
 2. Build and test with Docker: `cd dev && docker compose up --build -d`
 3. Run integration tests: `cd dev && ./local_integration_tests.sh`
 4. If modifying FirewallD code, run: `cd dev && ./firewalld_integration_test.sh`

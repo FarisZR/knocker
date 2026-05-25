@@ -1,6 +1,8 @@
 # Use a specific, stable version of Python for reproducibility
 FROM python:3.13-slim
 
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 # Set the working directory in the container
 WORKDIR /app
 
@@ -10,22 +12,26 @@ WORKDIR /app
 RUN groupadd --gid 1001 appuser && \
     useradd --create-home --uid 1001 --gid 1001 appuser
 
-# Copy requirements and install dependencies system-wide
-COPY src/requirements.txt .
+# Copy project metadata and install locked runtime dependencies
+COPY pyproject.toml uv.lock ./
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl firewalld && \
-    pip install --no-cache-dir -r requirements.txt && \
+    uv sync --locked --no-dev --no-cache && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy the rest of the application code
-COPY src/ .
+COPY src/ /app/src/
 
 # Create and change ownership of the data directory to the appuser
-RUN mkdir -p /data && chown appuser:appuser /data
+RUN mkdir -p /data && chown -R appuser:appuser /data /app
 
 # Switch to the non-root user for running the application
 USER appuser
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+WORKDIR /app/src
 
 # Expose the port the app runs on
 EXPOSE 8000

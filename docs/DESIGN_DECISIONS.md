@@ -46,4 +46,8 @@ This document outlines the key architectural and design decisions made during th
 
 ### 7. Import Compatibility
 
-The FastAPI entrypoint (`main.py`) now supports both relative (`from . import core`) and absolute (`import core`) imports. This guards against import errors when the service runs as a package (for example `uvicorn src.main:app`) and when tests import the module directly via `PYTHONPATH=src`. When running inside Docker the runtime now avoids trying to import `src.core` explicitly, ensuring the health checks succeed regardless of the deployment layout.
+The FastAPI entrypoint (`main.py`) supports both relative (`from . import core`) and absolute (`import core`) imports. This guards against import errors when the service runs as a package and when tests import the module directly through the uv-managed environment. Docker runs the app from `/app/src`, keeping the same import behavior as local development.
+
+### 8. Astral Python Toolchain
+
+Project dependencies and lockfile management now use uv through `pyproject.toml` and `uv.lock`. Ruff is the canonical formatter/import linter, and Ty is the project type-checking entry point. This keeps local development, CI-style checks, and Docker dependency installation on the same toolchain.
