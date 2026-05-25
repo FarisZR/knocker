@@ -53,7 +53,13 @@ server:
 
 **Fix**: Reduced logging verbosity to remove sensitive details from logs.
 
-### 6. DoS Prevention via Size Limits (Low)
+### 6. Whitelist Storage Path Validation (Medium)
+
+**Issue**: A bad configuration could point whitelist persistence at arbitrary host paths.
+
+**Fix**: The whitelist storage path is canonicalized before use and must stay under one of the approved storage roots: the application working directory, `/data`, or `/tmp`.
+
+### 7. DoS Prevention via Size Limits (Low)
 
 **Issue**: No limits on whitelist size could allow attackers to consume excessive disk space.
 
@@ -65,7 +71,7 @@ security:
   max_whitelist_entries: 10000  # Default limit
 ```
 
-### 7. Secure CORS Policy (Low)
+### 8. Secure CORS Policy (Low)
 
 **Issue**: Default CORS policy used wildcard origin (`*`), allowing any website to make requests.
 
@@ -143,4 +149,4 @@ This security audit identified and fixed multiple vulnerabilities:
 - **Comprehensive test coverage** added for all security controls
 - **Documentation** updated with security best practices
 
-The application is now significantly more secure against common attack vectors while maintaining full backward compatibility with existing functionality.
+The application is now significantly more secure against common attack vectors while keeping the documented `/data/whitelist.json` deployment path supported.

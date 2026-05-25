@@ -14,6 +14,44 @@ from typing import Any, Dict
 # in read-modify-write sequences
 _whitelist_lock = threading.RLock()
 
+_DEFAULT_WHITELIST_PATH = "whitelist.json"
+_ALLOWED_WHITELIST_ROOTS = (Path.cwd(), Path("/data"), Path("/tmp"))
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def get_whitelist_path(settings: Dict[str, Any]) -> Path:
+    """
+    Resolve and validate the configured whitelist path.
+
+    The whitelist path comes from configuration, but that configuration path is
+    selected through an environment variable. Keep persistence constrained to
+    known storage roots so a bad config cannot write arbitrary host paths.
+    """
+    raw_path = settings.get("whitelist", {}).get("storage_path", _DEFAULT_WHITELIST_PATH)
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise ValueError("Whitelist storage_path must be a non-empty string")
+    if "\x00" in raw_path:
+        raise ValueError("Whitelist storage_path contains an invalid null byte")
+
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+
+    resolved = candidate.resolve(strict=False)
+    allowed_roots = tuple(root.resolve(strict=False) for root in _ALLOWED_WHITELIST_ROOTS)
+    if not any(_is_relative_to(resolved, root) for root in allowed_roots):
+        allowed = ", ".join(str(root) for root in allowed_roots)
+        raise ValueError(f"Whitelist storage_path must be under one of: {allowed}")
+
+    return resolved
+
 
 @contextmanager
 def _interprocess_whitelist_lock(whitelist_path: Path):
@@ -191,7 +229,7 @@ def normalize_path(path: str) -> str:
 def load_whitelist(settings: Dict[str, Any]) -> Dict[str, int]:
     """Loads the whitelist from the JSON file with thread safety."""
     with _whitelist_lock:
-        path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+        path = get_whitelist_path(settings)
         if not path.exists():
             return {}
 
@@ -212,7 +250,7 @@ def load_whitelist(settings: Dict[str, Any]) -> Dict[str, int]:
 def save_whitelist(whitelist: Dict[str, int], settings: Dict[str, Any]):
     """Saves the whitelist to the JSON file with thread safety and size limits."""
     with _whitelist_lock:
-        path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+        path = get_whitelist_path(settings)
 
         # Security check: limit whitelist size to prevent DoS
         max_entries = settings.get("security", {}).get("max_whitelist_entries", 10000)
@@ -268,7 +306,7 @@ def add_ip_to_whitelist(ip_or_cidr: str, expiry_time: int, settings: Dict[str, A
         raise ValueError(f"Expiry time {expiry_time} is not in the future (current time: {now})")
 
     # Get whitelist path for cross-process locking
-    whitelist_path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+    whitelist_path = get_whitelist_path(settings)
 
     # Use both in-process and cross-process locks
     with _whitelist_lock:
@@ -340,7 +378,7 @@ def cleanup_expired_ips(settings: Dict[str, Any]):
     cross-process locks to prevent race conditions from concurrent updates.
     """
     # Get whitelist path for cross-process locking
-    whitelist_path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+    whitelist_path = get_whitelist_path(settings)
 
     # Use both in-process and cross-process locks
     with _whitelist_lock:

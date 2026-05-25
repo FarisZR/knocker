@@ -330,7 +330,7 @@ class TestDenialOfService:
                     except:
                         pass
                     assert False, f"Dangerous file was created at {dangerous_path}"
-            except (PermissionError, OSError, FileNotFoundError, NotADirectoryError):
+            except (PermissionError, OSError, FileNotFoundError, NotADirectoryError, ValueError):
                 # These exceptions are expected and good - the system is protecting us
                 pass
 

@@ -225,3 +225,29 @@ class TestCleanupImprovement:
         cleaned_whitelist = core.load_whitelist(test_settings)
         assert "192.168.1.1" in cleaned_whitelist
         assert "192.168.1.2" not in cleaned_whitelist
+
+
+class TestWhitelistPathValidation:
+    """Test whitelist storage path validation."""
+
+    def test_rejects_absolute_path_outside_allowed_roots(self):
+        settings = {"whitelist": {"storage_path": "/etc/knocker-whitelist.json"}}
+
+        with pytest.raises(ValueError, match="Whitelist storage_path must be under"):
+            core.get_whitelist_path(settings)
+
+    def test_rejects_relative_path_traversal_outside_working_directory(self):
+        settings = {"whitelist": {"storage_path": "../knocker-whitelist.json"}}
+
+        with pytest.raises(ValueError, match="Whitelist storage_path must be under"):
+            core.get_whitelist_path(settings)
+
+    def test_allows_data_directory_storage(self):
+        settings = {"whitelist": {"storage_path": "/data/whitelist.json"}}
+
+        assert core.get_whitelist_path(settings) == Path("/data/whitelist.json")
+
+    def test_allows_relative_storage_under_working_directory(self):
+        settings = {"whitelist": {"storage_path": "whitelist.json"}}
+
+        assert core.get_whitelist_path(settings) == Path.cwd() / "whitelist.json"

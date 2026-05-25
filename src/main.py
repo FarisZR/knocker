@@ -531,7 +531,7 @@ async def health_check(settings: dict = Depends(get_settings)):
             )
 
         # Verify whitelist storage is accessible
-        whitelist_path = Path(settings.get("whitelist", {}).get("storage_path", "whitelist.json"))
+        whitelist_path = core.get_whitelist_path(settings)
         try:
             # Try to create parent directory if it doesn't exist
             whitelist_path.parent.mkdir(parents=True, exist_ok=True)
