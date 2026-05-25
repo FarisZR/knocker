@@ -50,13 +50,13 @@ class FirewalldIntegration:
         
         self.logger = logging.getLogger(__name__)
 
-        if not isinstance(self.zone_name, str) or not core._ZONE_NAME_RE.fullmatch(self.zone_name):
-            raise ValueError(
-                "Invalid zone_name. Use only letters, numbers, dots, underscores, colons, and hyphens"
-            )
-        
-        # Validate monitored IPs have proper CIDR notation
         if self.enabled:
+            if not isinstance(self.zone_name, str) or not core._ZONE_NAME_RE.fullmatch(self.zone_name):
+                raise ValueError(
+                    "Invalid zone_name. Use only letters, numbers, dots, underscores, colons, and hyphens"
+                )
+
+            # Validate monitored IPs have proper CIDR notation
             self._validate_monitored_ips()
             
             # Validate default action

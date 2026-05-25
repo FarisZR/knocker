@@ -5,7 +5,7 @@ from src import core
 
 # --- Test IP/CIDR Validation ---
 
-@pytest.mark.parametrize("address, expected", [
+@pytest.mark.parametrize(("address", "expected"), [
     ("192.168.1.1", True),
     ("2001:db8::1", True),
     ("10.0.0.0/8", True),
@@ -190,7 +190,7 @@ def test_whitelist_store_contains_skips_reload_when_storage_unchanged(tmp_path, 
 
 
 @pytest.mark.parametrize(
-    "helper, expected_message",
+    ("helper", "expected_message"),
     [
         (core.is_valid_api_key, "Configuration must contain at least one API key"),
         (core.can_whitelist_remote, "Configuration must contain at least one API key"),

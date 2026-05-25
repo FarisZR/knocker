@@ -146,6 +146,20 @@ class TestFirewalldIntegrationInit:
         # Should not raise exception when disabled
         integration = firewalld.FirewalldIntegration(settings)
         assert integration.enabled is False
+
+    def test_zone_name_validation_disabled_skips_check(self):
+        """Test zone_name validation is skipped when firewalld is disabled."""
+        settings = {
+            "firewalld": {
+                "enabled": False,
+                "zone_name": "test; rm -rf /",
+            }
+        }
+
+        integration = firewalld.FirewalldIntegration(settings)
+
+        assert integration.enabled is False
+        assert integration.zone_name == "test; rm -rf /"
     
     def test_default_action_validation_drop(self):
         """Test default_action validation succeeds for 'drop'."""

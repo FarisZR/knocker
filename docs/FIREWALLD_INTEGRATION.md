@@ -46,7 +46,7 @@ firewalld:
 ### Configuration Options
 
 - **`enabled`**: Boolean flag to enable/disable firewalld integration
-- **`zone_name`**: Name of the firewalld zone to create (default: "knocker")
+- **`zone_name`**: Name of the firewalld zone to create (default: "knocker"). Validated only when `enabled: true`
 - **`zone_priority`**: Priority of the zone (negative numbers = higher priority, default: -100)
 - **`zone_target`**: (Optional) The target for the zone - controls what happens to packets not matched by specific rules. Valid values: "default", "ACCEPT", "REJECT", "DROP". When not specified, the zone target is not set (firewalld default)
 - **`default_action`**: Action for blocked traffic - "drop" (silent discard) or "reject" (connection refused with response) (default: "drop")
