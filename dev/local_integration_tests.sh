@@ -273,9 +273,9 @@ test_firewalld_rules_after_knock() {
 main() {
     info "Starting integration tests..."
 
-    # Check if we're in CI environment or if firewalld configuration should be used
+    # Check if we're in CI environment or if the firewalld test stack is actually usable.
     COMPOSE_FILE="docker-compose.yml"
-    if [ "$CI" = "true" ] || [ "$KNOCKER_TEST_MODE" = "ci" ] || [ ! -f /var/run/dbus/system_bus_socket ]; then
+    if [ "$CI" = "true" ] || [ "$KNOCKER_TEST_MODE" = "ci" ] || [ ! -f /var/run/dbus/system_bus_socket ] || ! systemctl is-active --quiet firewalld 2>/dev/null; then
         info "Using CI configuration (firewalld disabled)"
         COMPOSE_FILE="docker-compose.ci.yml"
     fi

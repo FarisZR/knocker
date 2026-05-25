@@ -57,7 +57,7 @@ start_test_environment() {
     info "Starting test environment with firewalld integration..."
     
     # Start the services
-    docker compose -f docker-compose.yml down --remove-orphans || true
+    docker compose -f docker-compose.yml down -v --remove-orphans || true
     docker compose -f docker-compose.yml up -d --build
     
     # Wait for services to be ready
@@ -261,7 +261,7 @@ test_firewalld_error_handling() {
 
 cleanup() {
     info "Cleaning up test environment..."
-    docker compose -f docker-compose.yml down --remove-orphans || true
+    docker compose -f docker-compose.yml down -v --remove-orphans || true
     success "Cleanup completed"
 }
 

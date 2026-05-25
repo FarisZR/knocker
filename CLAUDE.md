@@ -90,7 +90,6 @@ docker run -p 8000:8000 \
     - [core.py](src/core.py) checks if IP is in `always_allowed_ips`, matches `excluded_paths`, or exists in dynamic whitelist
     - Returns 200 OK if authorized, 401 Unauthorized if not
     - No body in either response
-    - Returns verified `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Uri` headers on 200 responses for Caddy `copy_headers`
 
 3. **Whitelist Persistence**: JSON file at `/data/whitelist.json` (configurable)
    - Thread-safe reads/writes with `threading.RLock`

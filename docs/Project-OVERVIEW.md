@@ -72,7 +72,6 @@ To protect your services, you will use Caddy's `forward_auth` directive.
 (knocker_auth) {
   forward_auth knocker:8000 {
     uri /verify
-    copy_headers X-Forwarded-For X-Forwarded-Host X-Forwarded-Uri
   }
 }
 
@@ -217,7 +216,7 @@ This endpoint validates an API key and whitelists an IP.
 
 This endpoint is used by Caddy's `forward_auth` to check if the client's IP is whitelisted. It returns `200 OK` on success and `401 Unauthorized` on failure.
 
-Caddy forwards the original `X-Forwarded-*` request metadata to Knocker so `/verify` can make the auth decision. Knocker returns verified `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Uri` headers on successful `/verify` responses, and the example `copy_headers` configuration copies those verified values onto the protected upstream request.
+Caddy already forwards the relevant `X-Forwarded-*` request headers to Knocker so `/verify` can make the auth decision.
 
 ## Tests
 The project includes a full test suite
