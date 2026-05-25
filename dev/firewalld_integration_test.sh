@@ -26,7 +26,7 @@ warning() {
 }
 
 # --- Configuration ---
-BASE_URL="http://localhost"
+BASE_URL="http://localhost:18080"
 KNOCK_URL="$BASE_URL/knock"
 
 # Test IP

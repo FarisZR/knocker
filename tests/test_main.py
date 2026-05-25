@@ -261,3 +261,21 @@ def test_verify_success_excluded_path_prefix():
     """A request to a path that starts with an excluded prefix should pass."""
     response = client.get("/verify", headers={"X-Forwarded-For": "9.9.9.9", "X-Forwarded-Uri": "/api/v1/public/status"})
     assert response.status_code == 200
+
+def test_verify_success_returns_verified_forwarded_headers():
+    """Successful verify responses should expose verified forwarded metadata."""
+    client.post("/knock", headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "5.6.7.8"})
+
+    response = client.get(
+        "/verify",
+        headers={
+            "X-Forwarded-For": "5.6.7.8",
+            "X-Forwarded-Host": "app.example.com",
+            "X-Forwarded-Uri": "/private",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-Forwarded-For"] == "5.6.7.8"
+    assert response.headers["X-Forwarded-Host"] == "app.example.com"
+    assert response.headers["X-Forwarded-Uri"] == "/private"

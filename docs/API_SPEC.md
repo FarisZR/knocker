@@ -87,6 +87,11 @@ This endpoint is used by Caddy's `forward_auth` directive to verify if a client'
 
 *   **`200 OK`** (Success)
     *   Returned if the client's IP is found in an active (non-expired) whitelist entry, is in the `always_allowed_ips` list, or if the request path is in the `excluded_paths` list. The response has an empty body.
+    *   **Headers**:
+        *   `X-Forwarded-For`: The verified client IP.
+        *   `X-Forwarded-Host`: The verified forwarded host when the request came through a trusted proxy.
+        *   `X-Forwarded-Uri`: The verified forwarded URI when the request came through a trusted proxy.
+    *   These headers are intended to be used with Caddy `forward_auth` `copy_headers` so the protected upstream receives the verified request metadata.
 
 *   **`401 Unauthorized`**
     *   Returned if the client's IP is not authorized. The response has an empty body.

@@ -155,7 +155,7 @@ print(f"Whitelisted until: {data['expires_at']}")
 
 ## Development
 
-When running in development mode (using `dev/docker-compose.yml`), the documentation is accessible through the Caddy reverse proxy, providing the same experience as production deployment.
+When running in development mode (using `dev/docker-compose.yml`), the documentation is accessible through the Caddy reverse proxy at `http://localhost:18080/docs`, providing the same experience as production deployment.
 
 The generated OpenAPI schema reflects the exact API configuration including:
 - Configured CORS origins

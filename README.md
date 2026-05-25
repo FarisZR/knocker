@@ -115,6 +115,7 @@ Caddy has the `forward_auth` directive to check connections using an auth endpoi
 (knocker_auth) {
   forward_auth knocker:8000 {
     uri /verify
+    copy_headers X-Forwarded-For X-Forwarded-Host X-Forwarded-Uri
   }
 }
 
@@ -260,7 +261,7 @@ This endpoint validates an API key and whitelists an IP.
 
 This endpoint is used by Caddy's `forward_auth` to check if the client's IP is whitelisted. It returns `200 OK` on success and `401 Unauthorized` on failure. `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Uri` are only trusted when the request originates from `server.trusted_proxies`.
 
-Caddy's `forward_auth` already forwards the relevant `X-Forwarded-*` request headers to Knocker. The `copy_headers` subdirective is only needed when you want to copy headers from Knocker's auth response back onto the original upstream request.
+Caddy forwards the original `X-Forwarded-*` request metadata to Knocker so `/verify` can make the auth decision. Knocker returns verified `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Uri` headers on successful `/verify` responses, and the example `copy_headers` configuration copies those verified values onto the protected upstream request.
 
 ## Tests
 The project includes a full test suite
@@ -280,6 +281,7 @@ To run the tests locally:
 
 ### Integration Tests
 There's a dev environment under [dev](./dev/), with bash scripts for integrations tests with caddy and a separate one with firewalld.
+The standard test stacks are `dev/docker-compose.yml` and `dev/docker-compose.ci.yml`; both expose Caddy on `http://localhost:18080` and `https://localhost:18443`.
 The CI runs the caddy tests, but firewalld needs a privileged runner, which is why it needs to be run locally and isn't a part of the CI.
 
 ## Docs

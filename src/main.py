@@ -304,6 +304,23 @@ def get_request_context_dependency(
     """Dependency wrapper for trusted proxy metadata resolution."""
     return _resolve_request_context(request, settings)
 
+
+def _build_verified_forwarded_headers(
+    client_ip: Optional[str],
+    forwarded_headers_trusted: bool,
+    request_host: Optional[str],
+    request_path: str,
+) -> Dict[str, str]:
+    """Headers returned to Caddy for copy_headers on successful verify responses."""
+    headers: Dict[str, str] = {}
+    if client_ip:
+        headers["X-Forwarded-For"] = client_ip
+    if forwarded_headers_trusted:
+        if request_host:
+            headers["X-Forwarded-Host"] = request_host
+        headers["X-Forwarded-Uri"] = request_path
+    return headers
+
 # --- API Endpoints ---
 
 @app.options(
@@ -636,9 +653,16 @@ async def health_check(settings: dict = Depends(get_settings)):
         )
 
 @app.get(
-    "/verify", 
+    "/verify",
     responses={
-        200: {"description": "IP is authorized - access granted"},
+        200: {
+            "description": "IP is authorized - access granted",
+            "headers": {
+                "X-Forwarded-For": {"schema": {"type": "string"}, "description": "Verified client IP"},
+                "X-Forwarded-Host": {"schema": {"type": "string"}, "description": "Verified forwarded host"},
+                "X-Forwarded-Uri": {"schema": {"type": "string"}, "description": "Verified forwarded URI"},
+            },
+        },
         401: {"description": "IP is not authorized - access denied"}
     },
     tags=["Authentication"],
@@ -654,6 +678,7 @@ async def health_check(settings: dict = Depends(get_settings)):
     * Returns 401 if the IP is not authorized
     * Uses X-Forwarded-For header when coming from trusted proxies
     * Uses X-Forwarded-Uri header to check excluded paths
+    * Returns verified X-Forwarded-* headers on 200 responses for Caddy copy_headers
     """,
     status_code=status.HTTP_200_OK
 )
@@ -665,10 +690,16 @@ async def verify(
     client_ip, forwarded_headers_trusted, request_host, request_path = request_context
     runtime_state = core.ensure_runtime_state(settings)
     exclusion_host = request_host if forwarded_headers_trusted else None
+    verified_headers = _build_verified_forwarded_headers(
+        client_ip,
+        forwarded_headers_trusted,
+        request_host,
+        request_path,
+    )
 
     # 1. Check if the path is excluded from authentication.
     if runtime_state.path_exclusions.matches(exclusion_host, request_path):
-        return Response(status_code=status.HTTP_200_OK)
+        return Response(status_code=status.HTTP_200_OK, headers=verified_headers)
 
     # 2. Proceed with standard IP check.
     if not client_ip:
@@ -678,4 +709,4 @@ async def verify(
     if not runtime_state.is_authorized_ip(client_ip):
         return Response(status_code=status.HTTP_401_UNAUTHORIZED)
 
-    return Response(status_code=status.HTTP_200_OK)
+    return Response(status_code=status.HTTP_200_OK, headers=verified_headers)
