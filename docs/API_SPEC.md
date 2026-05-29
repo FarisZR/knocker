@@ -12,7 +12,6 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
 *   **Method**: `POST`, `OPTIONS`
 *   **Headers**:
     *   `X-Api-Key` (string, **required** for POST): The secret API key for authentication.
-    *   `X-Key-Id` (string, optional): Recommended when the configured key uses `key_hash`.
     *   `X-Forwarded-For` (string, proxy-provided): The client's real IP address. This is only trusted when the direct peer is listed in `server.trusted_proxies`.
 *   **Request Body** (optional, JSON):
     ```json
@@ -47,7 +46,7 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
     *   **Headers**:
         *   `Access-Control-Allow-Origin`: The configured allowed origin (or "*" for any).
         *   `Access-Control-Allow-Methods`: "POST, OPTIONS"
-        *   `Access-Control-Allow-Headers`: "X-Api-Key, X-Key-Id, Content-Type"
+        *   `Access-Control-Allow-Headers`: "X-Api-Key, Content-Type"
 
 *   **`400 Bad Request`**
     *   Returned if the client IP cannot be determined or if the `ip_address` in the request body is malformed.
@@ -122,7 +121,6 @@ This endpoint is used to verify the operational status of the Knocker service.
     - **`storage_path`** (string, required): Path to the whitelist JSON file. Must end with `.json` and stay under the process working directory, `/data`, or `/tmp`.
     - **`cleanup_interval_seconds`** (integer, optional): Background cleanup cadence for expired whitelist entries. Defaults to `60`.
 - **`api_keys`** (array of objects, required): A list of API key configurations.
-    - **`id`** (string, optional): Stable identifier used with `X-Key-Id`.
     - **`name`** (string, optional): A friendly name for the key.
     - **`key`** (string, optional): Plaintext secret API key. Supported for backward compatibility.
     - **`key_hash`** (string, optional): SHA-256 hash in the format `sha256:<64 lowercase hex chars>`. Prefer this over `key`.

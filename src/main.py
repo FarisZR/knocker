@@ -323,7 +323,7 @@ async def knock_options(settings: dict = Depends(get_settings)):
         headers={
             "Access-Control-Allow-Origin": allowed_origin,
             "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "X-Api-Key, X-Key-Id, Content-Type",
+            "Access-Control-Allow-Headers": "X-Api-Key, Content-Type",
         }
     )
 
@@ -357,7 +357,6 @@ async def knock(
     settings: dict = Depends(get_settings)
 ):
     api_key = request.headers.get("X-Api-Key")
-    api_key_id = request.headers.get("X-Key-Id")
     allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
     direct_ip = request.client.host if request.client else None
     if direct_ip == "testclient":
@@ -378,7 +377,7 @@ async def knock(
             headers={"Access-Control-Allow-Origin": allowed_origin}
         )
 
-    api_key_record = core.get_api_key_record(api_key, settings, api_key_id)
+    api_key_record = core.get_api_key_record(api_key, settings)
     if not api_key_record:
         if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
             return JSONResponse(

@@ -226,7 +226,6 @@ This endpoint validates an API key and whitelists an IP.
 
 - **Headers**:
     - `X-Api-Key`: Your secret API key.
-    - `X-Key-Id`: Optional key identifier. Recommended when using `api_keys[].key_hash`.
 
 - **Body (Optional)**:
     - To whitelist a remote IP/CIDR (requires `allow_remote_whitelist: true`):
@@ -237,14 +236,6 @@ This endpoint validates an API key and whitelists an IP.
 - **Example (Whitelisting your own IP)**:
     ```bash
     curl -i -H "X-Api-Key: YOUR_SECRET_KEY" https://knock.your-domain.com/knock
-    ```
-
-- **Example (Using hashed key config)**:
-    ```bash
-    curl -i \
-      -H "X-Key-Id: phone" \
-      -H "X-Api-Key: YOUR_SECRET_KEY" \
-      https://knock.your-domain.com/knock
     ```
 
 - **Success Response (`200 OK`)**:

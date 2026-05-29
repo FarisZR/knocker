@@ -764,16 +764,9 @@ class APIKeyRegistry:
             return
         self.records[0].verify(candidate_key)
 
-    def resolve(self, candidate_key: str, key_id: Optional[str] = None) -> Optional[APIKeyRecord]:
+    def resolve(self, candidate_key: str) -> Optional[APIKeyRecord]:
         if not candidate_key:
             return None
-
-        if key_id:
-            record = self.records_by_id.get(key_id)
-            if record is None:
-                self._dummy_compare(candidate_key)
-                return None
-            return record if record.verify(candidate_key) else None
 
         matched_record: Optional[APIKeyRecord] = None
         for record in self.records:
@@ -1024,7 +1017,7 @@ def ensure_runtime_state(settings: Dict[str, Any]) -> RuntimeState:
 
         if any(record.secret_kind == "plaintext" for record in api_keys.records):
             logging.getLogger(__name__).warning(
-                "Plaintext API keys are deprecated. Prefer api_keys[].key_hash with X-Key-Id."
+                "Plaintext API keys are deprecated. Prefer api_keys[].key_hash."
             )
 
         return runtime_state
@@ -1042,27 +1035,27 @@ def stop_runtime_state(settings: Dict[str, Any]) -> None:
         runtime_state.stop()
 
 
-def get_api_key_record(api_key: str, settings: Dict[str, Any], key_id: Optional[str] = None) -> Optional[APIKeyRecord]:
+def get_api_key_record(api_key: str, settings: Dict[str, Any]) -> Optional[APIKeyRecord]:
     runtime_state = ensure_runtime_state(settings)
-    return runtime_state.api_keys.resolve(api_key, key_id)
+    return runtime_state.api_keys.resolve(api_key)
 
 
-def is_valid_api_key(api_key: str, settings: Dict[str, Any], key_id: Optional[str] = None) -> bool:
-    return get_api_key_record(api_key, settings, key_id) is not None
+def is_valid_api_key(api_key: str, settings: Dict[str, Any]) -> bool:
+    return get_api_key_record(api_key, settings) is not None
 
 
-def can_whitelist_remote(api_key: str, settings: Dict[str, Any], key_id: Optional[str] = None) -> bool:
-    record = get_api_key_record(api_key, settings, key_id)
+def can_whitelist_remote(api_key: str, settings: Dict[str, Any]) -> bool:
+    record = get_api_key_record(api_key, settings)
     return bool(record and record.allow_remote_whitelist)
 
 
-def get_max_ttl_for_key(api_key: str, settings: Dict[str, Any], key_id: Optional[str] = None) -> int:
-    record = get_api_key_record(api_key, settings, key_id)
+def get_max_ttl_for_key(api_key: str, settings: Dict[str, Any]) -> int:
+    record = get_api_key_record(api_key, settings)
     return record.max_ttl if record else 0
 
 
-def get_api_key_name(api_key: str, settings: Dict[str, Any], key_id: Optional[str] = None) -> str:
-    record = get_api_key_record(api_key, settings, key_id)
+def get_api_key_name(api_key: str, settings: Dict[str, Any]) -> str:
+    record = get_api_key_record(api_key, settings)
     return record.name if record else ""
 
 
