@@ -4,6 +4,7 @@ Tests timing attack resistance, edge case handling, and input validation.
 """
 import pytest
 import time
+from pathlib import Path
 from fastapi.testclient import TestClient
 from src.main import app, get_settings
 from src import core
@@ -55,6 +56,13 @@ client = TestClient(app)
 
 class TestTimingAttackResistance:
     """Test that API key validation is resistant to timing attacks."""
+
+    def test_dockerfile_disables_uvicorn_proxy_header_rewrite(self):
+        dockerfile = Path(__file__).resolve().parents[1] / "Dockerfile"
+        content = dockerfile.read_text(encoding="utf-8")
+
+        assert "--no-proxy-headers" in content
+        assert "--forwarded-allow-ips" not in content
     
     def test_constant_time_validation(self, test_settings):
         """

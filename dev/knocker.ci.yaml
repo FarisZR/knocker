@@ -29,6 +29,7 @@ security:
     # - "/api/v1/status"
     # - "/metrics"
     - "/knock"
+    - "/public"
   # Maximum number of entries in the whitelist (default: 10000)
   max_whitelist_entries: 10000
 

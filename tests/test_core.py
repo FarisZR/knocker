@@ -182,6 +182,23 @@ def test_whitelist_store_contains_skips_reload_when_storage_unchanged(tmp_path, 
     assert store.contains(address, now=int(time.time())) is False
 
 
+def test_whitelist_store_compaction_preserves_entries_added_by_other_processes(tmp_path):
+    whitelist_path = tmp_path / "whitelist.json"
+    now = int(time.time())
+
+    core._write_whitelist_file(whitelist_path, {"192.0.2.10": now - 60})
+    store = core.WhitelistStore(storage_path=whitelist_path, max_entries=10)
+
+    assert store._pending_compaction is True
+    assert store.active_snapshot() == {}
+
+    core._write_whitelist_file(whitelist_path, {"198.51.100.20": now + 60})
+
+    assert store.compact_expired(now=now) is False
+    assert core._read_whitelist_file(whitelist_path) == {"198.51.100.20": now + 60}
+    assert store.active_snapshot() == {"198.51.100.20": now + 60}
+
+
 @pytest.mark.parametrize(
     ("helper", "expected_message"),
     [

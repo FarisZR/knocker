@@ -97,6 +97,7 @@ cors:
 ### 1. Network Configuration
 
 - **Always configure trusted_proxies**: Only include the actual reverse proxy IPs/networks
+- **Leave proxy-header resolution to Knocker**: Do not enable Uvicorn proxy-header rewriting in front of `server.trusted_proxies`
 - **Use Docker networks**: Isolate knocker service on a private Docker network
 - **Firewall rules**: Restrict direct access to the knocker service port
 

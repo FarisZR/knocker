@@ -25,6 +25,7 @@ cd "$SCRIPT_DIR" || true
  
 BASE_URL="http://localhost:18080"
 PROTECTED_URL="$BASE_URL/private"
+PUBLIC_URL="$BASE_URL/public"
 KNOCK_URL="$BASE_URL/knock"
  
 # IPs
@@ -57,6 +58,15 @@ test_unauthorized_access() {
         success "Unauthorized access correctly returned 401"
     else
         fail "Unauthorized access returned $http_code instead of 401"
+    fi
+}
+
+test_excluded_path_access() {
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Forwarded-For: $REGULAR_IP" $PUBLIC_URL)
+    if [ "$http_code" -eq 200 ]; then
+        success "Excluded path access correctly bypassed auth"
+    else
+        fail "Excluded path access returned $http_code instead of 200"
     fi
 }
 
@@ -160,6 +170,7 @@ main() {
     success "Services are healthy!"
 
     run_test "Unauthorized Access" "test_unauthorized_access"
+    run_test "Excluded Path Access" "test_excluded_path_access"
     run_test "Successful Knock" "test_successful_knock"
     run_test "Authorized Access After Knock" "test_authorized_access_after_knock"
     run_test "Always-Allowed IP Direct Access" "test_always_allowed_ip_access"

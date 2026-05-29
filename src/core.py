@@ -402,11 +402,16 @@ class WhitelistStore:
                 return False
 
             with _interprocess_whitelist_lock(self.storage_path):
-                _write_whitelist_file(self.storage_path, after)
-            self._index = DynamicWhitelistIndex.from_serialized(after)
+                persisted = _read_whitelist_file(self.storage_path)
+                active, changed = _normalize_serialized_whitelist(persisted, drop_expired=True, now=cutoff)
+                compacted = _limit_whitelist_entries(active, self.max_entries)
+                wrote = changed or compacted != persisted
+                if wrote:
+                    _write_whitelist_file(self.storage_path, compacted)
+            self._index = DynamicWhitelistIndex.from_serialized(compacted)
             self._pending_compaction = False
             self._storage_version = self._storage_version_token()
-            return True
+            return wrote
 
     def active_snapshot(self) -> Dict[str, int]:
         with self._lock:
