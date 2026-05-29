@@ -105,26 +105,22 @@ firewalld:
   # See docs/FIREWALLD_INTEGRATION.md for complete setup instructions
 
 api_keys:
-  - id: "admin"
-    name: "admin-key-for-remote-whitelisting"
+  - name: "admin-key-for-remote-whitelisting"
     key_hash: "sha256:8c2df8032e7b10fc0e8cebcb30a974300e6f6459b2a33c7a0b723e8ed51c25d4"  # Example hash for CHANGE_ME_SUPER_SECRET_ADMIN_KEY
     max_ttl: 3600  # Maximum TTL in seconds (1 hour)
     allow_remote_whitelist: true  # Can whitelist other IP/CIDR specified in request body
-  - id: "phone"
-    name: "personal-phone"
+  - name: "personal-phone"
     key_hash: "sha256:d193935f4445d2eb5b68ca48f2b5aa876ee1a377ebd77b087d6bd54940ef2951"  # Example hash for CHANGE_ME_SECRET_PHONE_KEY
     max_ttl: 14400  # Maximum TTL in seconds (4 hours)
     allow_remote_whitelist: false  # Can only whitelist the requesting IP address
 
-  - id: "guest"
-    name: "guest-access"
+  - name: "guest-access"
     key_hash: "sha256:607376dd536f4c2a2fa3b5693830afe3ca6289d2fda3c715c7c65a4e9302e0e3"  # Example hash for CHANGE_ME_TEMPORARY_GUEST_KEY
     max_ttl: 600  # Maximum TTL in seconds (10 minutes)
     allow_remote_whitelist: false  # Can only whitelist the requesting IP address
 
   # Plaintext keys still work for backward compatibility, but prefer key_hash.
-  # - id: "legacy"
-  #   name: "legacy-client"
+  # - name: "legacy-client"
   #   key: "CHANGE_ME_LEGACY_KEY"
   #   max_ttl: 600
   #   allow_remote_whitelist: false

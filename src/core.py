@@ -23,7 +23,6 @@ IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
 _whitelist_lock = threading.RLock()
 _runtime_state_lock = threading.Lock()
 _RUNTIME_STATE_KEY = "_knocker_runtime_state"
-_API_KEY_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _ZONE_NAME_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 
 
@@ -656,13 +655,11 @@ def resolve_request_path(
 
 @dataclass(frozen=True)
 class APIKeyRecord:
-    identifier: Optional[str]
     name: str
     max_ttl: int
     allow_remote_whitelist: bool
     secret_kind: str
     secret_value: str
-    cache_key: str
 
     def verify(self, presented_key: str) -> bool:
         if not isinstance(presented_key, str):
@@ -689,24 +686,15 @@ def _parse_hashed_secret(value: str) -> str:
 @dataclass
 class APIKeyRegistry:
     records: Tuple[APIKeyRecord, ...]
-    records_by_id: Dict[str, APIKeyRecord]
 
     @classmethod
     def from_settings(cls, api_keys: Sequence[Dict[str, Any]]) -> "APIKeyRegistry":
         records: list[APIKeyRecord] = []
-        records_by_id: Dict[str, APIKeyRecord] = {}
         seen_secrets: set[str] = set()
 
         for index, key_info in enumerate(api_keys):
             if not isinstance(key_info, dict):
                 raise ValueError(f"API key at index {index} must be a dictionary")
-
-            identifier = key_info.get("id")
-            if identifier is not None:
-                if not isinstance(identifier, str) or not _API_KEY_ID_RE.fullmatch(identifier):
-                    raise ValueError(f"API key at index {index} has invalid id '{identifier}'")
-                if identifier in records_by_id:
-                    raise ValueError(f"Duplicate API key id detected: {identifier}")
 
             plain_secret = key_info.get("key")
             hashed_secret = key_info.get("key_hash")
@@ -741,28 +729,18 @@ class APIKeyRegistry:
                 raise ValueError(
                     f"API key at index {index} must define boolean allow_remote_whitelist"
                 )
-            name = str(key_info.get("name") or identifier or f"key-{index + 1}")
-            cache_key = identifier or name or secret_fingerprint
+            name = str(key_info.get("name") or f"key-{index + 1}")
 
             record = APIKeyRecord(
-                identifier=identifier,
                 name=name,
                 max_ttl=max_ttl,
                 allow_remote_whitelist=allow_remote_whitelist,
                 secret_kind=secret_kind,
                 secret_value=secret_value,
-                cache_key=cache_key,
             )
             records.append(record)
-            if identifier is not None:
-                records_by_id[identifier] = record
 
-        return cls(records=tuple(records), records_by_id=records_by_id)
-
-    def _dummy_compare(self, candidate_key: str) -> None:
-        if not self.records:
-            return
-        self.records[0].verify(candidate_key)
+        return cls(records=tuple(records))
 
     def resolve(self, candidate_key: str) -> Optional[APIKeyRecord]:
         if not candidate_key:
