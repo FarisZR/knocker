@@ -1,7 +1,11 @@
 # Use a specific, stable version of Python for reproducibility
 FROM python:3.13-slim
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.2 /uv /uvx /bin/
+# Install uv from the official installer so multi-arch builds work.
+ADD https://astral.sh/uv/0.11.2/install.sh /uv-installer.sh
+RUN sh /uv-installer.sh && rm /uv-installer.sh
+
+ENV PATH="/root/.local/bin:$PATH"
 
 # Set the working directory in the container
 WORKDIR /app
