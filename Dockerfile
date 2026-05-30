@@ -1,12 +1,6 @@
 # Use a specific, stable version of Python for reproducibility
 FROM python:3.13-slim
 
-# Install uv from the official installer so multi-arch builds work.
-ADD https://astral.sh/uv/0.11.2/install.sh /uv-installer.sh
-RUN sh /uv-installer.sh && rm /uv-installer.sh
-
-ENV PATH="/root/.local/bin:$PATH"
-
 # Set the working directory in the container
 WORKDIR /app
 
@@ -15,17 +9,23 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_PYTHON_DOWNLOADS=0
 ENV KNOCKER_CONFIG_PATH=/app/knocker.yaml
 
+# Install system packages before running the uv installer, which requires curl.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl firewalld && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install uv from the official installer so multi-arch builds work.
+ADD https://astral.sh/uv/0.11.2/install.sh /uv-installer.sh
+RUN sh /uv-installer.sh && rm /uv-installer.sh
+
+ENV PATH="/root/.local/bin:$PATH"
+
 # Create a non-root user to run the application for better security
 # NOTE: When firewalld integration is enabled, the container must run as root
 # to access the system dbus. This is configured in docker-compose.yml.
 RUN groupadd --gid 1001 appuser && \
     useradd --create-home --uid 1001 --gid 1001 appuser
-
-# Install system packages, then sync runtime dependencies with uv.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl firewalld && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev
