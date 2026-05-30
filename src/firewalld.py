@@ -83,11 +83,6 @@ class FirewalldIntegration:
                 self.logger.error(f"Invalid monitored IP '{ip_str}': {e}")
                 raise ValueError(f"Invalid monitored IP configuration: {e}")
 
-            if network.version == 4 and network.prefixlen == 32:
-                continue
-            if network.version == 6 and network.prefixlen == 128:
-                continue
-        
     def is_enabled(self) -> bool:
         """Check if firewalld integration is enabled."""
         return self.enabled
