@@ -39,6 +39,8 @@ docker compose -f dev/docker-compose.yml logs -f
 # Stop dev environment
 docker compose -f dev/docker-compose.yml down
 
+# The dev test stack exposes Caddy on localhost:18080 and localhost:18443
+
 # Install dependencies locally
 pip install -r src/requirements.txt
 ```
@@ -85,9 +87,9 @@ docker run -p 8000:8000 \
    - Returns whitelisted entry and expiration details
 
 2. **Verify Request**: Reverse proxy sends GET to `/verify` with `X-Forwarded-For`
-   - [core.py](src/core.py) checks if IP is in `always_allowed_ips`, matches `excluded_paths`, or exists in dynamic whitelist
-   - Returns 200 OK if authorized, 401 Unauthorized if not
-   - No body in either response
+    - [core.py](src/core.py) checks if IP is in `always_allowed_ips`, matches `excluded_paths`, or exists in dynamic whitelist
+    - Returns 200 OK if authorized, 401 Unauthorized if not
+    - No body in either response
 
 3. **Whitelist Persistence**: JSON file at `/data/whitelist.json` (configurable)
    - Thread-safe reads/writes with `threading.RLock`
@@ -137,6 +139,7 @@ The [dev/local_integration_tests.sh](dev/local_integration_tests.sh) script:
 - Starts full stack (Caddy + Knocker) via Docker Compose
 - Tests knock workflow, verify endpoint, TTL expiration, remote whitelisting
 - Validates trusted proxy behavior and API key permissions
+- Uses the standard dev test stack on `http://localhost:18080`
 - Must pass before committing changes
 
 The [dev/firewalld_integration_test.sh](dev/firewalld_integration_test.sh):

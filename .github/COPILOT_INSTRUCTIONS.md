@@ -49,8 +49,7 @@ Knocker is a dynamic IP whitelisting service that integrates with reverse proxie
 
 ### Integration Tests
 
-- **Development Environment**: The only reliable way to run the full stack for development is with `docker compose -f dev/docker-compose.yml up`. This includes the Caddy reverse proxy, which is essential for testing the full request flow.
-- **`dev/docker-compose.yml` for development**: The `docker-compose.yml` in the root is for production deployment. The `dev/docker-compose.yml` is specifically for the development environment and includes the Caddy reverse proxy for full end-to-end testing.
+- **Development/Test Stacks**: Use `dev/docker-compose.yml` for the firewalld/local stack and `dev/docker-compose.ci.yml` for the CI/unprivileged stack. Both are test stacks and expose Caddy on host ports `18080` and `18443`.
 - **CI workflow shows integration tests**: The `.github/workflows/ci.yml` file contains the `curl` commands that serve as the project's integration tests. This is the best place to understand the expected request/response flow.
 - **Integration tests are authoritative**: Integration tests (dev/firewalld_integration_test.sh and dev/docker-compose.yml) exercise real interactions with the system (firewalld, Caddy). Use them as the final verification step for changes that touch networking, firewall rules, or startup/restore logic.
 
@@ -73,7 +72,7 @@ Knocker is a dynamic IP whitelisting service that integrates with reverse proxie
 ## Workflow
 
 - **Create Git Commits**: All work should be committed to Git.
-- **Run All Tests After Changes**: After making any code changes, you must run both the local unit tests (`PYTHONPATH=src python3 -m pytest`) and the full Docker-based integration tests (`docker compose -f dev/docker-compose.yml up -d --build` followed by the scripts under dev).
+- **Run All Tests After Changes**: After making any code changes, you must run both the local unit tests (`PYTHONPATH=src python3 -m pytest`) and the Docker-based integration tests using the standard `dev/` compose files plus the scripts under `dev/`.
 
 ## Repository Information
 

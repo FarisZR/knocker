@@ -31,8 +31,7 @@ USER appuser
 EXPOSE 8000
 
 
-# Define the command to run the application
-# Uvicorn is run with --forwarded-allow-ips="*" to trust the X-Forwarded-For
-# header from any proxy within the Docker network. This is safe because
-# only Caddy is on the same network and can reach this container.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--forwarded-allow-ips", "*"]
+# Define the command to run the application.
+# Keep Uvicorn from rewriting the direct peer from forwarded headers; Knocker
+# performs its own trusted-proxy validation using server.trusted_proxies.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

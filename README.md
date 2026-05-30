@@ -83,6 +83,7 @@ Knocker provides different image tags for different use cases:
     - Rename `knocker.example.yaml` to `knocker.yaml`.
     - **Crucially, change the default API keys** in `knocker.yaml` to your own secure, random strings.
     - Review the `trusted_proxies` list in `knocker.yaml`, they should match the subnet of the reverse proxy's network (`docker network inspect xxx`)
+    - Keep `whitelist.storage_path` under the app working directory, `/data`, or `/tmp`.
     - (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
 
 2.  **Run the Service**:
@@ -113,8 +114,7 @@ Caddy has the `forward_auth` directive to check connections using an auth endpoi
 # It points to the knocker service using Docker's internal DNS.
 (knocker_auth) {
   forward_auth knocker:8000 {
-    uri /verify?
-    copy_headers X-Forwarded-For
+    uri /verify
   }
 }
 
@@ -249,7 +249,9 @@ This endpoint validates an API key and whitelists an IP.
 
 ### `/verify` (GET)
 
-This endpoint is used by Caddy's `forward_auth` to check if the client's IP is whitelisted. It returns `200 OK` on success and `401 Unauthorized` on failure.
+This endpoint is used by Caddy's `forward_auth` to check if the client's IP is whitelisted. It returns `200 OK` on success and `401 Unauthorized` on failure. `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Uri` are only trusted when the request originates from `server.trusted_proxies`.
+
+Caddy already forwards the relevant `X-Forwarded-*` request headers to Knocker so `/verify` can make the auth decision.
 
 ## Tests
 The project includes a full test suite
@@ -264,11 +266,12 @@ To run the tests locally:
 
 2.  **Run Pytest**:
     ```bash
-    python3 -m pytest
+    PYTHONPATH=src python3 -m pytest
     ```
 
 ### Integration Tests
 There's a dev environment under [dev](./dev/), with bash scripts for integrations tests with caddy and a separate one with firewalld.
+The standard test stacks are `dev/docker-compose.yml` and `dev/docker-compose.ci.yml`; both expose Caddy on `http://localhost:18080` and `https://localhost:18443`.
 The CI runs the caddy tests, but firewalld needs a privileged runner, which is why it needs to be run locally and isn't a part of the CI.
 
 ## Docs

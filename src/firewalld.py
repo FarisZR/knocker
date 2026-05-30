@@ -10,11 +10,15 @@ This module handles all firewalld operations including:
 
 import logging
 import subprocess
-import json
 import time
 import ipaddress
 from typing import Dict, Any, List, Tuple, Optional
 from dataclasses import dataclass
+
+if __package__ in (None, ""):  # pragma: no cover - fallback for direct module execution
+    import core
+else:
+    from . import core
 
 
 @dataclass
@@ -45,9 +49,14 @@ class FirewalldIntegration:
         self.monitored_ips = self.firewalld_config.get("monitored_ips", [])
         
         self.logger = logging.getLogger(__name__)
-        
-        # Validate monitored IPs have proper CIDR notation
+
         if self.enabled:
+            if not isinstance(self.zone_name, str) or not core._ZONE_NAME_RE.fullmatch(self.zone_name):
+                raise ValueError(
+                    "Invalid zone_name. Use only letters, numbers, dots, underscores, colons, and hyphens"
+                )
+
+            # Validate monitored IPs have proper CIDR notation
             self._validate_monitored_ips()
             
             # Validate default action
@@ -64,17 +73,16 @@ class FirewalldIntegration:
         """Validate that all monitored IPs have proper CIDR notation."""
         for ip_str in self.monitored_ips:
             try:
+                if not isinstance(ip_str, str):
+                    raise ValueError("Monitored IP entries must be strings")
+                if '/' not in ip_str:
+                    raise ValueError("Entries must include an explicit network mask")
                 network = ipaddress.ip_network(ip_str, strict=False)
                 # Check if it's a single host without explicit netmask
-                if '/' not in ip_str:
-                    if network.version == 4:
-                        raise ValueError(f"IPv4 address '{ip_str}' must include network mask (e.g., '{ip_str}/32' for single host)")
-                    else:
-                        raise ValueError(f"IPv6 address '{ip_str}' must include network mask (e.g., '{ip_str}/128' for single host)")
             except ValueError as e:
                 self.logger.error(f"Invalid monitored IP '{ip_str}': {e}")
                 raise ValueError(f"Invalid monitored IP configuration: {e}")
-        
+
     def is_enabled(self) -> bool:
         """Check if firewalld integration is enabled."""
         return self.enabled
@@ -151,7 +159,7 @@ class FirewalldIntegration:
                 return None
             
             # Validate protocol
-            if protocol not in ["tcp", "udp"]:
+            if not isinstance(protocol, str) or protocol not in ["tcp", "udp"]:
                 self.logger.error(f"Invalid protocol: {protocol}")
                 return None
             

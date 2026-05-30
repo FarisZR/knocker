@@ -71,8 +71,7 @@ To protect your services, you will use Caddy's `forward_auth` directive.
 # It points to the knocker service using Docker's internal DNS.
 (knocker_auth) {
   forward_auth knocker:8000 {
-    uri /verify?
-    copy_headers X-Forwarded-For
+    uri /verify
   }
 }
 
@@ -216,6 +215,8 @@ This endpoint validates an API key and whitelists an IP.
 
 This endpoint is used by Caddy's `forward_auth` to check if the client's IP is whitelisted. It returns `200 OK` on success and `401 Unauthorized` on failure.
 
+Caddy already forwards the relevant `X-Forwarded-*` request headers to Knocker so `/verify` can make the auth decision.
+
 ## Tests
 The project includes a full test suite
 
@@ -229,10 +230,12 @@ To run the tests locally:
 
 2.  **Run Pytest**:
     ```bash
-    python3 -m pytest
+    PYTHONPATH=src python3 -m pytest
+    ```
 
 ### Integration Tests
 There's a dev environment under [dev](./dev/), with bash scripts for integrations tests with caddy and a separate one with firewalld.
+The standard test stacks are `dev/docker-compose.yml` and `dev/docker-compose.ci.yml`; both expose Caddy on `http://localhost:18080` and `https://localhost:18443`.
 The CI runs the caddy tests, but firewalld needs a privileged runner, which is why it needs to be run locally and isn't a part of the CI.
 
 ## Docs

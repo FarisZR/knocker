@@ -4,6 +4,7 @@ Tests timing attack resistance, edge case handling, and input validation.
 """
 import pytest
 import time
+from pathlib import Path
 from fastapi.testclient import TestClient
 from src.main import app, get_settings
 from src import core
@@ -55,6 +56,13 @@ client = TestClient(app)
 
 class TestTimingAttackResistance:
     """Test that API key validation is resistant to timing attacks."""
+
+    def test_dockerfile_disables_uvicorn_proxy_header_rewrite(self):
+        dockerfile = Path(__file__).resolve().parents[1] / "Dockerfile"
+        content = dockerfile.read_text(encoding="utf-8")
+
+        assert "--no-proxy-headers" in content
+        assert "--forwarded-allow-ips" not in content
     
     def test_constant_time_validation(self, test_settings):
         """
@@ -162,10 +170,11 @@ class TestTimingAttackResistance:
         assert core.is_valid_api_key("", test_settings) == False
         assert core.is_valid_api_key(None, test_settings) == False
     
-    def test_empty_api_keys_list_handled(self):
-        """Empty API keys list should be handled gracefully."""
+    def test_empty_api_keys_list_raises_configuration_error(self):
+        """Empty API keys list should surface a configuration error."""
         settings = {"api_keys": []}
-        assert core.is_valid_api_key("any_key", settings) == False
+        with pytest.raises(ValueError, match="Configuration must contain at least one API key"):
+            core.is_valid_api_key("any_key", settings)
 
 
 class TestTTLEdgeCases:
@@ -293,8 +302,11 @@ class TestHealthCheckDependencies:
         """Health check should detect inaccessible storage."""
         bad_settings = {**test_settings, "whitelist": {"storage_path": "./will_fail.json"}}
         app.dependency_overrides[get_settings] = lambda: bad_settings
-        # Simulate write failure
-        monkeypatch.setattr(core, "save_whitelist", lambda wl, st: (_ for _ in ()).throw(PermissionError("denied")))
+
+        def fail_probe(*args, **kwargs):
+            raise PermissionError("denied")
+
+        monkeypatch.setattr("pathlib.Path.write_text", fail_probe)
         resp = client.get("/health")
         assert resp.status_code == 503
         app.dependency_overrides = {}

@@ -281,19 +281,26 @@ class TestDenialOfService:
     
     def test_unlimited_whitelist_growth(self):
         """
-        VULNERABILITY: No limits on whitelist size could cause DoS.
+        SECURITY TEST: Growth is bounded by whitelist limits, not unlimited.
         """
-        # Add many entries to the whitelist
+        security_settings = app.dependency_overrides[get_settings]()["security"]
+        security_settings["max_whitelist_entries"] = 100
+
         for i in range(100):  # Reduced from 1000 to avoid long test times
+            forwarded_ip = f"10.1.{i // 250}.{(i % 250) + 1}"
             response = client.post(
                 "/knock",
-                headers={"X-Api-Key": "ADMIN_KEY", "X-Forwarded-For": "1.2.3.4"},
+                headers={
+                    "X-Api-Key": "ADMIN_KEY",
+                    "X-Forwarded-For": forwarded_ip,
+                    "x-knocker-test-direct-ip": f"127.0.0.{(i % 250) + 1}",
+                },
                 json={"ip_address": f"10.0.{i//256}.{i%256}", "ttl": 3600}
             )
             assert response.status_code == 200
-        
-        # The whitelist should now be very large
-        # In a real attack, this could consume all disk space
+
+        whitelist = core.load_whitelist({"whitelist": {"storage_path": "./test_security_whitelist.json"}})
+        assert len(whitelist) <= 100
     
     @pytest.mark.skip(reason="placeholder test for deep directory creation - requires network-level testing")
     def test_deep_directory_creation(self):
@@ -336,7 +343,7 @@ class TestDenialOfService:
                     except:
                         pass
                     assert False, f"Dangerous file was created at {dangerous_path}"
-            except (PermissionError, OSError, FileNotFoundError, NotADirectoryError):
+            except (PermissionError, OSError, FileNotFoundError, NotADirectoryError, ValueError):
                 # These exceptions are expected and good - the system is protecting us
                 pass
         
@@ -348,22 +355,9 @@ class TestDenialOfService:
             "security": {"trusted_proxies": ["127.0.0.1"], "excluded_paths": []}
         }
         
-        # This should work (might create directories) but should resolve to a safe location
-        try:
+        # Relative traversal outside the working tree should be rejected.
+        with pytest.raises(ValueError, match="must stay within"):
             core.save_whitelist({"127.0.0.1": int(time.time()) + 3600}, safe_settings)
-            # Clean up any files created
-            from pathlib import Path
-            path = Path(safe_traversal_path)
-            if path.exists():
-                path.unlink()
-            # Clean up any directories created during the test
-            try:
-                path.parent.rmdir()
-            except:
-                pass
-        except Exception:
-            # If it fails, that's also acceptable for security
-            pass
 
 
 class TestConfigurationSecurity:

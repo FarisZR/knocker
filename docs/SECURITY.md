@@ -26,7 +26,7 @@ server:
 
 **Limits**:
 - IPv4: Maximum 65,536 addresses per range
-- IPv6: Minimum /96 prefix (larger ranges rejected based on prefix length)
+- IPv6: Minimum /64 prefix (broader ranges are rejected)
 
 ### 3. Path Traversal Protection (Medium)
 
@@ -63,9 +63,24 @@ server:
 ```yaml
 security:
   max_whitelist_entries: 10000  # Default limit
+  knock_rate_limit:
+    window_seconds: 60
+    successful_requests: 20
+    failed_requests: 30
 ```
 
-### 7. Secure CORS Policy (Low)
+### 7. Whitelist Storage Path Validation (Low)
+
+**Issue**: A hostile configuration could point whitelist persistence at an unexpected path on disk.
+
+**Fix**: Whitelist storage is normalized with `realpath` and constrained to known-safe roots before any file operation.
+
+**Allowed roots**:
+- The current working directory
+- `/data`
+- `/tmp`
+
+### 8. Secure CORS Policy (Low)
 
 **Issue**: Default CORS policy used wildcard origin (`*`), allowing any website to make requests.
 
@@ -82,12 +97,16 @@ cors:
 ### 1. Network Configuration
 
 - **Always configure trusted_proxies**: Only include the actual reverse proxy IPs/networks
+- **Leave proxy-header resolution to Knocker**: Do not enable Uvicorn proxy-header rewriting in front of `server.trusted_proxies`
+- **Reject malformed forwarded chains**: If a trusted proxy sends an invalid `X-Forwarded-For` chain, Knocker now treats the client IP as unresolved instead of falling back to the proxy IP
 - **Use Docker networks**: Isolate knocker service on a private Docker network
 - **Firewall rules**: Restrict direct access to the knocker service port
 
 ### 2. API Key Management
 
 - **Use strong, random API keys**: Generate cryptographically secure random strings
+- **Prefer hashed keys**: Store `api_keys[].key_hash` instead of plaintext `key`
+- **Do not reuse secrets across entries**: Avoid configuring the same secret twice, including mixed `key` and `key_hash` forms
 - **Principle of least privilege**: Set `allow_remote_whitelist: false` for most keys
 - **Regular rotation**: Rotate API keys periodically
 - **Separate keys for different purposes**: Use different keys for admin vs user access
@@ -119,6 +138,7 @@ The project includes comprehensive security tests in `tests/test_security_fixes.
 - Path traversal prevention
 - Information disclosure protection
 - Size limits and DoS prevention
+- Rate limiting
 
 Run security tests with:
 ```bash
@@ -138,7 +158,7 @@ If you discover security vulnerabilities not covered by these protections:
 
 This security audit identified and fixed multiple vulnerabilities:
 
-- **7 security issues** ranging from Critical to Low severity
+- **9 security issues** ranging from Critical to Low severity
 - **100% of identified vulnerabilities** have been addressed
 - **Comprehensive test coverage** added for all security controls
 - **Documentation** updated with security best practices

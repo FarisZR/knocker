@@ -1,11 +1,11 @@
 services:
   caddy:
-    image: caddy:latest
+    image: caddy:2.7.6
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp" # For HTTP/3
+      - "18080:80"
+      - "18443:443"
+      - "18443:443/udp" # For HTTP/3
     networks:
       - caddy_net
     volumes:

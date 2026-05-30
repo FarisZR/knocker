@@ -1,10 +1,11 @@
 import pytest
 import time
+import ipaddress
 from src import core
 
 # --- Test IP/CIDR Validation ---
 
-@pytest.mark.parametrize("address, expected", [
+@pytest.mark.parametrize(("address", "expected"), [
     ("192.168.1.1", True),
     ("2001:db8::1", True),
     ("10.0.0.0/8", True),
@@ -115,3 +116,137 @@ def test_is_valid_api_key(mock_settings):
 def test_is_invalid_api_key(mock_settings):
     """Tests that an invalid key is rejected."""
     assert core.is_valid_api_key("fake_key", mock_settings) == False
+
+def test_duplicate_api_key_material_detected_across_plaintext_and_hash():
+    """The same secret must be rejected even across key and key_hash forms."""
+    with pytest.raises(ValueError, match="Duplicate API key material"):
+        core.APIKeyRegistry.from_settings([
+            {"key": "duplicate_key", "max_ttl": 3600, "allow_remote_whitelist": True},
+            {
+                "key_hash": core.hash_api_key("duplicate_key"),
+                "max_ttl": 600,
+                "allow_remote_whitelist": False,
+            },
+        ])
+
+def test_allow_remote_whitelist_must_be_boolean():
+    with pytest.raises(ValueError, match="must define boolean allow_remote_whitelist"):
+        core.APIKeyRegistry.from_settings([
+            {"key": "admin_key", "max_ttl": 3600, "allow_remote_whitelist": "false"},
+        ])
+
+def test_rate_limiter_reservation_can_be_released():
+    """A released reservation should free the success slot immediately."""
+    limiter = core.SlidingWindowRateLimiter(window_seconds=60, successful_requests=1, failed_requests=1)
+
+    reservation = limiter.reserve("actor", "success", now=100)
+
+    assert reservation is not None
+    assert limiter.reserve("actor", "success", now=100) is None
+
+    limiter.release("actor", "success", reservation)
+
+    assert limiter.reserve("actor", "success", now=100) is not None
+
+def test_rate_limiter_prunes_stale_actor_buckets():
+    limiter = core.SlidingWindowRateLimiter(window_seconds=10, successful_requests=1, failed_requests=1)
+
+    assert limiter.reserve("actor-a", "success", now=10) is not None
+
+    assert limiter.can_allow("actor-b", "success", now=25) is True
+    assert ("success", "actor-a") not in limiter._events
+
+def test_whitelist_store_contains_reloads_shared_state(tmp_path):
+    whitelist_path = tmp_path / "whitelist.json"
+    store = core.WhitelistStore(storage_path=whitelist_path, max_entries=10)
+    address = ipaddress.ip_address("203.0.113.10")
+    now = int(time.time())
+
+    assert store.contains(address, now=now) is False
+
+    core._write_whitelist_file(whitelist_path, {"203.0.113.10": now + 60})
+
+    assert store.contains(address, now=now) is True
+
+def test_whitelist_store_contains_skips_reload_when_storage_unchanged(tmp_path, monkeypatch):
+    whitelist_path = tmp_path / "whitelist.json"
+    store = core.WhitelistStore(storage_path=whitelist_path, max_entries=10)
+    address = ipaddress.ip_address("203.0.113.10")
+
+    def unexpected_read(_: object) -> dict[str, int]:
+        pytest.fail("contains reloaded whitelist without a storage change")
+
+    monkeypatch.setattr(core, "_read_whitelist_file", unexpected_read)
+
+    assert store.contains(address, now=int(time.time())) is False
+    assert store.contains(address, now=int(time.time())) is False
+
+
+def test_whitelist_store_compaction_preserves_entries_added_by_other_processes(tmp_path):
+    whitelist_path = tmp_path / "whitelist.json"
+    now = int(time.time())
+
+    core._write_whitelist_file(whitelist_path, {"192.0.2.10": now - 60})
+    store = core.WhitelistStore(storage_path=whitelist_path, max_entries=10)
+
+    assert store._pending_compaction is True
+    assert store.active_snapshot() == {}
+
+    core._write_whitelist_file(whitelist_path, {"198.51.100.20": now + 60})
+
+    assert store.compact_expired(now=now) is False
+    assert core._read_whitelist_file(whitelist_path) == {"198.51.100.20": now + 60}
+    assert store.active_snapshot() == {"198.51.100.20": now + 60}
+
+
+@pytest.mark.parametrize(
+    ("helper", "expected_message"),
+    [
+        (core.is_valid_api_key, "Configuration must contain at least one API key"),
+        (core.can_whitelist_remote, "Configuration must contain at least one API key"),
+        (core.get_max_ttl_for_key, "Configuration must contain at least one API key"),
+        (core.get_api_key_name, "Configuration must contain at least one API key"),
+    ],
+)
+def test_api_key_helpers_propagate_configuration_errors(helper, expected_message):
+    with pytest.raises(ValueError, match=expected_message):
+        helper("any_key", {"api_keys": []})
+
+def test_ensure_runtime_state_is_initialized_once(tmp_path):
+    settings = {
+        "server": {"trusted_proxies": ["127.0.0.1"]},
+        "api_keys": [{"key": "admin_key", "max_ttl": 3600, "allow_remote_whitelist": True}],
+        "whitelist": {"storage_path": str(tmp_path / "whitelist.json")},
+        "security": {"always_allowed_ips": []},
+    }
+
+    states = []
+    import threading
+
+    def worker():
+        states.append(core.ensure_runtime_state(settings))
+
+    first = threading.Thread(target=worker)
+    second = threading.Thread(target=worker)
+    first.start()
+    second.start()
+    first.join()
+    second.join()
+
+    assert len(states) == 2
+    assert states[0] is states[1]
+
+
+@pytest.mark.parametrize(
+    "forwarded_for",
+    [
+        ", ,",
+        "not-an-ip",
+        ",1.2.3.4",
+        ",".join(["1.2.3.4"] * 21),
+    ],
+)
+def test_resolve_client_ip_rejects_malformed_forwarded_chain_from_trusted_proxy(forwarded_for):
+    trusted_proxies = core.ParsedNetworkSet.from_entries(["127.0.0.1"], "trusted_proxies")
+
+    assert core.resolve_client_ip("127.0.0.1", forwarded_for, trusted_proxies) == (None, True)

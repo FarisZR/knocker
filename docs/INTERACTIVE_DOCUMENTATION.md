@@ -84,9 +84,9 @@ When testing endpoints that require API keys (like `/knock`):
 3. Test protected endpoints with proper authentication
 
 Example API keys are defined in `knocker.example.yaml`:
-- `CHANGE_ME_SUPER_SECRET_ADMIN_KEY` (admin access)
-- `CHANGE_ME_SECRET_PHONE_KEY` (personal access)
-- `CHANGE_ME_TEMPORARY_GUEST_KEY` (guest access)
+- `admin` / `CHANGE_ME_SUPER_SECRET_ADMIN_KEY`
+- `phone` / `CHANGE_ME_SECRET_PHONE_KEY`
+- `guest` / `CHANGE_ME_TEMPORARY_GUEST_KEY`
 
 **Security Note**: Change these default keys in production!
 
@@ -153,7 +153,7 @@ print(f"Whitelisted until: {data['expires_at']}")
 
 ## Development
 
-When running in development mode (using `dev/docker-compose.yml`), the documentation is accessible through the Caddy reverse proxy, providing the same experience as production deployment.
+When running in development mode (using `dev/docker-compose.yml`), the documentation is accessible through the Caddy reverse proxy at `http://localhost:18080/docs`, providing the same experience as production deployment.
 
 The generated OpenAPI schema reflects the exact API configuration including:
 - Configured CORS origins
