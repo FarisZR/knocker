@@ -270,6 +270,21 @@ def test_verify_success_always_allowed_cidr():
     response = client.get("/verify", headers={"X-Forwarded-For": "2001:db8:cafe:1234::1"})
     assert response.status_code == 200
 
+
+def test_verify_rejects_malformed_forwarded_chain_from_trusted_proxy(mock_settings):
+    """Malformed forwarded chains from trusted proxies must not fall back to the proxy IP."""
+    mock_settings["security"]["always_allowed_ips"].append("127.0.0.1")
+
+    response = client.get(
+        "/verify",
+        headers={
+            "X-Forwarded-For": "not-an-ip",
+            "X-Forwarded-Uri": "/private",
+        },
+    )
+
+    assert response.status_code == 401
+
 def test_verify_success_excluded_path():
     """A request to an excluded path should pass /verify regardless of IP."""
     response = client.get("/verify", headers={"X-Forwarded-For": "9.9.9.9", "X-Forwarded-Uri": "/healthz"})

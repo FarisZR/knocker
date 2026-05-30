@@ -617,16 +617,17 @@ def resolve_client_ip(
     if not forwarded_for or not trusted_proxy:
         return direct_ip, False
 
-    entries = [entry.strip() for entry in forwarded_for.split(",") if entry.strip()]
-    if not entries or len(entries) > 20:
-        return direct_ip, True
+    raw_entries = [entry.strip() for entry in forwarded_for.split(",")]
+    if not raw_entries or any(not entry for entry in raw_entries) or len(raw_entries) > 20:
+        return None, True
+    entries = raw_entries
 
     parsed_entries: list[IPAddress] = []
     for entry in entries:
         try:
             parsed_entries.append(ipaddress.ip_address(entry))
         except ValueError:
-            return direct_ip, True
+            return None, True
 
     for candidate in reversed(parsed_entries):
         if trusted_proxies.contains(candidate):

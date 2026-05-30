@@ -98,6 +98,7 @@ cors:
 
 - **Always configure trusted_proxies**: Only include the actual reverse proxy IPs/networks
 - **Leave proxy-header resolution to Knocker**: Do not enable Uvicorn proxy-header rewriting in front of `server.trusted_proxies`
+- **Reject malformed forwarded chains**: If a trusted proxy sends an invalid `X-Forwarded-For` chain, Knocker now treats the client IP as unresolved instead of falling back to the proxy IP
 - **Use Docker networks**: Isolate knocker service on a private Docker network
 - **Firewall rules**: Restrict direct access to the knocker service port
 

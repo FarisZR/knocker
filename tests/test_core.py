@@ -235,3 +235,18 @@ def test_ensure_runtime_state_is_initialized_once(tmp_path):
 
     assert len(states) == 2
     assert states[0] is states[1]
+
+
+@pytest.mark.parametrize(
+    "forwarded_for",
+    [
+        ", ,",
+        "not-an-ip",
+        ",1.2.3.4",
+        ",".join(["1.2.3.4"] * 21),
+    ],
+)
+def test_resolve_client_ip_rejects_malformed_forwarded_chain_from_trusted_proxy(forwarded_for):
+    trusted_proxies = core.ParsedNetworkSet.from_entries(["127.0.0.1"], "trusted_proxies")
+
+    assert core.resolve_client_ip("127.0.0.1", forwarded_for, trusted_proxies) == (None, True)
