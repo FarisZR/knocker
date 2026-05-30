@@ -324,7 +324,7 @@ The `/health` endpoint can be used to verify the service is running, but it does
 Run the comprehensive firewalld test suite:
 
 ```bash
-PYTHONPATH=src python3 -m pytest tests/test_firewalld.py -v
+uv run pytest tests/test_firewalld.py -v
 ```
 
 ### Integration Tests

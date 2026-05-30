@@ -11,14 +11,24 @@ Knocker is a self-hosted single-packet authorization (SPA) gateway for homelabs.
 ### Testing
 
 ```bash
-# Run unit tests (must set PYTHONPATH)
-PYTHONPATH=src python3 -m pytest
+# Sync the local environment
+uv sync --all-groups
+
+# Run unit tests
+uv run pytest
 
 # Run specific test file
-PYTHONPATH=src python3 -m pytest tests/test_core.py
+uv run pytest tests/test_core.py
 
 # Run with verbose output
-PYTHONPATH=src python3 -m pytest -v
+uv run pytest -v
+
+# Run lint and format checks
+uv run --group lint ruff check .
+uv run --group lint ruff format --check .
+
+# Run type checks
+uv run --group type ty check
 
 # Run integration tests (requires Docker)
 cd dev && ./local_integration_tests.sh
@@ -42,7 +52,7 @@ docker compose -f dev/docker-compose.yml down
 # The dev test stack exposes Caddy on localhost:18080 and localhost:18443
 
 # Install dependencies locally
-pip install -r src/requirements.txt
+uv sync --all-groups
 ```
 
 ### Running Locally (without Docker)
@@ -50,7 +60,7 @@ pip install -r src/requirements.txt
 ```bash
 # Set config path and run with uvicorn
 export KNOCKER_CONFIG_PATH=knocker.yaml
-cd src && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Building Docker Image
@@ -129,7 +139,7 @@ See [docs/FIREWALLD_INTEGRATION.md](docs/FIREWALLD_INTEGRATION.md) for detailed 
 
 ### Unit Tests
 
-- **MUST** set `PYTHONPATH=src` or imports will fail
+- Run tests from the repository root with `uv run pytest`
 - Tests use fixtures in `conftest.py` (if present) and mock external dependencies
 - Security tests validate IP spoofing prevention, CIDR range limits, and API key permissions
 
@@ -184,12 +194,13 @@ Keys are IPs/CIDRs, values are Unix timestamps for expiration.
 ## Workflow
 
 After making changes:
-1. Run unit tests: `PYTHONPATH=src python3 -m pytest`
+1. Run unit tests: `uv run pytest`
 2. Build and test with Docker: `cd dev && docker compose up --build -d`
 3. Run integration tests: `cd dev && ./local_integration_tests.sh`
 4. If modifying FirewallD code, run: `cd dev && ./firewalld_integration_test.sh`
-5. Update relevant documentation in [docs/](docs/)
-6. Commit with descriptive message
+5. Run tooling checks: `uv run --group lint ruff check .`, `uv run --group lint ruff format --check .`, and `uv run --group type ty check`
+6. Update relevant documentation in [docs/](docs/)
+7. Commit with descriptive message
 
 ## Known Issues
 

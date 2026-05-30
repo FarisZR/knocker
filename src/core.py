@@ -67,9 +67,7 @@ def validate_whitelist_storage_path(
         for root in allowed_roots
     ):
         allowed = ", ".join(allowed_roots)
-        raise ValueError(
-            f"whitelist.storage_path must stay within one of these roots: {allowed}"
-        )
+        raise ValueError(f"whitelist.storage_path must stay within one of these roots: {allowed}")
 
     return Path(resolved_path)
 
@@ -79,7 +77,9 @@ def get_whitelist_storage_path(settings: Dict[str, Any]) -> Path:
     if not isinstance(whitelist_settings, dict):
         raise ValueError("whitelist configuration must be a mapping")
 
-    storage_path = validate_whitelist_storage_path(whitelist_settings.get("storage_path", "whitelist.json"))
+    storage_path = validate_whitelist_storage_path(
+        whitelist_settings.get("storage_path", "whitelist.json")
+    )
     whitelist_settings["storage_path"] = str(storage_path)
     return storage_path
 
@@ -129,7 +129,9 @@ def _canonical_network(value: str) -> Tuple[str, IPNetwork]:
     return str(network), network
 
 
-def _parse_entry_list(entries: Iterable[str], label: str) -> Tuple[Tuple[IPAddress, ...], Tuple[IPNetwork, ...]]:
+def _parse_entry_list(
+    entries: Iterable[str], label: str
+) -> Tuple[Tuple[IPAddress, ...], Tuple[IPNetwork, ...]]:
     exact: list[IPAddress] = []
     networks: list[IPNetwork] = []
     for entry in entries:
@@ -204,14 +206,22 @@ class DynamicWhitelistIndex:
             expiry = self.exact_v4.get(address)
             if expiry and expiry > now:
                 return True
-            return any(expiry_time > now and address in network for network, expiry_time in self.networks_v4.items())
+            return any(
+                expiry_time > now and address in network
+                for network, expiry_time in self.networks_v4.items()
+            )
 
         expiry = self.exact_v6.get(address)
         if expiry and expiry > now:
             return True
-        return any(expiry_time > now and address in network for network, expiry_time in self.networks_v6.items())
+        return any(
+            expiry_time > now and address in network
+            for network, expiry_time in self.networks_v6.items()
+        )
 
-    def to_serialized(self, now: Optional[int] = None, include_expired: bool = True) -> Dict[str, int]:
+    def to_serialized(
+        self, now: Optional[int] = None, include_expired: bool = True
+    ) -> Dict[str, int]:
         serialized: Dict[str, int] = {}
         cutoff = int(time.time()) if now is None else now
 
@@ -330,9 +340,13 @@ class WhitelistStore:
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         if self.storage_path.exists():
             if not os.access(self.storage_path, os.R_OK | os.W_OK):
-                raise ValueError(f"Whitelist storage path is not readable and writable: {self.storage_path}")
+                raise ValueError(
+                    f"Whitelist storage path is not readable and writable: {self.storage_path}"
+                )
         elif not os.access(self.storage_path.parent, os.R_OK | os.W_OK | os.X_OK):
-            raise ValueError(f"Whitelist storage directory is not accessible: {self.storage_path.parent}")
+            raise ValueError(
+                f"Whitelist storage directory is not accessible: {self.storage_path.parent}"
+            )
         self.reload_from_disk()
 
     def _storage_version_token(self) -> Optional[Tuple[int, int, int]]:
@@ -342,12 +356,16 @@ class WhitelistStore:
             return None
         return (stat_result.st_mtime_ns, stat_result.st_size, stat_result.st_ino)
 
-    def _reload_from_disk_locked(self, storage_version: Optional[Tuple[int, int, int]] = None) -> None:
+    def _reload_from_disk_locked(
+        self, storage_version: Optional[Tuple[int, int, int]] = None
+    ) -> None:
         raw = _read_whitelist_file(self.storage_path)
         normalized, changed = _normalize_serialized_whitelist(raw, drop_expired=True)
         self._index = DynamicWhitelistIndex.from_serialized(normalized)
         self._pending_compaction = changed
-        self._storage_version = storage_version if storage_version is not None else self._storage_version_token()
+        self._storage_version = (
+            storage_version if storage_version is not None else self._storage_version_token()
+        )
 
     def reload_from_disk(self) -> None:
         with self._lock:
@@ -366,13 +384,17 @@ class WhitelistStore:
 
         now = int(time.time())
         if expiry_time <= now:
-            raise ValueError(f"Expiry time {expiry_time} is not in the future (current time: {now})")
+            raise ValueError(
+                f"Expiry time {expiry_time} is not in the future (current time: {now})"
+            )
 
         canonical, _ = _canonical_network(ip_or_cidr)
         with self._lock:
             with _interprocess_whitelist_lock(self.storage_path):
                 persisted = _read_whitelist_file(self.storage_path)
-                normalized, _ = _normalize_serialized_whitelist(persisted, drop_expired=True, now=now)
+                normalized, _ = _normalize_serialized_whitelist(
+                    persisted, drop_expired=True, now=now
+                )
                 normalized[canonical] = expiry_time
                 normalized = _limit_whitelist_entries(normalized, self.max_entries)
                 _write_whitelist_file(self.storage_path, normalized)
@@ -387,7 +409,9 @@ class WhitelistStore:
         with self._lock:
             with _interprocess_whitelist_lock(self.storage_path):
                 _write_whitelist_file(self.storage_path, normalized)
-                active, changed = _normalize_serialized_whitelist(normalized, drop_expired=True, now=now)
+                active, changed = _normalize_serialized_whitelist(
+                    normalized, drop_expired=True, now=now
+                )
                 self._index = DynamicWhitelistIndex.from_serialized(active)
                 self._pending_compaction = changed
                 self._storage_version = self._storage_version_token()
@@ -397,13 +421,17 @@ class WhitelistStore:
         cutoff = int(time.time()) if now is None else now
         with self._lock:
             before = self._index.to_serialized(include_expired=True)
-            after = _limit_whitelist_entries(self._index.to_serialized(now=cutoff, include_expired=False), self.max_entries)
+            after = _limit_whitelist_entries(
+                self._index.to_serialized(now=cutoff, include_expired=False), self.max_entries
+            )
             if not self._pending_compaction and before == after:
                 return False
 
             with _interprocess_whitelist_lock(self.storage_path):
                 persisted = _read_whitelist_file(self.storage_path)
-                active, changed = _normalize_serialized_whitelist(persisted, drop_expired=True, now=cutoff)
+                active, changed = _normalize_serialized_whitelist(
+                    persisted, drop_expired=True, now=cutoff
+                )
                 compacted = _limit_whitelist_entries(active, self.max_entries)
                 wrote = changed or compacted != persisted
                 if wrote:
@@ -583,7 +611,9 @@ def is_path_excluded(path: str, settings: Dict[str, Any], host: Optional[str] = 
     return path_exclusions.matches(host, path)
 
 
-def is_trusted_proxy(client_ip: str, trusted_proxies: Union[Sequence[str], ParsedNetworkSet]) -> bool:
+def is_trusted_proxy(
+    client_ip: str, trusted_proxies: Union[Sequence[str], ParsedNetworkSet]
+) -> bool:
     if not client_ip:
         return False
 
@@ -764,7 +794,9 @@ class SlidingWindowRateLimiter:
     window_seconds: int
     successful_requests: int
     failed_requests: int
-    _events: Dict[Tuple[str, str], Deque[Tuple[int, int]]] = field(default_factory=lambda: defaultdict(deque))
+    _events: Dict[Tuple[str, str], Deque[Tuple[int, int]]] = field(
+        default_factory=lambda: defaultdict(deque)
+    )
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _token_counter: int = field(default=0, init=False)
     _last_global_prune: int = field(default=0, init=False)
@@ -804,7 +836,9 @@ class SlidingWindowRateLimiter:
 
         self._last_global_prune = now
 
-    def reserve(self, actor: str, outcome: str, now: Optional[int] = None) -> Optional[Tuple[int, int]]:
+    def reserve(
+        self, actor: str, outcome: str, now: Optional[int] = None
+    ) -> Optional[Tuple[int, int]]:
         limit = self.successful_requests if outcome == "success" else self.failed_requests
         timestamp = int(time.time()) if now is None else now
         if limit == 0:
@@ -933,7 +967,9 @@ def _validate_firewalld_config(settings: Dict[str, Any]) -> None:
         port = port_config.get("port")
         protocol = port_config.get("protocol", "tcp")
         if not isinstance(port, int) or not (1 <= port <= 65535):
-            raise ValueError(f"firewalld.monitored_ports[{index}].port must be an integer between 1 and 65535")
+            raise ValueError(
+                f"firewalld.monitored_ports[{index}].port must be an integer between 1 and 65535"
+            )
         if protocol not in {"tcp", "udp"}:
             raise ValueError(f"firewalld.monitored_ports[{index}].protocol must be 'tcp' or 'udp'")
 
@@ -964,7 +1000,9 @@ def ensure_runtime_state(settings: Dict[str, Any]) -> RuntimeState:
         security_settings = settings.get("security", {}) or {}
         whitelist_settings = settings.get("whitelist", {}) or {}
 
-        trusted_proxies = ParsedNetworkSet.from_entries(server_settings.get("trusted_proxies", []) or [], "trusted_proxies")
+        trusted_proxies = ParsedNetworkSet.from_entries(
+            server_settings.get("trusted_proxies", []) or [], "trusted_proxies"
+        )
         always_allowed = ParsedNetworkSet.from_entries(
             security_settings.get("always_allowed_ips", []) or [],
             "always_allowed_ips",
@@ -1050,7 +1088,9 @@ def is_ip_whitelisted(ip: str, whitelist: Dict[str, int], settings: Dict[str, An
         return False
 
     runtime_state = settings.get(_RUNTIME_STATE_KEY)
-    if isinstance(runtime_state, RuntimeState) and runtime_state.always_allowed_ips.contains(address):
+    if isinstance(runtime_state, RuntimeState) and runtime_state.always_allowed_ips.contains(
+        address
+    ):
         return True
 
     if not isinstance(runtime_state, RuntimeState):
@@ -1088,7 +1128,9 @@ def can_record_knock_attempt(settings: Dict[str, Any], actor: str, outcome: str)
     return runtime_state.rate_limiter.can_allow(actor, outcome, int(time.time()))
 
 
-def add_ip_to_whitelist_with_firewalld(ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]) -> bool:
+def add_ip_to_whitelist_with_firewalld(
+    ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]
+) -> bool:
     try:
         from . import firewalld
     except ImportError:

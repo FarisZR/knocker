@@ -142,7 +142,7 @@ The project includes comprehensive security tests in `tests/test_security_fixes.
 
 Run security tests with:
 ```bash
-PYTHONPATH=src python3 -m pytest tests/test_security_fixes.py -v
+uv run pytest tests/test_security_fixes.py -v
 ```
 
 ## Reporting Security Issues

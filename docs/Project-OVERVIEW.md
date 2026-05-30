@@ -225,12 +225,12 @@ To run the tests locally:
 
 1.  **Install Dependencies**:
     ```bash
-    pip install -r src/requirements.txt
+    uv sync --all-groups
     ```
 
 2.  **Run Pytest**:
     ```bash
-    PYTHONPATH=src python3 -m pytest
+    uv run pytest
     ```
 
 ### Integration Tests

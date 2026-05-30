@@ -9,6 +9,7 @@ try:
 except ImportError:  # pragma: no cover - fallback for direct module execution
     import core
 
+
 def setup_logging(settings: Dict[str, Any]):
     """
     Configures logging for the application.
@@ -24,13 +25,14 @@ def setup_logging(settings: Dict[str, Any]):
         level=log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         stream=sys.stdout,
-        force=True
+        force=True,
     )
 
     # Ensure the root logger and common framework loggers follow the configured level.
     logging.getLogger().setLevel(log_level)
     for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logging.getLogger(logger_name).setLevel(log_level)
+
 
 def load_config() -> Dict[str, Any]:
     """
@@ -46,7 +48,7 @@ def load_config() -> Dict[str, Any]:
     try:
         resolved_path = os.path.realpath(path)
         # Ensure the path doesn't contain suspicious patterns
-        if '..' in path or not os.path.isabs(resolved_path):
+        if ".." in path or not os.path.isabs(resolved_path):
             logging.critical(f"Invalid configuration path: {path}")
             sys.exit(1)
     except (OSError, ValueError) as e:
@@ -54,9 +56,9 @@ def load_config() -> Dict[str, Any]:
         sys.exit(1)
 
     try:
-        with open(resolved_path, 'r') as f:
+        with open(resolved_path, "r") as f:
             config = yaml.safe_load(f) or {}
-            
+
         # Validate configuration structure
         if not isinstance(config, dict):
             logging.critical("Configuration file must contain a valid YAML dictionary")
@@ -67,7 +69,7 @@ def load_config() -> Dict[str, Any]:
         except ValueError as exc:
             logging.critical(f"Invalid configuration: {exc}")
             sys.exit(1)
-            
+
         return config
     except FileNotFoundError:
         logging.critical(f"Configuration file not found at {resolved_path}")
