@@ -241,6 +241,12 @@ class FirewalldIntegration:
         if not self.is_firewalld_available():
             return False
 
+        if not self._check_firewalld_version():
+            self.logger.error(
+                "Firewalld 2.0 or newer is required before configuring zone priority."
+            )
+            return False
+
         try:
             # Check if zone already exists
             success, stdout, _ = self._run_firewall_cmd(["--get-zones"], check=False)
@@ -355,8 +361,9 @@ class FirewalldIntegration:
             self.logger.info(f"Added firewalld rule for {ip_address}:{port}/{protocol}")
             return True
 
-        # If the command succeeded but indicates the rule already exists, attempt replace
-        if success and (
+        # Attempt replace whenever firewalld indicates the rule already exists, even if
+        # it returned a non-zero exit status.
+        if (
             "ALREADY_ENABLED" in combined_output
             or "ALREADY IN" in combined_output
             or ("ALREADY" in combined_output and "IN" in combined_output)

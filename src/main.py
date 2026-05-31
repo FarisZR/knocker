@@ -27,6 +27,9 @@ except ImportError:  # pragma: no cover - fallback for direct module execution
     from models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse
 
 
+MAX_TTL = 315360000
+
+
 @lru_cache()
 def get_settings() -> Dict:
     """
@@ -531,7 +534,6 @@ async def knock(
             )
 
         # Prevent extremely large TTL values (max 10 years = 315360000 seconds)
-        MAX_TTL = 315360000
         if requested_ttl > MAX_TTL:
             logging.warning(
                 f"TTL {requested_ttl} exceeds maximum allowed ({MAX_TTL}) from {client_ip}."

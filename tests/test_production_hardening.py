@@ -5,10 +5,44 @@ Tests timing attack resistance, edge case handling, and input validation.
 
 import pytest
 import time
+import logging
 from pathlib import Path
 from fastapi.testclient import TestClient
 from src.main import app, get_settings
 from src import core
+
+
+def _minimal_valid_config_yaml() -> str:
+    return """
+server:
+  host: "0.0.0.0"
+  port: 8000
+  trusted_proxies:
+    - "127.0.0.1"
+cors:
+  allowed_origin: "https://example.com"
+security:
+  always_allowed_ips: []
+  excluded_paths:
+    - "/knock"
+  max_whitelist_entries: 100
+whitelist:
+  storage_path: "/tmp/knocker-test-whitelist.json"
+  cleanup_interval_seconds: 60
+api_keys:
+  - name: "primary"
+    key: "secret-1"
+    max_ttl: 3600
+    allow_remote_whitelist: true
+documentation:
+  enabled: false
+""".strip()
+
+
+def _write_config(tmp_path: Path, content: str) -> Path:
+    config_file = tmp_path / "test_config.yaml"
+    config_file.write_text(content)
+    return config_file
 
 
 @pytest.fixture
@@ -326,7 +360,7 @@ class TestHealthCheckDependencies:
 class TestConfigurationValidation:
     """Test configuration loading validation."""
 
-    def test_duplicate_api_keys_detected(self, tmp_path):
+    def test_duplicate_api_keys_detected(self, tmp_path, caplog):
         """Duplicate API keys should be detected during config load."""
         import os
         from src import config
@@ -335,29 +369,25 @@ class TestConfigurationValidation:
         original_path = os.environ.get("KNOCKER_CONFIG_PATH")
 
         try:
-            # Create a config with duplicate keys
-            config_content = """
-api_keys:
-  - name: "key1"
-    key: "duplicate_key"
-    max_ttl: 3600
-    allow_remote_whitelist: true
-  - name: "key2"
-    key: "duplicate_key"
-    max_ttl: 600
-    allow_remote_whitelist: false
-"""
-            config_file = tmp_path / "test_config.yaml"
-            config_file.write_text(config_content)
+            config_file = _write_config(
+                tmp_path,
+                _minimal_valid_config_yaml().replace(
+                    "allow_remote_whitelist: true",
+                    'allow_remote_whitelist: true\n  - name: "duplicate"\n    key: "secret-1"\n    max_ttl: 600\n    allow_remote_whitelist: false',
+                    1,
+                ),
+            )
 
             # Set environment variable
             os.environ["KNOCKER_CONFIG_PATH"] = str(config_file)
 
             # Should exit with error
+            caplog.set_level(logging.CRITICAL)
             with pytest.raises(SystemExit) as exc_info:
                 config.load_config()
 
             assert exc_info.value.code == 1
+            assert "Duplicate API key material detected at index 1" in caplog.text
         finally:
             # Restore original env var
             if original_path:
@@ -365,7 +395,7 @@ api_keys:
             elif "KNOCKER_CONFIG_PATH" in os.environ:
                 del os.environ["KNOCKER_CONFIG_PATH"]
 
-    def test_empty_api_keys_detected(self, tmp_path):
+    def test_empty_api_keys_detected(self, tmp_path, caplog):
         """Empty API keys list should be detected."""
         import os
         from src import config
@@ -373,25 +403,27 @@ api_keys:
         original_path = os.environ.get("KNOCKER_CONFIG_PATH")
 
         try:
-            config_content = """
-api_keys: []
-"""
-            config_file = tmp_path / "test_config.yaml"
-            config_file.write_text(config_content)
+            config_content = _minimal_valid_config_yaml().replace(
+                'api_keys:\n  - name: "primary"\n    key: "secret-1"\n    max_ttl: 3600\n    allow_remote_whitelist: true',
+                "api_keys: []",
+            )
+            config_file = _write_config(tmp_path, config_content)
 
             os.environ["KNOCKER_CONFIG_PATH"] = str(config_file)
 
+            caplog.set_level(logging.CRITICAL)
             with pytest.raises(SystemExit) as exc_info:
                 config.load_config()
 
             assert exc_info.value.code == 1
+            assert "Configuration must contain at least one API key" in caplog.text
         finally:
             if original_path:
                 os.environ["KNOCKER_CONFIG_PATH"] = original_path
             elif "KNOCKER_CONFIG_PATH" in os.environ:
                 del os.environ["KNOCKER_CONFIG_PATH"]
 
-    def test_path_traversal_in_config_path_rejected(self, tmp_path):
+    def test_path_traversal_in_config_path_rejected(self, tmp_path, caplog):
         """Path traversal in KNOCKER_CONFIG_PATH should be rejected."""
         import os
         from src import config
@@ -399,13 +431,17 @@ api_keys: []
         original_path = os.environ.get("KNOCKER_CONFIG_PATH")
 
         try:
+            _write_config(tmp_path, _minimal_valid_config_yaml())
+
             # Try to use path traversal
             os.environ["KNOCKER_CONFIG_PATH"] = "../../../etc/passwd"
 
+            caplog.set_level(logging.CRITICAL)
             with pytest.raises(SystemExit) as exc_info:
                 config.load_config()
 
             assert exc_info.value.code == 1
+            assert "Invalid configuration path: ../../../etc/passwd" in caplog.text
         finally:
             if original_path:
                 os.environ["KNOCKER_CONFIG_PATH"] = original_path
@@ -464,7 +500,7 @@ class TestEdgeCaseHandling:
         # All requests should succeed
         assert all(code == 200 for code in results)
 
-    def test_malformed_json_rejected(self, test_settings):
+    def test_malformed_json_rejected(self, test_settings, monkeypatch):
         """Malformed JSON should be rejected gracefully."""
         import os
 
@@ -472,7 +508,7 @@ class TestEdgeCaseHandling:
         # since previous tests may have changed it
         test_config_path = os.path.abspath("knocker.example.yaml")
         if os.path.exists(test_config_path):
-            os.environ["KNOCKER_CONFIG_PATH"] = test_config_path
+            monkeypatch.setenv("KNOCKER_CONFIG_PATH", test_config_path)
 
         response = client.post(
             "/knock",

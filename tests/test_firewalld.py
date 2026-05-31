@@ -356,6 +356,7 @@ class TestZoneSetup:
         # Simulate zone doesn't exist, then successful creation
         # New behavior: adds DROP rules for each monitored port (3 ports) x 2 IP families = 6 rules
         mock_cmd.side_effect = [
+            (True, "firewall-cmd 2.3.1", ""),  # Version check
             (False, "", "zone not found"),  # Zone check
             (True, "", ""),  # Create zone
             (True, "", ""),  # Set priority
@@ -373,7 +374,7 @@ class TestZoneSetup:
         result = firewalld_integration.setup_knocker_zone()
 
         assert result is True
-        assert mock_cmd.call_count == 12
+        assert mock_cmd.call_count == 13
 
     @patch.object(firewalld.FirewalldIntegration, "is_firewalld_available")
     @patch.object(firewalld.FirewalldIntegration, "_run_firewall_cmd")
@@ -383,6 +384,7 @@ class TestZoneSetup:
 
         # Zone exists, so skip creation but still add DROP rules
         mock_cmd.side_effect = [
+            (True, "firewall-cmd 2.3.1", ""),  # Version check
             (True, "knocker-test zone info", ""),  # Zone exists
             (True, "", ""),  # Set priority
             (True, "", ""),  # Add source 1 (0.0.0.0/0)
@@ -399,7 +401,7 @@ class TestZoneSetup:
         result = firewalld_integration.setup_knocker_zone()
 
         assert result is True
-        assert mock_cmd.call_count == 11
+        assert mock_cmd.call_count == 12
 
     @patch.object(firewalld.FirewalldIntegration, "is_firewalld_available")
     def test_setup_zone_firewalld_unavailable(self, mock_available, firewalld_integration):
@@ -438,6 +440,7 @@ class TestZoneSetup:
 
         # Simulate zone doesn't exist, then successful creation with zone_target
         mock_cmd.side_effect = [
+            (True, "firewall-cmd 2.3.1", ""),  # Version check
             (False, "", "zone not found"),  # Zone check
             (True, "", ""),  # Create zone
             (True, "", ""),  # Set priority
@@ -451,8 +454,8 @@ class TestZoneSetup:
         result = integration.setup_knocker_zone()
 
         assert result is True
-        # Should have 8 calls total (including set-target)
-        assert mock_cmd.call_count == 8
+        # Should have 9 calls total including the version probe and set-target
+        assert mock_cmd.call_count == 9
 
         # Verify that set-target was called
         calls = mock_cmd.call_args_list
@@ -481,6 +484,7 @@ class TestZoneSetup:
 
         # Simulate zone doesn't exist, then successful creation without zone_target
         mock_cmd.side_effect = [
+            (True, "firewall-cmd 2.3.1", ""),  # Version check
             (False, "", "zone not found"),  # Zone check
             (True, "", ""),  # Create zone
             (True, "", ""),  # Set priority
@@ -493,8 +497,8 @@ class TestZoneSetup:
         result = integration.setup_knocker_zone()
 
         assert result is True
-        # Should have 7 calls total (no set-target)
-        assert mock_cmd.call_count == 7
+        # Should have 8 calls total including the version probe
+        assert mock_cmd.call_count == 8
 
         # Verify that set-target was NOT called
         calls = mock_cmd.call_args_list

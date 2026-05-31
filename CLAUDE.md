@@ -59,8 +59,8 @@ uv sync --all-groups
 
 ```bash
 # Set config path and run with uvicorn
-export KNOCKER_CONFIG_PATH=knocker.yaml
-uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+export KNOCKER_CONFIG_PATH=$(pwd)/knocker.yaml
+uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000 --no-proxy-headers
 ```
 
 ### Building Docker Image
@@ -175,10 +175,10 @@ The [dev/firewalld_integration_test.sh](dev/firewalld_integration_test.sh):
 
 ### Uvicorn Configuration
 
-The application runs with `--forwarded-allow-ips="*"` because:
-- Only reverse proxy (Caddy) can reach the container on Docker network
-- Knocker validates trusted proxies internally via `trusted_proxies` list
-- This allows proper X-Forwarded-For header processing
+The production container runs Uvicorn with `--no-proxy-headers`.
+- Knocker resolves the direct peer from `request.client.host`
+- `src.core.resolve_client_ip()` only consults `X-Forwarded-For` when that direct peer is listed in `server.trusted_proxies`
+- Invalid or malformed forwarded chains from trusted proxies are rejected instead of falling back to a guessed client IP
 
 ### Whitelist File Format
 

@@ -46,11 +46,11 @@ def load_config() -> Dict[str, Any]:
 
     # Security: Validate path to prevent directory traversal and ensure it's absolute
     try:
-        resolved_path = os.path.realpath(path)
         # Ensure the path doesn't contain suspicious patterns
-        if ".." in path or not os.path.isabs(resolved_path):
+        if ".." in path or not os.path.isabs(path):
             logging.critical(f"Invalid configuration path: {path}")
             sys.exit(1)
+        resolved_path = os.path.realpath(path)
     except (OSError, ValueError) as e:
         logging.critical(f"Error validating configuration path {path}: {e}")
         sys.exit(1)

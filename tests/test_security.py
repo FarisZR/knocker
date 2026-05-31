@@ -263,8 +263,11 @@ class TestRaceConditions:
         for thread in threads:
             thread.join()
 
-        # Check whitelist integrity - all entries should be present
-        # This test doesn't assert failure but demonstrates the race condition risk
+        whitelist = core.load_whitelist(app.dependency_overrides[get_settings]())
+        expected_ips = {f"10.0.0.{i}" for i in range(10)}
+
+        assert set(whitelist) == expected_ips
+        assert len(whitelist) == 10
 
 
 class TestDenialOfService:
@@ -334,7 +337,7 @@ class TestDenialOfService:
                     # If file was created, clean it up and fail the test
                     try:
                         os.remove(dangerous_path)
-                    except:
+                    except FileNotFoundError:
                         pass
                     assert False, f"Dangerous file was created at {dangerous_path}"
             except (PermissionError, OSError, FileNotFoundError, NotADirectoryError, ValueError):

@@ -214,10 +214,8 @@ class TestCleanupImprovement:
 
         # Get the file's modification time
         whitelist_path = Path(test_settings["whitelist"]["storage_path"])
-        mtime_before = whitelist_path.stat().st_mtime
-
-        # Wait a bit
-        time.sleep(0.1)
+        mtime_before = time.time() - 10
+        os.utime(whitelist_path, (mtime_before, mtime_before))
 
         # Run cleanup
         core.cleanup_expired_ips(test_settings)
@@ -239,10 +237,8 @@ class TestCleanupImprovement:
 
         # Get the file's modification time
         whitelist_path = Path(test_settings["whitelist"]["storage_path"])
-        mtime_before = whitelist_path.stat().st_mtime
-
-        # Wait a bit
-        time.sleep(0.1)
+        mtime_before = time.time() - 10
+        os.utime(whitelist_path, (mtime_before, mtime_before))
 
         # Run cleanup
         core.cleanup_expired_ips(test_settings)

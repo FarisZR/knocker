@@ -44,6 +44,9 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Expose the port the app runs on
 EXPOSE 8000
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl --fail --silent http://localhost:8000/health > /dev/null || exit 1
+
 
 # Define the command to run the application.
 # Keep Uvicorn from rewriting the direct peer from forwarded headers; Knocker
