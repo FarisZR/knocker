@@ -256,17 +256,33 @@ Caddy already forwards the relevant `X-Forwarded-*` request headers to Knocker s
 ## Tests
 The project includes a full test suite
 
+### Tooling
+
+This project uses Astral's Python toolchain:
+
+- `uv` for dependency management, environments, and command execution
+- `ruff` for linting and formatting
+- `ty` for type checking
+
 ### Unit tests
 To run the tests locally:
 
-1.  **Install Dependencies**:
+1.  **Install uv**:
     ```bash
-    pip install -r src/requirements.txt
+    curl -LsSf https://astral.sh/uv/install.sh | sh
     ```
 
-2.  **Run Pytest**:
+2.  **Sync the project environment**:
     ```bash
-    PYTHONPATH=src python3 -m pytest
+    uv sync --all-groups
+    ```
+
+3.  **Run the checks**:
+    ```bash
+    uv run pytest
+    uv run --group lint ruff check .
+    uv run --group lint ruff format --check .
+    uv run --group type ty check
     ```
 
 ### Integration Tests

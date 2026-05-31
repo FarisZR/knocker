@@ -22,8 +22,10 @@ services:
     restart: unless-stopped
     networks:
       - caddy_net
+    environment:
+      - KNOCKER_CONFIG_PATH=/app/knocker.yaml
     volumes:
-      - ./knocker.yaml:/knocker.yaml
+      - ./knocker.yaml:/app/knocker.yaml:ro
       - ./knocker_data:/data
       # REQUIRED OPTIONS for firewalld integration
       # - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket

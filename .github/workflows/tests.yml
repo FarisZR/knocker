@@ -4,12 +4,18 @@ on:
   pull_request:
     branches: [ "main" ]
     paths:
+      - pyproject.toml
+      - uv.lock
+      - Dockerfile
       - src/**
       - dev/**
       - tests/**
   push:
     branches: [ "main" ]
     paths:
+      - pyproject.toml
+      - uv.lock
+      - Dockerfile
       - src/**
       - dev/**
       - tests/**
@@ -26,13 +32,27 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.13'
+        python-version-file: 'pyproject.toml'
 
-    - name: Install dependencies
-      run: pip install -r src/requirements.txt
+    - name: Install uv
+      uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      with:
+        enable-cache: true
+
+    - name: Sync project dependencies
+      run: uv sync --locked --all-groups
+
+    - name: Run Ruff lint checks
+      run: uv run --group lint ruff check .
+
+    - name: Run Ruff format checks
+      run: uv run --group lint ruff format --check .
+
+    - name: Run ty checks
+      run: uv run --group type ty check
 
     - name: Run unit tests
-      run: PYTHONPATH=src python3 -m pytest
+      run: uv run pytest
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3

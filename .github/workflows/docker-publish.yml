@@ -10,6 +10,8 @@ on:
     branches: [ "main" ]
     paths:
       - 'Dockerfile'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - 'src/**'
       - '.github/workflows/docker-publish.yml'
     # Publish semver tags as releases.
@@ -18,6 +20,8 @@ on:
     branches: [ "main" ]
     paths:
       - 'Dockerfile'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - 'src/**'
   workflow_dispatch:
 env:

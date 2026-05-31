@@ -44,8 +44,8 @@ Knocker is a dynamic IP whitelisting service that integrates with reverse proxie
 
 ### Unit Tests
 
-- **Testing Requires `PYTHONPATH`**: Unit tests must be run with `PYTHONPATH=src python3 -m pytest`. Without this, imports will fail.
-- **Run All Tests After Changes**: After making any code changes, you must run both the local unit tests (`PYTHONPATH=src python3 -m pytest`) and the full Docker-based integration tests.
+- **Astral Toolchain**: Use `uv` to install dependencies and run commands, `ruff` for linting and formatting, and `ty` for type checking.
+- **Run All Tests After Changes**: After making any code changes, you must run the local checks (`uv run pytest`, `uv run --group lint ruff check .`, `uv run --group lint ruff format --check .`, `uv run --group type ty check`) and the full Docker-based integration tests.
 
 ### Integration Tests
 
@@ -72,7 +72,7 @@ Knocker is a dynamic IP whitelisting service that integrates with reverse proxie
 ## Workflow
 
 - **Create Git Commits**: All work should be committed to Git.
-- **Run All Tests After Changes**: After making any code changes, you must run both the local unit tests (`PYTHONPATH=src python3 -m pytest`) and the Docker-based integration tests using the standard `dev/` compose files plus the scripts under `dev/`.
+- **Run All Tests After Changes**: After making any code changes, you must run the local checks (`uv run pytest`, `uv run --group lint ruff check .`, `uv run --group lint ruff format --check .`, `uv run --group type ty check`) and the Docker-based integration tests using the standard `dev/` compose files plus the scripts under `dev/`.
 
 ## Repository Information
 

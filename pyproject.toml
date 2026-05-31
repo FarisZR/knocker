@@ -1,0 +1,52 @@
+[project]
+name = "knocker"
+version = "0.0.0"
+description = "Self-hosted single-packet authorization gateway for homelabs"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.121.0",
+    "pyyaml>=6.0.3",
+    "uvicorn>=0.38.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=8.4.2",
+]
+lint = [
+    "ruff>=0.14.3",
+]
+type = [
+    "ty>=0.0.1a19",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E712"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E722"]
+"tests/test_main_firewalld_integration.py" = ["F401"]
+
+[tool.ty.environment]
+python-version = "3.13"
+root = [".", "./src"]
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ty.rules]
+all = "warn"
+
+[tool.ty.terminal]
+error-on-warning = false
+output-format = "concise"

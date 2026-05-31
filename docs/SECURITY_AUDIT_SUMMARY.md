@@ -115,10 +115,10 @@ All changes maintain full backward compatibility:
 Run the complete security test suite:
 ```bash
 # Run all tests (should show 5 expected failures in vulnerability tests)
-PYTHONPATH=src python3 -m pytest -v
+uv run pytest -v
 
 # Run only security fix validation tests (should all pass)
-PYTHONPATH=src python3 -m pytest tests/test_security_fixes.py -v
+uv run pytest tests/test_security_fixes.py -v
 ```
 
 ## Files Modified

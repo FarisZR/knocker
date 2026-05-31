@@ -23,7 +23,7 @@ This is ideal for homelab environments where you want to expose services to the 
 This project uses GitHub Actions for continuous integration and deployment.
 
 *   **CI (`tests.yml`)**: On every pull request to `main`, this workflow runs the full Python test suite and then performs a live integration test with Docker Compose to ensure the Caddy and Knocker services work together correctly.
-*   **Docker Publish (`docker-publish.yml`)**: Builds and publishes multi-arch Docker images to GitHub Container Registry (ghcr.io)
+*   **Docker Publish (`docker-publish.yml`)**: Builds and publishes multi-arch Docker images to GitHub Container Registry (ghcr.io). The Dockerfile installs `uv` with Astral's installer script instead of `COPY --from=ghcr.io/astral-sh/uv`, because the installer path is more reliable across the Buildx target platforms used by this project.
     - On push to `main` → `ghcr.io/fariszr/knocker:main` (rolling development)
     - On version tags (v1.2.3) → Multiple tags including `:latest`, `:v1.2.3`, `:1.2.3`, `:1.2`, `:1` (stable releases)
 *   **Release Workflow (`release.yml`)**: On version tags, automatically creates GitHub releases with changelogs and installation instructions
@@ -225,12 +225,12 @@ To run the tests locally:
 
 1.  **Install Dependencies**:
     ```bash
-    pip install -r src/requirements.txt
+    uv sync --all-groups
     ```
 
 2.  **Run Pytest**:
     ```bash
-    PYTHONPATH=src python3 -m pytest
+    uv run pytest
     ```
 
 ### Integration Tests
