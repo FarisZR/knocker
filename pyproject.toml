@@ -5,7 +5,7 @@ description = "Self-hosted single-packet authorization gateway for homelabs"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.139.0",
+    "fastapi>=0.139.2",
     "pyyaml>=6.0.3",
     "uvicorn>=0.51.0",
 ]
