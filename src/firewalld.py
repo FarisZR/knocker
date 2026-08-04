@@ -162,7 +162,14 @@ class FirewalldIntegration:
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=check)
-            return True, result.stdout.strip(), result.stderr.strip()
+            stdout = result.stdout.strip()
+            stderr = result.stderr.strip()
+            success = result.returncode == 0
+            if not success:
+                self.logger.error(
+                    "firewall-cmd exited with status %s: %s", result.returncode, stderr or stdout
+                )
+            return success, stdout, stderr
         except subprocess.CalledProcessError as e:
             self.logger.error(f"firewall-cmd failed: {e.stderr}")
             return False, e.stdout.strip() if e.stdout else "", e.stderr.strip() if e.stderr else ""

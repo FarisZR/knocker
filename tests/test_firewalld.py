@@ -283,6 +283,19 @@ class TestFirewalldCommands:
         mock_run.assert_called_once()
 
     @patch("subprocess.run")
+    def test_run_firewall_cmd_nonzero_without_check(self, mock_run, firewalld_integration):
+        """Non-zero commands must fail even when CalledProcessError is disabled."""
+        mock_run.return_value.stdout = "running"
+        mock_run.return_value.stderr = "degraded"
+        mock_run.return_value.returncode = 2
+
+        success, stdout, stderr = firewalld_integration._run_firewall_cmd(["--state"], check=False)
+
+        assert success is False
+        assert stdout == "running"
+        assert stderr == "degraded"
+
+    @patch("subprocess.run")
     def test_run_firewall_cmd_failure(self, mock_run, firewalld_integration):
         """Test failed firewall command execution."""
         from subprocess import CalledProcessError
