@@ -400,7 +400,7 @@ class FirewalldIntegration:
             return False
 
         success, stdout, stderr = self._run_firewall_cmd(
-            [f"--zone={self.zone_name}", "--get-priority"], check=False
+            ["--permanent", f"--zone={self.zone_name}", "--get-priority"], check=False
         )
         if not success or stdout.strip() != str(self.zone_priority):
             self.logger.error("Firewalld zone priority verification failed: %s", stderr or stdout)
@@ -408,7 +408,7 @@ class FirewalldIntegration:
 
         if self.zone_target is not None:
             success, stdout, stderr = self._run_firewall_cmd(
-                [f"--zone={self.zone_name}", "--get-target"], check=False
+                ["--permanent", f"--zone={self.zone_name}", "--get-target"], check=False
             )
             if not success or stdout.strip() != self.zone_target:
                 self.logger.error("Firewalld zone target verification failed: %s", stderr or stdout)
