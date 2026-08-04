@@ -435,16 +435,20 @@ class FirewalldIntegration:
                 self.logger.error("Firewalld zone is not active: %s", stderr or stdout)
                 return False
 
-        success, stdout, stderr = self._run_firewall_cmd(
-            [f"--zone={self.zone_name}", "--list-rich-rules"], check=False
-        )
-        if not success:
-            self.logger.error("Firewalld default rule verification failed: %s", stderr)
-            return False
-        active_rules = {line.strip() for line in stdout.splitlines() if line.strip()}
-        missing_rules = self._required_default_rules() - active_rules
+        missing_rules: list[str] = []
+        for rich_rule in sorted(self._required_default_rules()):
+            success, stdout, stderr = self._run_firewall_cmd(
+                [f"--zone={self.zone_name}", f"--query-rich-rule={rich_rule}"], check=False
+            )
+            if not success or stdout.strip().lower() != "yes":
+                self.logger.error(
+                    "Required firewalld rule verification failed for %s: %s",
+                    rich_rule,
+                    stderr or stdout,
+                )
+                missing_rules.append(rich_rule)
         if missing_rules:
-            self.logger.error("Missing required firewalld rules: %s", sorted(missing_rules))
+            self.logger.error("Missing required firewalld rules: %s", missing_rules)
             return False
         return True
 

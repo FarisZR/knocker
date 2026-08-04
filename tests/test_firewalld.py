@@ -983,7 +983,6 @@ class TestProtectionReadiness:
             }
         }
         integration = firewalld.FirewalldIntegration(settings)
-        required = "\n".join(sorted(integration._required_default_rules()))
         responses = iter(
             [
                 (True, "public home", ""),
@@ -1005,7 +1004,8 @@ class TestProtectionReadiness:
                 (True, "0", ""),
                 (True, "", ""),
                 (True, "public (default)\n  interfaces: eth0", ""),
-                (True, required, ""),
+                (True, "yes", ""),
+                (True, "yes", ""),
             ]
         )
         with (
