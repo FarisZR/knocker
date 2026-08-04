@@ -1004,7 +1004,7 @@ class TestProtectionReadiness:
                 (True, "public home", ""),
                 (True, "0", ""),
                 (True, "", ""),
-                (True, "public:\n  interfaces: eth0", ""),
+                (True, "public (default)\n  interfaces: eth0", ""),
                 (True, required, ""),
             ]
         )

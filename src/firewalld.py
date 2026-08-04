@@ -427,9 +427,9 @@ class FirewalldIntegration:
         if not self.monitored_ips:
             success, stdout, stderr = self._run_firewall_cmd(["--get-active-zones"], check=False)
             active_zone_names = {
-                line.strip()[:-1]
+                line.split()[0].rstrip(":")
                 for line in stdout.splitlines()
-                if line and not line[0].isspace() and line.strip().endswith(":")
+                if line and not line[0].isspace() and line.split()
             }
             if not success or self.zone_name not in active_zone_names:
                 self.logger.error("Firewalld zone is not active: %s", stderr or stdout)
