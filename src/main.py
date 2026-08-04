@@ -1,9 +1,10 @@
+import asyncio
 import time
 import logging
 import json
 import os
 from pathlib import Path
-from typing import Optional, Dict, Union, Tuple
+from typing import Optional, Dict, Tuple
 from functools import lru_cache
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, status, Depends
@@ -14,6 +15,7 @@ from fastapi.openapi.docs import (
     get_swagger_ui_oauth2_redirect_html,
 )
 from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 
 try:
     from . import core
@@ -53,35 +55,42 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     runtime_state = core.start_runtime_state(settings)
     runtime_state.whitelist.compact_expired()
+    firewalld.initialize_mutation_executor(settings)
 
-    # Generate and persist OpenAPI schema
-    await generate_and_persist_openapi(app, settings)
+    try:
+        # Generate and persist OpenAPI schema
+        await generate_and_persist_openapi(app, settings)
 
-    # Initialize firewalld integration
-    firewalld_integration = firewalld.initialize_firewalld(settings)
-    if firewalld_integration and firewalld_integration.is_enabled():
-        logging.info("Firewalld integration is enabled")
+        # Initialize firewalld integration
+        firewalld_integration = firewalld.initialize_firewalld(settings)
+        if firewalld_integration and firewalld_integration.is_enabled():
+            logging.info("Firewalld integration is enabled")
 
-        # Setup firewalld zone
-        if firewalld_integration.setup_knocker_zone():
-            logging.info("Firewalld zone setup completed successfully")
-
-            # Restore missing rules from whitelist
-            whitelist = runtime_state.whitelist.active_snapshot()
-            if firewalld_integration.restore_missing_rules(whitelist):
-                logging.info("Firewalld rule restoration completed successfully")
-            else:
-                logging.warning("Some firewalld rules could not be restored")
-        else:
-            logging.error(
-                "Failed to setup firewalld zone - firewalld integration may not work properly"
+            setup_ok = await firewalld.run_mutation(
+                firewalld_integration.setup_knocker_zone, settings
             )
-    else:
-        logging.info("Firewalld integration is disabled")
+            if not setup_ok:
+                raise RuntimeError("Firewalld protection setup failed; refusing readiness")
 
-    yield
-    core.stop_runtime_state(settings)
-    logging.info("Knocker service shutting down.")
+            whitelist = runtime_state.whitelist.active_snapshot()
+            restored_ok = await firewalld.run_mutation(
+                lambda: firewalld_integration.restore_missing_rules(whitelist), settings
+            )
+            if not restored_ok:
+                raise RuntimeError("Active whitelist rules could not be restored")
+
+            ready = await asyncio.to_thread(firewalld_integration.verify_protection)
+            if not ready:
+                raise RuntimeError("Firewalld protection verification failed; refusing readiness")
+            logging.info("Firewalld protection is ready")
+        else:
+            logging.info("Firewalld integration is disabled")
+
+        yield
+    finally:
+        core.stop_runtime_state(settings)
+        firewalld.shutdown_mutation_executor()
+        logging.info("Knocker service shutting down.")
 
 
 def _remove_documentation_routes(app: FastAPI) -> None:
@@ -182,6 +191,14 @@ async def generate_and_persist_openapi(app: FastAPI, settings: Dict):
     app.openapi_schema = None
     try:
         openapi_schema = app.openapi()
+        components = openapi_schema.setdefault("components", {}).setdefault("schemas", {})
+        components.setdefault("KnockRequest", KnockRequest.model_json_schema())
+        openapi_schema["paths"]["/knock"]["post"]["requestBody"] = {
+            "required": False,
+            "content": {
+                "application/json": {"schema": {"$ref": "#/components/schemas/KnockRequest"}}
+            },
+        }
         with output_path.open("w", encoding="utf-8") as f:
             json.dump(openapi_schema, f, indent=2)
         logging.info(f"OpenAPI schema generated and saved to {output_path}")
@@ -313,6 +330,68 @@ def get_request_context_dependency(
     return _resolve_request_context(request, settings)
 
 
+MAX_KNOCK_BODY_BYTES = 4096
+
+
+async def _read_knock_body(
+    request: Request,
+) -> Tuple[Optional[KnockRequest], Optional[Tuple[int, str]]]:
+    """Read and validate the optional knock body after authentication."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_KNOCK_BODY_BYTES:
+                return None, (status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Request body too large.")
+        except ValueError:
+            # A malformed Content-Length is not trusted; the bounded stream below
+            # remains the authoritative limit.
+            pass
+
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > MAX_KNOCK_BODY_BYTES:
+                return None, (status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Request body too large.")
+            chunks.append(chunk)
+    except Exception:
+        return None, (status.HTTP_400_BAD_REQUEST, "Malformed JSON request body.")
+
+    raw_body = b"".join(chunks)
+    if not raw_body:
+        return None, None
+
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type != "application/json":
+        return None, (status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Request body must be JSON.")
+
+    try:
+        decoded = json.loads(raw_body)
+    except json.JSONDecodeError:
+        return None, (status.HTTP_400_BAD_REQUEST, "Malformed JSON request body.")
+
+    if not isinstance(decoded, dict):
+        return None, (status.HTTP_400_BAD_REQUEST, "Request body must be a JSON object.")
+    if isinstance(decoded.get("ip_address"), str) and len(decoded["ip_address"]) > 100:
+        return None, (status.HTTP_400_BAD_REQUEST, "IP address or CIDR notation too long.")
+
+    try:
+        return KnockRequest.model_validate(decoded), None
+    except ValidationError as exc:
+        if any("ttl" in str(error.get("loc", ())) for error in exc.errors()):
+            return None, (
+                status.HTTP_400_BAD_REQUEST,
+                "Invalid TTL specified. Must be a positive integer.",
+            )
+        if any("ip_address" in str(error.get("loc", ())) for error in exc.errors()):
+            return None, (
+                status.HTTP_400_BAD_REQUEST,
+                "Invalid IP address or CIDR notation in request body.",
+            )
+        return None, (status.HTTP_400_BAD_REQUEST, "Invalid request data.")
+
+
 # --- API Endpoints ---
 
 
@@ -346,6 +425,10 @@ async def knock_options(settings: dict = Depends(get_settings)):
         400: {"model": ErrorResponse, "description": "Bad request - invalid parameters"},
         401: {"model": ErrorResponse, "description": "Unauthorized - invalid or missing API key"},
         403: {"model": ErrorResponse, "description": "Forbidden - insufficient permissions"},
+        413: {"model": ErrorResponse, "description": "Request body exceeds 4096 bytes"},
+        415: {"model": ErrorResponse, "description": "Request body is not JSON"},
+        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
+        503: {"model": ErrorResponse, "description": "Firewall mutation capacity is unavailable"},
         500: {
             "model": ErrorResponse,
             "description": "Internal server error - failed to persist whitelist or create firewall rules",
@@ -366,7 +449,6 @@ async def knock_options(settings: dict = Depends(get_settings)):
 async def knock(
     request: Request,
     response: Response,
-    body: Optional[Union[KnockRequest, Dict]] = None,
     client_ip: str = Depends(get_client_ip_dependency),
     settings: dict = Depends(get_settings),
 ):
@@ -406,14 +488,26 @@ async def knock(
             headers={"Access-Control-Allow-Origin": allowed_origin},
         )
 
+    # Authentication and the failure limiter intentionally happen before any
+    # request-body read. This keeps unauthenticated streams out of the parser.
+    body, body_error = await _read_knock_body(request)
+    if body_error:
+        body_status, body_message = body_error
+        if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"error": "Too many knock attempts."},
+                headers={"Access-Control-Allow-Origin": allowed_origin},
+            )
+        return JSONResponse(
+            status_code=body_status,
+            content={"error": body_message},
+            headers={"Access-Control-Allow-Origin": allowed_origin},
+        )
+
     ip_to_whitelist = client_ip
     if body:
-        # Handle both KnockRequest objects and raw dicts for backward compatibility
-        ip_address = (
-            getattr(body, "ip_address", None)
-            if hasattr(body, "ip_address")
-            else body.get("ip_address")
-        )
+        ip_address = body.ip_address
         if ip_address:
             # Security: Validate input size to prevent DoS
             if not isinstance(ip_address, str):
@@ -492,9 +586,7 @@ async def knock(
             ip_to_whitelist = ip_address
 
     max_ttl = api_key_record.max_ttl
-    requested_ttl = (
-        getattr(body, "ttl", None) if hasattr(body, "ttl") else (body.get("ttl") if body else None)
-    )
+    requested_ttl = body.ttl if body else None
 
     effective_ttl = max_ttl
 
@@ -570,8 +662,16 @@ async def knock(
         error="Internal server error: whitelist persistence or firewall configuration failed."
     ).model_dump()
     try:
-        whitelisted = core.add_ip_to_whitelist_with_firewalld(
-            ip_to_whitelist, expiry_time, settings
+        whitelisted = await firewalld.run_mutation(
+            lambda: core.add_ip_to_whitelist_with_firewalld(ip_to_whitelist, expiry_time, settings),
+            settings,
+        )
+    except firewalld.MutationQueueUnavailable:
+        core.release_knock_attempt(settings, rate_limit_actor, "success", success_reservation)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "Firewall mutation capacity is unavailable."},
+            headers={"Access-Control-Allow-Origin": allowed_origin},
         )
     except Exception:
         core.release_knock_attempt(settings, rate_limit_actor, "success", success_reservation)
@@ -645,7 +745,6 @@ async def health_check(settings: dict = Depends(get_settings)):
             )
 
         whitelist_path = runtime_state.whitelist.storage_path
-        storage_probe_path = whitelist_path.parent / ".knocker-healthcheck"
         if whitelist_path.exists() and not os.access(whitelist_path, os.R_OK | os.W_OK):
             logging.error("Health check failed: Whitelist storage is not readable and writable")
             return JSONResponse(
@@ -661,14 +760,32 @@ async def health_check(settings: dict = Depends(get_settings)):
             )
 
         try:
-            storage_probe_path.write_text("ok", encoding="utf-8")
-            storage_probe_path.unlink(missing_ok=True)
+            whitelist_path.parent.stat()
+            if whitelist_path.exists():
+                whitelist_path.stat()
         except OSError as exc:
-            logging.error(f"Health check failed: Whitelist storage probe failed: {exc}")
+            logging.error(f"Health check failed: Whitelist storage stat failed: {exc}")
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={"status": "unhealthy", "error": "Whitelist storage not accessible"},
             )
+
+        firewalld_enabled = bool((settings.get("firewalld") or {}).get("enabled", False))
+        firewalld_integration = firewalld.get_firewalld_integration()
+        if firewalld_enabled and (
+            firewalld_integration is None or not firewalld_integration.is_enabled()
+        ):
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "unhealthy", "error": "Firewalld protection not ready"},
+            )
+        if firewalld_enabled and firewalld_integration:
+            ready = await asyncio.to_thread(firewalld_integration.verify_protection)
+            if not ready:
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content={"status": "unhealthy", "error": "Firewalld protection not ready"},
+                )
 
         return HealthResponse(status="ok")
     except Exception as e:

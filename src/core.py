@@ -24,6 +24,14 @@ _whitelist_lock = threading.RLock()
 _runtime_state_lock = threading.Lock()
 _RUNTIME_STATE_KEY = "_knocker_runtime_state"
 _ZONE_NAME_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+_PUBLISHED_EXAMPLE_SECRETS = {
+    "CHANGE_ME_SUPER_SECRET_ADMIN_KEY",
+    "CHANGE_ME_SECRET_PHONE_KEY",
+    "CHANGE_ME_TEMPORARY_GUEST_KEY",
+}
+_PUBLISHED_EXAMPLE_SECRET_HASHES = {
+    hashlib.sha256(secret.encode("utf-8")).hexdigest() for secret in _PUBLISHED_EXAMPLE_SECRETS
+}
 
 
 def _allowed_whitelist_storage_roots() -> Tuple[str, ...]:
@@ -644,8 +652,14 @@ def resolve_client_ip(
         return None, False
 
     trusted_proxy = trusted_proxies.contains(ipaddress.ip_address(direct_ip))
-    if not forwarded_for or not trusted_proxy:
+    if not trusted_proxy:
         return direct_ip, False
+
+    # A configured proxy is never a valid fallback client identity. If it does
+    # not provide a complete forwarded chain, fail closed instead of treating
+    # the proxy itself as the client.
+    if not forwarded_for:
+        return None, True
 
     raw_entries = [entry.strip() for entry in forwarded_for.split(",")]
     if not raw_entries or any(not entry for entry in raw_entries) or len(raw_entries) > 20:
@@ -742,6 +756,16 @@ class APIKeyRegistry:
             if plain_secret:
                 if not isinstance(plain_secret, str):
                     raise ValueError(f"API key at index {index} has a non-string key value")
+                normalized_secret = plain_secret.upper()
+                if (
+                    plain_secret in _PUBLISHED_EXAMPLE_SECRETS
+                    or "CHANGE_ME" in normalized_secret
+                    or "REPLACE_WITH" in normalized_secret
+                ):
+                    raise ValueError(
+                        f"API key at index {index} uses a published or placeholder secret; "
+                        "generate a unique random API key"
+                    )
                 secret_kind = "plaintext"
                 secret_value = plain_secret
                 secret_fingerprint = hash_api_key(plain_secret)
@@ -750,6 +774,11 @@ class APIKeyRegistry:
                     raise ValueError(f"API key at index {index} has a non-string key_hash value")
                 secret_kind = "sha256"
                 secret_value = _parse_hashed_secret(hashed_secret)
+                if secret_value in _PUBLISHED_EXAMPLE_SECRET_HASHES:
+                    raise ValueError(
+                        f"API key at index {index} uses a hash of a published example secret; "
+                        "generate a unique random API key"
+                    )
                 secret_fingerprint = f"sha256:{secret_value}"
 
             if secret_fingerprint in seen_secrets:
@@ -950,6 +979,10 @@ def _validate_firewalld_config(settings: Dict[str, Any]) -> None:
     firewalld_settings = settings.get("firewalld", {}) or {}
     if not firewalld_settings.get("enabled", False):
         return
+
+    mutation_capacity = firewalld_settings.get("mutation_queue_capacity", 32)
+    if not isinstance(mutation_capacity, int) or mutation_capacity <= 0:
+        raise ValueError("firewalld.mutation_queue_capacity must be a positive integer")
 
     zone_name = firewalld_settings.get("zone_name", "knocker")
     if not isinstance(zone_name, str) or not _ZONE_NAME_RE.fullmatch(zone_name):

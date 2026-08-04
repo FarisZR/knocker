@@ -3,20 +3,24 @@ Pydantic models for request/response schemas in the Knocker API.
 """
 
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 import ipaddress
 
 
 class KnockRequest(BaseModel):
     """Request schema for the knock endpoint."""
 
+    model_config = ConfigDict(extra="forbid")
+
     ip_address: Optional[str] = Field(
         None,
+        strict=True,
         description="IP address or CIDR range to whitelist. If not provided, the client's IP is used.",
         json_schema_extra={"example": "192.168.1.100"},
     )
     ttl: Optional[int] = Field(
         None,
+        strict=True,
         description="Time-to-live in seconds for the whitelist entry. Must be positive integer.",
         json_schema_extra={"example": 3600},
         gt=0,

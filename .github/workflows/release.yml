@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
@@ -41,7 +41,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
           name: Release ${{ steps.version.outputs.version }}
           body: |
@@ -61,7 +61,7 @@ jobs:
             ## Installation
             
             1. Download `knocker.example.yaml` and rename it to `knocker.yaml`
-            2. **Change all default API keys** to secure random strings
+            2. Add at least one newly generated API key to `knocker.yaml`
             3. Update `trusted_proxies` to match your Docker network
             4. Run with: `docker compose up -d`
             
@@ -71,7 +71,7 @@ jobs:
             
             ## Security Notes
             
-            - Always change default API keys in production
+            - Generate unique high-entropy API keys; published placeholder values are rejected
             - Configure `trusted_proxies` to prevent IP spoofing
             - Review the [Security Guide](https://github.com/FarisZR/knocker/blob/main/docs/SECURITY.md)
           draft: false

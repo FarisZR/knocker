@@ -1,5 +1,6 @@
-# Use a specific, stable version of Python for reproducibility
-FROM python:3.13-slim
+# Pin both runtime tools by immutable multi-architecture manifest digests.
+FROM ghcr.io/astral-sh/uv:0.11.31@sha256:2381d6aa60c326b71fd40023f921a0a3b8f91b14d5db6b90402e65a635053709 AS uv
+FROM python:3.13-slim@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91
 
 # Set the working directory in the container
 WORKDIR /app
@@ -15,11 +16,8 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install uv from the official installer so multi-arch builds work.
-ADD https://astral.sh/uv/0.11.2/install.sh /uv-installer.sh
-RUN sh /uv-installer.sh && rm /uv-installer.sh
-
-ENV PATH="/root/.local/bin:$PATH"
+# Copy uv from the official digest-pinned image; do not execute downloaded code.
+COPY --from=uv /uv /uvx /usr/local/bin/
 
 # Create a non-root user to run the application for better security
 # NOTE: When firewalld integration is enabled, the container must run as root

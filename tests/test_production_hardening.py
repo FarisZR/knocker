@@ -23,8 +23,7 @@ cors:
   allowed_origin: "https://example.com"
 security:
   always_allowed_ips: []
-  excluded_paths:
-    - "/knock"
+  excluded_paths: []
   max_whitelist_entries: 100
 whitelist:
   storage_path: "/tmp/knocker-test-whitelist.json"
@@ -348,10 +347,7 @@ class TestHealthCheckDependencies:
         bad_settings = {**test_settings, "whitelist": {"storage_path": "./will_fail.json"}}
         app.dependency_overrides[get_settings] = lambda: bad_settings
 
-        def fail_probe(*args, **kwargs):
-            raise PermissionError("denied")
-
-        monkeypatch.setattr("pathlib.Path.write_text", fail_probe)
+        monkeypatch.setattr("src.main.os.access", lambda *_args, **_kwargs: False)
         resp = client.get("/health")
         assert resp.status_code == 503
         app.dependency_overrides = {}

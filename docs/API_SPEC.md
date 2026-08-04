@@ -20,6 +20,9 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
       "ttl": "integer"
     }
     ```
+    *   Authentication is completed before this body is read.
+    *   The body must be empty or a JSON object containing only `ip_address` and/or `ttl`.
+    *   Bodies are limited to 4096 bytes, and JSON values use strict string/integer types.
     *   `ip_address` (string): The IPv4/IPv6 address or CIDR network to whitelist. If provided, the API key must have `allow_remote_whitelist: true` permission.
     *   `ttl` (integer, optional): The desired time-to-live for the whitelist entry in seconds. If not provided, the key's default `max_ttl` will be used. If the provided TTL exceeds the key's `max_ttl`, the `max_ttl` will be used instead.
 
@@ -64,6 +67,15 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
     *   Returned if an API key without `allow_remote_whitelist` permission attempts to whitelist a specific `ip_address`.
     *   **Body**: `{"error": "string"}`
 
+*   **`413 Request Entity Too Large`**
+    *   Returned when the request body exceeds 4096 bytes. Authenticated oversized requests count toward the failure limit.
+
+*   **`415 Unsupported Media Type`**
+    *   Returned when a non-empty request body does not use `application/json`.
+
+*   **`503 Service Unavailable`**
+    *   Returned when the serialized firewall mutation worker is unavailable or saturated.
+
 *   **`500 Internal Server Error`**
     *   Returned if whitelist persistence or firewall configuration fails.
     *   **Headers**:
@@ -85,7 +97,7 @@ This endpoint is used by Caddy's `forward_auth` directive to verify if a client'
 #### Responses
 
 *   **`200 OK`** (Success)
-    *   Returned if the client's IP is found in an active (non-expired) whitelist entry, is in the `always_allowed_ips` list, or if the request path is in the `excluded_paths` list. The response has an empty body.
+    *   Returned if the client's IP is found in an active whitelist entry, is in the intentionally configured `always_allowed_ips` list, or if a host-scoped exclusion matches. The response has an empty body.
 
 *   **`401 Unauthorized`**
     *   Returned if the client's IP is not authorized. The response has an empty body.
@@ -111,6 +123,9 @@ This endpoint is used to verify the operational status of the Knocker service.
         }
         ```
 
+*   **`503 Service Unavailable`**
+    *   Returned when enabled firewalld protection is unavailable or fails a read-only readiness check. Health checks do not create or remove probe files.
+
 ## Configuration (`knocker.yaml`)
 
 - **`server`** (object, required): Server settings.
@@ -129,8 +144,8 @@ This endpoint is used to verify the operational status of the Knocker service.
     - **`max_ttl`** (integer, required): The maximum time-to-live for whitelisted IPs in seconds.
     - **`allow_remote_whitelist`** (boolean, required): If `true`, the key can whitelist any IP/CIDR. If `false`, it can only whitelist the source IP of the request.
 - **`security`** (object, optional): Security-related settings.
-    - **`always_allowed_ips`** (array of strings, optional): A list of IPs or CIDR ranges that are always permitted by the `/verify` endpoint, bypassing the dynamic whitelist.
-    - **`excluded_paths`** (array of strings, optional): A list of URL paths (e.g., `/api/health`) that are exempt from any IP-based authentication at the `/verify` endpoint.
+    - **`always_allowed_ips`** (array of strings, optional): A list of IPs or CIDR ranges that are always permitted by the `/verify` endpoint, bypassing the dynamic whitelist. It is empty by default; do not add a reverse-proxy network unless all clients behind it should be permanently allowed.
+    - **`excluded_paths`** (array of strings, optional): Global exclusions are discouraged because they affect every host. Leave it empty and use host-scoped exclusions where needed.
     - **`excluded_paths_by_host`** (mapping, optional): Host-specific excluded path prefixes, evaluated only for trusted forwarded host metadata.
     - **`max_whitelist_entries`** (integer, optional): Maximum retained whitelist entries. Defaults to `10000`.
     - **`knock_rate_limit`** (object, optional): Sliding-window rate limits with `window_seconds`, `successful_requests`, and `failed_requests`.

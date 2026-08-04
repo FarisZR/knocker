@@ -25,14 +25,14 @@
 - Returns 503 Service Unavailable for unhealthy states
 - Proper error reporting without exposing sensitive details
 
-**Production Readiness:**
+**Validation coverage:**
 - Automated tests cover the security features and production hardening paths
 - Regression coverage protects both API behavior and whitelist persistence logic
 - Edge-case validation is part of the regular test suite
 
 ## Overview
 
-A comprehensive security audit was performed on the Caddy Knocker project from an offensive security perspective. The current hardening work addresses 8 security vulnerabilities ranging from Critical to Low severity, all of which have been successfully remediated.
+A security audit was performed on the Caddy Knocker project from an offensive security perspective. This document records implemented mitigations and remaining deployment risks; it does not claim that all future findings are addressed.
 
 ## Vulnerabilities Identified and Fixed
 
@@ -94,13 +94,12 @@ A comprehensive security audit was performed on the Caddy Knocker project from a
 - Coverage includes core whitelist behavior, FastAPI request handling, firewalld integration, and security regressions
 - Storage path validation is exercised with accepted paths, suffix checks, and traversal rejection cases
 
-## Backward Compatibility
+## Compatibility notes
 
-All changes maintain full backward compatibility:
-- ✅ Existing API behavior unchanged for legitimate requests
-- ✅ Configuration format unchanged (new options are optional)
-- ✅ All original tests pass without modification
-- ✅ Only malicious/unsafe requests are now blocked
+The strict `/knock` body parser and fail-closed proxy behavior are intentional
+security changes. Global path exclusions and reverse-proxy-network defaults in
+the examples are no longer recommended. Existing deployments must review these
+configuration defaults before upgrading.
 
 ## Production Deployment Recommendations
 
@@ -114,7 +113,7 @@ All changes maintain full backward compatibility:
 
 Run the complete security test suite:
 ```bash
-# Run all tests (should show 5 expected failures in vulnerability tests)
+# Run all tests
 uv run pytest -v
 
 # Run only security fix validation tests (should all pass)
@@ -133,6 +132,6 @@ uv run pytest tests/test_security_fixes.py -v
 
 ## Conclusion
 
-The Caddy Knocker project has been significantly hardened against common attack vectors while maintaining full functionality. The comprehensive test suite ensures that security improvements are working correctly and will continue to work in future updates.
-
-All identified vulnerabilities have been addressed with appropriate mitigations, and the application is now ready for secure production deployment following the security best practices outlined in the documentation.
+The project has been hardened against the documented attack vectors. The
+privileged root + host-D-Bus firewalld architecture remains a deployment risk;
+see `docs/SECURITY.md` for the generic future helper-service direction.

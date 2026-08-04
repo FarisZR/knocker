@@ -357,7 +357,7 @@ class TestZoneSetup:
         # New behavior: adds DROP rules for each monitored port (3 ports) x 2 IP families = 6 rules
         mock_cmd.side_effect = [
             (True, "firewall-cmd 2.3.1", ""),  # Version check
-            (False, "", "zone not found"),  # Zone check
+            (True, "public home", ""),  # Zone check (knocker zone absent)
             (True, "", ""),  # Create zone
             (True, "", ""),  # Set priority
             (True, "", ""),  # Add source 1 (0.0.0.0/0)
@@ -441,7 +441,7 @@ class TestZoneSetup:
         # Simulate zone doesn't exist, then successful creation with zone_target
         mock_cmd.side_effect = [
             (True, "firewall-cmd 2.3.1", ""),  # Version check
-            (False, "", "zone not found"),  # Zone check
+            (True, "public home", ""),  # Zone check (knocker zone absent)
             (True, "", ""),  # Create zone
             (True, "", ""),  # Set priority
             (True, "", ""),  # Set target (NEW)
@@ -485,7 +485,7 @@ class TestZoneSetup:
         # Simulate zone doesn't exist, then successful creation without zone_target
         mock_cmd.side_effect = [
             (True, "firewall-cmd 2.3.1", ""),  # Version check
-            (False, "", "zone not found"),  # Zone check
+            (True, "public home", ""),  # Zone check (knocker zone absent)
             (True, "", ""),  # Create zone
             (True, "", ""),  # Set priority
             (True, "", ""),  # Add source 1
@@ -704,11 +704,12 @@ rule family="ipv4" source address="10.0.0.50" port protocol="tcp" port="22" acce
 
         assert len(rules) == 0
 
-    @patch.object(firewalld.FirewalldIntegration, "get_active_rules")
+    @patch.object(firewalld.FirewalldIntegration, "is_firewalld_available", return_value=True)
+    @patch.object(firewalld.FirewalldIntegration, "_get_active_rules")
     @patch.object(firewalld.FirewalldIntegration, "_add_single_rule")
     @patch("time.time")
     def test_restore_missing_rules_success(
-        self, mock_time, mock_add_rule, mock_get_rules, firewalld_integration
+        self, mock_time, mock_add_rule, mock_get_rules, _mock_available, firewalld_integration
     ):
         """Test successful restoration of missing rules."""
         mock_time.return_value = 1000
@@ -737,11 +738,12 @@ rule family="ipv4" source address="10.0.0.50" port protocol="tcp" port="22" acce
         # Should restore 3 rules for the missing IP (192.168.1.101)
         assert mock_add_rule.call_count == 3
 
-    @patch.object(firewalld.FirewalldIntegration, "get_active_rules")
+    @patch.object(firewalld.FirewalldIntegration, "is_firewalld_available", return_value=True)
+    @patch.object(firewalld.FirewalldIntegration, "_get_active_rules")
     @patch.object(firewalld.FirewalldIntegration, "_add_single_rule")
     @patch("time.time")
     def test_restore_missing_rules_no_missing(
-        self, mock_time, mock_add_rule, mock_get_rules, firewalld_integration
+        self, mock_time, mock_add_rule, mock_get_rules, _mock_available, firewalld_integration
     ):
         """Test restoration when no rules are missing."""
         mock_time.return_value = 1000
@@ -768,10 +770,11 @@ rule family="ipv4" source address="10.0.0.50" port protocol="tcp" port="22" acce
 
         assert result is True  # Returns True when disabled (no-op)
 
-    @patch.object(firewalld.FirewalldIntegration, "get_active_rules")
+    @patch.object(firewalld.FirewalldIntegration, "is_firewalld_available", return_value=True)
+    @patch.object(firewalld.FirewalldIntegration, "_get_active_rules")
     @patch("time.time")
     def test_restore_missing_rules_replace_on_already_enabled(
-        self, mock_time, mock_get_rules, firewalld_integration
+        self, mock_time, mock_get_rules, _mock_available, firewalld_integration
     ):
         """If adding a rule during restoration returns ALREADY_ENABLED, ensure knocker removes and re-adds it."""
         mock_time.return_value = 1000
@@ -963,3 +966,51 @@ class TestSecurityAndValidation:
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+class TestProtectionReadiness:
+    """Read-only verification of the effective firewalld protection state."""
+
+    def test_interface_bound_zone_must_be_active(self):
+        settings = {
+            "firewalld": {
+                "enabled": True,
+                "zone_name": "public",
+                "zone_priority": 0,
+                "default_action": "drop",
+                "monitored_ports": [{"port": 8000, "protocol": "tcp"}],
+                "monitored_ips": [],
+            }
+        }
+        integration = firewalld.FirewalldIntegration(settings)
+        required = "\n".join(sorted(integration._required_default_rules()))
+        responses = iter(
+            [
+                (True, "public home", ""),
+                (True, "0", ""),
+                (True, "", ""),
+                (True, "home:\n  interfaces: eth1", ""),
+            ]
+        )
+        with (
+            patch.object(integration, "is_firewalld_available", return_value=True),
+            patch.object(integration, "_check_firewalld_version", return_value=True),
+            patch.object(integration, "_run_firewall_cmd", side_effect=responses),
+        ):
+            assert integration.verify_protection() is False
+
+        responses = iter(
+            [
+                (True, "public home", ""),
+                (True, "0", ""),
+                (True, "", ""),
+                (True, "public:\n  interfaces: eth0", ""),
+                (True, required, ""),
+            ]
+        )
+        with (
+            patch.object(integration, "is_firewalld_available", return_value=True),
+            patch.object(integration, "_check_firewalld_version", return_value=True),
+            patch.object(integration, "_run_firewall_cmd", side_effect=responses),
+        ):
+            assert integration.verify_protection() is True

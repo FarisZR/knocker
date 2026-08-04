@@ -12,7 +12,7 @@ This is ideal for homelab environments where you want to expose services to the 
 *   **Configurable TTL**: Each API key can have its own Time-To-Live (TTL), defining how long a whitelisted IP remains active.
 *   **Remote Whitelisting**: Grant specific admin keys permission to whitelist any IP or CIDR range, not just their own.
 *   **Static IP/CIDR Whitelisting**: Always allow certain IP addresses or ranges to bypass the dynamic whitelist.
-*   **Path-Based Exclusion**: Exclude specific URL paths (like health checks or public APIs) from authentication entirely.
+*   **Host-Scoped Exclusion**: Keep intentionally public paths scoped to the correct virtual host.
 *   **IPv6 First-Class Citizen**: Full support for IPv6 and IPv4 in whitelisting, trusted proxies, and Docker networking.
 *   **Secure by Default**: Built-in protection against IP spoofing via a trusted proxy mechanism.
 *   **Optional Interactive API Docs**: Generate Swagger UI, ReDoc, and OpenAPI JSON on demand when documentation is explicitly enabled.
@@ -23,7 +23,7 @@ This is ideal for homelab environments where you want to expose services to the 
 This project uses GitHub Actions for continuous integration and deployment.
 
 *   **CI (`tests.yml`)**: On every pull request to `main`, this workflow runs the full Python test suite and then performs a live integration test with Docker Compose to ensure the Caddy and Knocker services work together correctly.
-*   **Docker Publish (`docker-publish.yml`)**: Builds and publishes multi-arch Docker images to GitHub Container Registry (ghcr.io). The Dockerfile installs `uv` with Astral's installer script instead of `COPY --from=ghcr.io/astral-sh/uv`, because the installer path is more reliable across the Buildx target platforms used by this project.
+*   **Docker Publish (`docker-publish.yml`)**: Validates pull requests with read-only permissions and publishes signed multi-arch Docker images only from non-PR events. The Dockerfile copies `uv` from an official digest-pinned image.
     - On push to `main` → `ghcr.io/fariszr/knocker:main` (rolling development)
     - On version tags (v1.2.3) → Multiple tags including `:latest`, `:v1.2.3`, `:1.2.3`, `:1.2`, `:1` (stable releases)
 *   **Release Workflow (`release.yml`)**: On version tags, automatically creates GitHub releases with changelogs and installation instructions
@@ -38,7 +38,7 @@ This project is designed to be deployed as a set of Docker containers using the 
 
 2.  **Configuration**:
     *   Rename `knocker.example.yaml` to `knocker.yaml`.
-    *   **Crucially, change the default API keys** in `knocker.yaml` to your own secure, random strings.
+    *   Add at least one secure, random API key to `knocker.yaml`; the example intentionally contains no usable defaults.
     *   Review the `trusted_proxies` list in `knocker.yaml`, they should match the subnet of the reverse proxys network (`docker network inspect xxx`)
     *   (Optional) Enable interactive documentation by setting `documentation.enabled: true` (it is disabled by default).
     *   (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
