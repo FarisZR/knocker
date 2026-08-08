@@ -12,6 +12,9 @@ import logging
 import subprocess
 import time
 import ipaddress
+import asyncio
+import concurrent.futures
+import threading
 from typing import Dict, Any, List, Tuple, Optional
 from dataclasses import dataclass
 
@@ -32,6 +35,47 @@ class FirewalldRule:
 
     def __str__(self):
         return f"{self.ip_address}:{self.port}/{self.protocol} (expires: {self.expiry_time})"
+
+
+class MutationQueueUnavailable(RuntimeError):
+    """Raised when the bounded firewall mutation queue cannot accept work."""
+
+
+class SerializedMutationExecutor:
+    """Run blocking firewall mutations through one bounded worker."""
+
+    def __init__(self, max_pending: int = 32):
+        if max_pending <= 0:
+            raise ValueError("firewalld.mutation_queue_capacity must be positive")
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="knocker-firewall"
+        )
+        self._slots = threading.BoundedSemaphore(max_pending + 1)
+        self._closed = False
+        self._lock = threading.Lock()
+
+    async def run(self, operation):
+        with self._lock:
+            if self._closed or not self._slots.acquire(blocking=False):
+                raise MutationQueueUnavailable("Firewall mutation queue is unavailable")
+            try:
+                future = self._executor.submit(operation)
+            except RuntimeError as exc:
+                self._slots.release()
+                raise MutationQueueUnavailable("Firewall mutation worker is unavailable") from exc
+
+        wrapped = asyncio.wrap_future(future)
+        try:
+            return await wrapped
+        finally:
+            self._slots.release()
+
+    def shutdown(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        self._executor.shutdown(wait=True, cancel_futures=False)
 
 
 class FirewalldIntegration:
@@ -118,7 +162,14 @@ class FirewalldIntegration:
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=check)
-            return True, result.stdout.strip(), result.stderr.strip()
+            stdout = result.stdout.strip()
+            stderr = result.stderr.strip()
+            success = result.returncode == 0
+            if not success:
+                self.logger.error(
+                    "firewall-cmd exited with status %s: %s", result.returncode, stderr or stdout
+                )
+            return success, stdout, stderr
         except subprocess.CalledProcessError as e:
             self.logger.error(f"firewall-cmd failed: {e.stderr}")
             return False, e.stdout.strip() if e.stdout else "", e.stderr.strip() if e.stderr else ""
@@ -175,7 +226,7 @@ class FirewalldIntegration:
     def is_firewalld_available(self) -> bool:
         """Check if firewalld is available and running."""
         success, stdout, stderr = self._run_firewall_cmd(["--state"], check=False)
-        if success and "running" in stdout:
+        if success and stdout.strip().lower() == "running":
             return True
 
         self.logger.warning(f"Firewalld not available: {stderr}")
@@ -250,7 +301,10 @@ class FirewalldIntegration:
         try:
             # Check if zone already exists
             success, stdout, _ = self._run_firewall_cmd(["--get-zones"], check=False)
-            zone_exists = success and self.zone_name in stdout
+            if not success:
+                self.logger.error("Failed to enumerate firewalld zones")
+                return False
+            zone_exists = self.zone_name in stdout.split()
             if not zone_exists:
                 # Create the zone
                 success, stdout, stderr = self._run_firewall_cmd(
@@ -267,7 +321,8 @@ class FirewalldIntegration:
                 ["--permanent", f"--zone={self.zone_name}", f"--set-priority={self.zone_priority}"]
             )
             if not success:
-                self.logger.warning(f"Failed to set zone priority: {stderr}")
+                self.logger.error(f"Failed to set zone priority: {stderr}")
+                return False
 
             # Set zone target if specified
             if self.zone_target is not None:
@@ -275,7 +330,8 @@ class FirewalldIntegration:
                     ["--permanent", f"--zone={self.zone_name}", f"--set-target={self.zone_target}"]
                 )
                 if not success:
-                    self.logger.warning(f"Failed to set zone target: {stderr}")
+                    self.logger.error(f"Failed to set zone target: {stderr}")
+                    return False
                 else:
                     self.logger.info(f"Set zone target to: {self.zone_target}")
 
@@ -288,7 +344,8 @@ class FirewalldIntegration:
                     ["--permanent", f"--zone={self.zone_name}", f"--add-source={ip_range}"]
                 )
                 if not success:
-                    self.logger.warning(f"Failed to add source {ip_range} to zone: {stderr}")
+                    self.logger.error(f"Failed to add source {ip_range} to zone: {stderr}")
+                    return False
 
             # Add default action rules for monitored ports with low priority (high number)
             # These will be overridden by whitelist rules with higher priority (lower number)
@@ -307,9 +364,10 @@ class FirewalldIntegration:
                         ]
                     )
                     if not success:
-                        self.logger.warning(
+                        self.logger.error(
                             f"Failed to add {self.default_action.upper()} rule for {port}/{protocol} ({family}): {stderr}"
                         )
+                        return False
                     else:
                         self.logger.info(
                             f"Added {self.default_action.upper()} rule for port {port}/{protocol} ({family})"
@@ -327,6 +385,79 @@ class FirewalldIntegration:
         except Exception as e:
             self.logger.error(f"Exception during zone setup: {e}")
             return False
+
+    def _required_default_rules(self) -> set[str]:
+        return {
+            f'rule family="{family}" port protocol="{port_config.get("protocol", "tcp")}" '
+            f'port="{port_config.get("port")}" {self.default_action} priority="9999"'
+            for port_config in self.monitored_ports
+            for family in ("ipv4", "ipv6")
+        }
+
+    def verify_protection(self) -> bool:
+        """Verify active firewalld protection without changing persistent state."""
+        if not self.is_enabled():
+            return True
+        if not self.is_firewalld_available() or not self._check_firewalld_version():
+            return False
+
+        success, stdout, stderr = self._run_firewall_cmd(["--get-zones"], check=False)
+        if not success or self.zone_name not in stdout.split():
+            self.logger.error("Required firewalld zone is missing: %s", stderr)
+            return False
+
+        success, stdout, stderr = self._run_firewall_cmd(
+            ["--permanent", f"--zone={self.zone_name}", "--get-priority"], check=False
+        )
+        if not success or stdout.strip() != str(self.zone_priority):
+            self.logger.error("Firewalld zone priority verification failed: %s", stderr or stdout)
+            return False
+
+        if self.zone_target is not None:
+            success, stdout, stderr = self._run_firewall_cmd(
+                ["--permanent", f"--zone={self.zone_name}", "--get-target"], check=False
+            )
+            if not success or stdout.strip() != self.zone_target:
+                self.logger.error("Firewalld zone target verification failed: %s", stderr or stdout)
+                return False
+
+        success, stdout, stderr = self._run_firewall_cmd(
+            [f"--zone={self.zone_name}", "--list-sources"], check=False
+        )
+        if not success or not set(self.monitored_ips).issubset(set(stdout.split())):
+            self.logger.error("Firewalld source verification failed: %s", stderr or stdout)
+            return False
+
+        # A zone with no configured sources is valid when it is bound to an
+        # interface by the host (for example the existing public zone). In that
+        # mode, existence alone is insufficient: an inactive zone protects no traffic.
+        if not self.monitored_ips:
+            success, stdout, stderr = self._run_firewall_cmd(["--get-active-zones"], check=False)
+            active_zone_names = {
+                line.split()[0].rstrip(":")
+                for line in stdout.splitlines()
+                if line and not line[0].isspace() and line.split()
+            }
+            if not success or self.zone_name not in active_zone_names:
+                self.logger.error("Firewalld zone is not active: %s", stderr or stdout)
+                return False
+
+        missing_rules: list[str] = []
+        for rich_rule in sorted(self._required_default_rules()):
+            success, stdout, stderr = self._run_firewall_cmd(
+                [f"--zone={self.zone_name}", f"--query-rich-rule={rich_rule}"], check=False
+            )
+            if not success or stdout.strip().lower() != "yes":
+                self.logger.error(
+                    "Required firewalld rule verification failed for %s: %s",
+                    rich_rule,
+                    stderr or stdout,
+                )
+                missing_rules.append(rich_rule)
+        if missing_rules:
+            self.logger.error("Missing required firewalld rules: %s", missing_rules)
+            return False
+        return True
 
     def _add_or_replace_rule(
         self, ip_address: str, port: int, protocol: str, timeout_seconds: int
@@ -591,7 +722,11 @@ class FirewalldIntegration:
             return True
 
         current_time = int(time.time())
-        active_rules = self.get_active_rules()
+        if not self.is_firewalld_available():
+            return False
+        active_rules = self._get_active_rules()
+        if active_rules is None:
+            return False
 
         # Create a set of (ip, port, protocol) tuples for active rules
         active_rule_set = set()
@@ -631,6 +766,34 @@ class FirewalldIntegration:
 
         return restored_rules == missing_rules
 
+    def _get_active_rules(self) -> Optional[List[FirewalldRule]]:
+        """Return active rules, or None when firewalld could not be queried."""
+        success, stdout, stderr = self._run_firewall_cmd(
+            [f"--zone={self.zone_name}", "--list-rich-rules"], check=False
+        )
+        if not success:
+            self.logger.error("Failed to get active rules: %s", stderr)
+            return None
+
+        active_rules = []
+        for line in stdout.splitlines():
+            if line.strip() and "source address=" in line and "port=" in line:
+                try:
+                    ip_start = line.find('source address="') + 16
+                    ip_end = line.find('"', ip_start)
+                    ip_address = line[ip_start:ip_end]
+                    port_start = line.rfind('port="') + 6
+                    port_end = line.find('"', port_start)
+                    port = int(line[port_start:port_end])
+                    proto_start = line.find('protocol="') + 10
+                    proto_end = line.find('"', proto_start)
+                    protocol = line[proto_start:proto_end]
+                    active_rules.append(FirewalldRule(ip_address, port, protocol, 0))
+                except (ValueError, IndexError):
+                    self.logger.error("Failed to parse active firewalld rule: %s", line)
+                    return None
+        return active_rules
+
     def _add_single_rule(
         self, ip_address: str, port: int, protocol: str, timeout_seconds: int
     ) -> bool:
@@ -650,6 +813,7 @@ class FirewalldIntegration:
 
 # Global instance (will be initialized in main.py)
 firewalld_integration: Optional[FirewalldIntegration] = None
+mutation_executor: Optional[SerializedMutationExecutor] = None
 
 
 def get_firewalld_integration() -> Optional[FirewalldIntegration]:
@@ -662,3 +826,34 @@ def initialize_firewalld(settings: Dict[str, Any]) -> Optional[FirewalldIntegrat
     global firewalld_integration
     firewalld_integration = FirewalldIntegration(settings)
     return firewalld_integration
+
+
+def initialize_mutation_executor(settings: Dict[str, Any]) -> SerializedMutationExecutor:
+    """Create the process-local bounded firewall mutation worker."""
+    global mutation_executor
+    shutdown_mutation_executor()
+    capacity = int(settings.get("firewalld", {}).get("mutation_queue_capacity", 32))
+    mutation_executor = SerializedMutationExecutor(capacity)
+    return mutation_executor
+
+
+def get_mutation_executor(settings: Optional[Dict[str, Any]] = None) -> SerializedMutationExecutor:
+    global mutation_executor
+    if mutation_executor is None:
+        capacity = 32
+        if settings is not None:
+            capacity = int(settings.get("firewalld", {}).get("mutation_queue_capacity", 32))
+        mutation_executor = SerializedMutationExecutor(capacity)
+    return mutation_executor
+
+
+async def run_mutation(operation, settings: Optional[Dict[str, Any]] = None):
+    """Submit one blocking mutation and await its result."""
+    return await get_mutation_executor(settings).run(operation)
+
+
+def shutdown_mutation_executor() -> None:
+    global mutation_executor
+    if mutation_executor is not None:
+        mutation_executor.shutdown()
+        mutation_executor = None

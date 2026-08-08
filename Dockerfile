@@ -1,5 +1,9 @@
-# Use a specific, stable version of Python for reproducibility
-FROM python:3.13-slim
+# Pin the multi-architecture runtime base by immutable manifest digest.
+FROM python:3.13-slim@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91
+
+ARG TARGETARCH
+ARG TARGETVARIANT
+ARG UV_VERSION=0.11.31
 
 # Set the working directory in the container
 WORKDIR /app
@@ -15,11 +19,25 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install uv from the official installer so multi-arch builds work.
-ADD https://astral.sh/uv/0.11.2/install.sh /uv-installer.sh
-RUN sh /uv-installer.sh && rm /uv-installer.sh
-
-ENV PATH="/root/.local/bin:$PATH"
+# Install the official uv release artifact for each supported architecture.
+# Checksums are pinned from the uv 0.11.31 release, preserving arm/v7 support
+# without executing the remote installer script.
+RUN set -eux; \
+    case "${TARGETARCH}/${TARGETVARIANT}" in \
+      "amd64/") uv_target="x86_64-unknown-linux-gnu"; uv_sha256="8cc1cd82d434ec565376f98bd938d4b715b5791a80ff2d3aa78821cf85091b4b" ;; \
+      "arm64/") uv_target="aarch64-unknown-linux-gnu"; uv_sha256="d74f23949fd07be4970f293d06ca99d87cd2a78a341c3d7b7fc0df7bc2d8a145" ;; \
+      "arm/v7") uv_target="armv7-unknown-linux-gnueabihf"; uv_sha256="de23124095c4df154d3807495b59f1985d8d9460bd70d3de61fef2034756bd61" ;; \
+      *) echo "Unsupported target architecture: ${TARGETARCH}/${TARGETVARIANT}" >&2; exit 1 ;; \
+    esac; \
+    uv_archive="uv-${uv_target}.tar.gz"; \
+    curl --fail --silent --show-error --location \
+      "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${uv_archive}" \
+      --output "/tmp/${uv_archive}"; \
+    echo "${uv_sha256}  /tmp/${uv_archive}" | sha256sum --check --strict; \
+    tar --extract --gzip --file "/tmp/${uv_archive}" --directory /tmp; \
+    install -m 0755 "/tmp/uv-${uv_target}/uv" /usr/local/bin/uv; \
+    install -m 0755 "/tmp/uv-${uv_target}/uvx" /usr/local/bin/uvx; \
+    rm -rf "/tmp/${uv_archive}" "/tmp/uv-${uv_target}"
 
 # Create a non-root user to run the application for better security
 # NOTE: When firewalld integration is enabled, the container must run as root

@@ -83,12 +83,9 @@ When testing endpoints that require API keys (like `/knock`):
 2. Enter your API key in the `X-Api-Key` field
 3. Test protected endpoints with proper authentication
 
-Example API keys are defined in `knocker.example.yaml`:
-- `admin` / `CHANGE_ME_SUPER_SECRET_ADMIN_KEY`
-- `phone` / `CHANGE_ME_SECRET_PHONE_KEY`
-- `guest` / `CHANGE_ME_TEMPORARY_GUEST_KEY`
-
-**Security Note**: Change these default keys in production!
+`knocker.example.yaml` intentionally contains no usable API key material. Create
+your own random key (or hash) before starting the service; published example
+secrets and obvious placeholders are rejected at startup.
 
 ## API Endpoints Overview
 
@@ -99,6 +96,11 @@ Example API keys are defined in `knocker.example.yaml`:
 
 ### System Endpoints  
 - `GET /health` - Health check and service status
+
+`POST /knock` accepts an empty body or a strict JSON object containing only
+`ip_address` and `ttl`, up to 4096 bytes. Authentication happens before body
+reading. Invalid JSON is 400, oversized bodies are 413, non-JSON bodies are 415,
+and a saturated firewall mutation worker is 503.
 
 ## Request/Response Schemas
 
@@ -145,7 +147,7 @@ import requests
 response = requests.post(
     "http://localhost:8000/knock",
     headers={"X-Api-Key": "your-api-key"},
-    json={"ip_address": "192.168.1.100", "ttl": 3600}
+    json={"ip_address": "192.168.1.100", "ttl": 3600},
 )
 data = response.json()
 print(f"Whitelisted until: {data['expires_at']}")

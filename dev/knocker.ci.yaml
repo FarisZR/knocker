@@ -16,19 +16,16 @@ logging:
   level: DEBUG
 
 security:
-  always_allowed_ips:
     # These IPs/CIDRs are always allowed to pass through the /verify endpoint
     # without needing to be dynamically whitelisted.
-    # It's recommended to include your reverse proxy's IP here.
-    - "172.29.238.0/24"
-    - "fd00:dead:c0de::/64"
+    # Proxy networks are not permanent allowlists.
+  always_allowed_ips: []
   excluded_paths:
     # Request paths that start with any of these values will bypass
     # the IP whitelist check entirely.
     # Example:
     # - "/api/v1/status"
     # - "/metrics"
-    - "/knock"
     - "/public"
   # Maximum number of entries in the whitelist (default: 10000)
   max_whitelist_entries: 10000
@@ -45,16 +42,16 @@ firewalld:
 
 api_keys:
   - name: "admin-key-for-remote-whitelisting"
-    key: "CHANGE_ME_SUPER_SECRET_ADMIN_KEY"
+    key: "dev-only-admin-9c2f4a6d0d4b8f17e6a1c5b9d3f7a2e8"
     max_ttl: 3600 # Whitelist IPs for a maximum of 1 hour (in seconds)
     allow_remote_whitelist: true # This key CAN whitelist other IPs/CIDRs
 
   - name: "personal-phone"
-    key: "CHANGE_ME_SECRET_PHONE_KEY"
+    key: "dev-only-phone-4b7e1a9d2c6f8e3a5d0b7c1f9a4e6d2b"
     max_ttl: 14400 # Whitelist IPs for a maximum of 4 hours
     allow_remote_whitelist: false # This key can ONLY whitelist its own IP
 
   - name: "guest-access"
-    key: "CHANGE_ME_TEMPORARY_GUEST_KEY"
+    key: "dev-only-guest-8e1d4c7a2b9f5d3e6c0a4b8f1d7e2c9a"
     max_ttl: 600 # Whitelist IPs for a maximum of 10 minutes
     allow_remote_whitelist: false

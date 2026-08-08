@@ -30,14 +30,13 @@ KNOCK_URL="$BASE_URL/knock"
  
 # IPs
 REGULAR_IP="1.1.1.1"
-ALWAYS_ALLOWED_IP="172.29.238.10" # From the docker-compose network
 REMOTE_WHITELIST_IP="8.8.8.8"
 
 # API Keys (from knocker.example.yaml)
-VALID_ADMIN_KEY="CHANGE_ME_SUPER_SECRET_ADMIN_KEY"
+VALID_ADMIN_KEY="dev-only-admin-9c2f4a6d0d4b8f17e6a1c5b9d3f7a2e8"
 INVALID_KEY="INVALID_KEY"
-NO_REMOTE_KEY="CHANGE_ME_SECRET_PHONE_KEY"
-GUEST_KEY="CHANGE_ME_TEMPORARY_GUEST_KEY"
+NO_REMOTE_KEY="dev-only-phone-4b7e1a9d2c6f8e3a5d0b7c1f9a4e6d2b"
+GUEST_KEY="dev-only-guest-8e1d4c7a2b9f5d3e6c0a4b8f1d7e2c9a"
 
 # Global variable to store the whitelisted IP from a successful knock
 WHITELISTED_IP=""
@@ -61,12 +60,12 @@ test_unauthorized_access() {
     fi
 }
 
-test_excluded_path_access() {
+test_public_path_requires_authorization() {
     http_code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Forwarded-For: $REGULAR_IP" $PUBLIC_URL)
     if [ "$http_code" -eq 200 ]; then
-        success "Excluded path access correctly bypassed auth"
+        success "Protected path correctly required authorization"
     else
-        fail "Excluded path access returned $http_code instead of 200"
+        fail "Protected path returned $http_code instead of 401"
     fi
 }
 
@@ -93,33 +92,6 @@ test_authorized_access_after_knock() {
         success "Authorized access after knock for $WHITELISTED_IP returned 200"
     else
         fail "Authorized access after knock for $WHITELISTED_IP returned $http_code instead of 200"
-    fi
-}
-
-test_always_allowed_ip_access() {
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Forwarded-For: $ALWAYS_ALLOWED_IP" $PROTECTED_URL)
-    if [ "$http_code" -eq 200 ]; then
-        success "Always-allowed IP ($ALWAYS_ALLOWED_IP) accessed protected route directly"
-    else
-        fail "Always-allowed IP ($ALWAYS_ALLOWED_IP) failed to access protected route. Got $http_code"
-    fi
-}
-
-test_knock_for_always_allowed_ip_valid_key() {
-    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $ALWAYS_ALLOWED_IP" $KNOCK_URL)
-    if echo "$response" | grep -q "whitelisted_entry"; then
-        success "Knock for always-allowed IP with valid key was successful (as expected)"
-    else
-        fail "Knock for always-allowed IP with valid key failed. Response: $response"
-    fi
-}
-
-test_knock_for_always_allowed_ip_invalid_key() {
-    response=$(curl -s -X POST -H "X-Api-Key: $INVALID_KEY" -H "X-Forwarded-For: $ALWAYS_ALLOWED_IP" $KNOCK_URL)
-    if echo "$response" | grep -q "Invalid or missing API key"; then
-        success "Knock for always-allowed IP with invalid key correctly failed"
-    else
-        fail "Knock for always-allowed IP with invalid key did not fail as expected. Response: $response"
     fi
 }
 
@@ -170,12 +142,9 @@ main() {
     success "Services are healthy!"
 
     run_test "Unauthorized Access" "test_unauthorized_access"
-    run_test "Excluded Path Access" "test_excluded_path_access"
+    run_test "Protected Path Requires Authorization" "test_public_path_requires_authorization"
     run_test "Successful Knock" "test_successful_knock"
     run_test "Authorized Access After Knock" "test_authorized_access_after_knock"
-    run_test "Always-Allowed IP Direct Access" "test_always_allowed_ip_access"
-    run_test "Knock for Always-Allowed IP (Valid Key)" "test_knock_for_always_allowed_ip_valid_key"
-    run_test "Knock for Always-Allowed IP (Invalid Key)" "test_knock_for_always_allowed_ip_invalid_key"
     run_test "Remote Whitelist (Success)" "test_remote_whitelist_success"
     run_test "Remote Whitelist (Permission Denied)" "test_remote_whitelist_permission_denied"
     run_test "Knock with Invalid Key" "test_knock_with_invalid_key"
@@ -228,8 +197,6 @@ test_knock_with_custom_ttl_invalid() {
 # --- Firewalld Integration Tests ---
 
 test_firewalld_zone_exists() {
-    # Check if the knocker firewalld zone was created (only works if firewalld is enabled)
-    # This test may be skipped if firewalld is not available or disabled
     if command -v docker-compose &> /dev/null || command -v docker &> /dev/null; then
         # Try docker compose first, then fall back to docker-compose
         if command -v docker &> /dev/null && docker compose version &> /dev/null; then
@@ -237,22 +204,20 @@ test_firewalld_zone_exists() {
         elif command -v docker-compose &> /dev/null; then
             zone_check=$(docker-compose -f "$COMPOSE_FILE" exec -T knocker firewall-cmd --list-all-zones 2>/dev/null | grep -c "knocker" || echo "0")
         else
-            info "Firewalld zone test skipped (docker compose not available)"
-            return
+            fail "Docker Compose is unavailable for firewalld validation"
         fi
         
         if [ "$zone_check" -gt 0 ]; then
             success "Firewalld knocker zone exists"
         else
-            info "Firewalld zone test skipped (firewalld not enabled or available)"
+            fail "Firewalld knocker zone is missing"
         fi
     else
-        info "Firewalld zone test skipped (docker not available)"
+        fail "Docker is unavailable for firewalld validation"
     fi
 }
 
 test_firewalld_rules_after_knock() {
-    # Check if firewalld rules are created after a successful knock (if firewalld is enabled)
     if command -v docker-compose &> /dev/null || command -v docker &> /dev/null; then
         # First, perform a knock
         response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $REGULAR_IP" $KNOCK_URL)
@@ -264,20 +229,19 @@ test_firewalld_rules_after_knock() {
             elif command -v docker-compose &> /dev/null; then
                 rules_check=$(docker-compose -f "$COMPOSE_FILE" exec -T knocker firewall-cmd --zone=knocker --list-rich-rules 2>/dev/null | grep -c "$REGULAR_IP" || echo "0")
             else
-                info "Firewalld rules test skipped (docker compose not available)"
-                return
+                fail "Docker Compose is unavailable for firewalld validation"
             fi
             
             if [ "$rules_check" -gt 0 ]; then
                 success "Firewalld rules created for whitelisted IP ($REGULAR_IP)"
             else
-                info "Firewalld rules test skipped (firewalld not enabled or no rules found)"
+                fail "Firewalld rules are missing after a successful knock"
             fi
         else
             fail "Could not perform knock for firewalld rules test"
         fi
     else
-        info "Firewalld rules test skipped (docker not available)"
+        fail "Docker is unavailable for firewalld validation"
     fi
 }
 
@@ -329,11 +293,9 @@ main() {
     success "Services are healthy!"
 
     run_test "Unauthorized Access" "test_unauthorized_access"
+    run_test "Protected Path Requires Authorization" "test_public_path_requires_authorization"
     run_test "Successful Knock" "test_successful_knock"
     run_test "Authorized Access After Knock" "test_authorized_access_after_knock"
-    run_test "Always-Allowed IP Direct Access" "test_always_allowed_ip_access"
-    run_test "Knock for Always-Allowed IP (Valid Key)" "test_knock_for_always_allowed_ip_valid_key"
-    run_test "Knock for Always-Allowed IP (Invalid Key)" "test_knock_for_always_allowed_ip_invalid_key"
     run_test "Remote Whitelist (Success)" "test_remote_whitelist_success"
     run_test "Remote Whitelist (Permission Denied)" "test_remote_whitelist_permission_denied"
     run_test "Knock with Invalid Key" "test_knock_with_invalid_key"

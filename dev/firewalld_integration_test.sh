@@ -21,10 +21,6 @@ fail() {
     exit 1
 }
 
-warning() {
-    echo "⚠️  $1"
-}
-
 # --- Configuration ---
 BASE_URL="http://localhost:18080"
 KNOCK_URL="$BASE_URL/knock"
@@ -33,7 +29,7 @@ KNOCK_URL="$BASE_URL/knock"
 TEST_IP="192.168.178.23"
 
 # API Key (from knocker.firewalld.yaml)
-VALID_ADMIN_KEY="CHANGE_ME_SUPER_SECRET_ADMIN_KEY"
+VALID_ADMIN_KEY="dev-only-admin-9c2f4a6d0d4b8f17e6a1c5b9d3f7a2e8"
 
 # --- Test Functions ---
 
@@ -47,7 +43,7 @@ check_prerequisites() {
     
     # Check if firewalld is available on the host system
     if ! systemctl is-active --quiet firewalld 2>/dev/null; then
-        warning "Firewalld is not running on host system. Some tests may be limited."
+        fail "Firewalld is not running on host system"
     fi
     
     success "Prerequisites check passed"
@@ -102,7 +98,7 @@ test_knocker_zone_creation() {
     
     # Check zone properties (verify default DROP rules exist for monitored ports)
     # We no longer rely on the zone target; instead ensure monitored ports have DROP rules
-    zone_info=$(docker compose exec -T knocker firewall-cmd --zone=knocker --list-all || true)
+    zone_info=$(docker compose exec -T knocker firewall-cmd --zone=knocker --list-all)
     
     # Monitored ports (must match dev/knocker.firewalld.yaml)
     for p in 80 443 22; do
@@ -110,7 +106,7 @@ test_knocker_zone_creation() {
         if docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules 2>/dev/null | grep -F "port=\"$p\"" | grep -q "drop"; then
             success "Knocker zone has DROP rule for port $p"
         else
-            warning "Knocker zone missing DROP rule for port $p"
+            fail "Knocker zone missing DROP rule for port $p"
         fi
     done
 }
@@ -182,7 +178,7 @@ test_rule_expiration() {
     if ! docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
         success "Rules expired correctly after TTL"
     else
-        warning "Rules may not have expired correctly (could be due to timing)"
+        fail "Rules did not expire correctly after TTL"
     fi
 }
 
@@ -190,7 +186,7 @@ test_ttl_replacement_on_existing_rule() {
     info "Testing TTL replacement when an existing rule is present..."
 
     # Add an existing long-TTL rule for port 80 to simulate a collision
-    docker compose exec -T knocker firewall-cmd --zone=knocker --add-rich-rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"80\" accept" --timeout=120 || true
+    docker compose exec -T knocker firewall-cmd --zone=knocker --add-rich-rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"80\" accept" --timeout=120
     info "Pre-existing long-TTL rule added for $TEST_IP:80 (simulated)"
 
     # Perform a knock with short TTL (5 seconds)
@@ -204,7 +200,7 @@ test_ttl_replacement_on_existing_rule() {
     sleep 2
 
     # Verify that rules for the IP exist (should have been replaced or updated)
-    rules=$(docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules || true)
+    rules=$(docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules)
     if echo "$rules" | grep -q "$TEST_IP"; then
         success "Rules exist after replacement knock for $TEST_IP"
     else
@@ -226,7 +222,7 @@ test_startup_rule_recovery() {
     fi
     
     # Manually remove the firewalld rule (simulate rule loss)
-    docker compose exec -T knocker firewall-cmd --zone=knocker --remove-rich-rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"80\" accept" &>/dev/null || true
+    docker compose exec -T knocker firewall-cmd --zone=knocker --remove-rich-rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"80\" accept" &>/dev/null
     
     # Restart the knocker container
     info "Restarting knocker container to test rule recovery..."
@@ -239,7 +235,7 @@ test_startup_rule_recovery() {
     if docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
         success "Rules recovered after container restart"
     else
-        warning "Rule recovery test inconclusive (rule may have been recreated by other means)"
+        fail "Rule recovery test did not restore $TEST_IP"
     fi
 }
 

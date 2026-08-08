@@ -9,6 +9,9 @@
 		# Handle the knock request by forwarding it directly to the knocker service.
 		@knock path /knock
 		handle @knock {
+			request_body {
+				max_size 4KB
+			}
 			reverse_proxy knocker:8000 {
 				# Trust the proxy network to preserve the original X-Forwarded-For
 				trusted_proxies 172.29.238.0/24 fd00:dead:c0de::/64

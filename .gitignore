@@ -121,4 +121,3 @@ openapi.json
 test_openapi.json
 
 # Docker
-.dockerignore

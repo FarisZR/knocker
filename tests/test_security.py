@@ -57,35 +57,32 @@ client = TestClient(app)
 class TestIPSpoofingVulnerability:
     """Test IP spoofing via X-Forwarded-For header manipulation."""
 
-    def test_ip_spoofing_attack_success(self):
+    def test_untrusted_peer_cannot_spoof_forwarded_ip(self):
         """
-        VULNERABILITY: An attacker can spoof their IP by setting X-Forwarded-For header.
-        This should fail but currently succeeds because trusted_proxies is not enforced.
+        A direct untrusted peer must not be able to choose its identity with XFF.
         """
-        # Attacker spoofs IP as if coming from a trusted source
         response = client.post(
             "/knock",
             headers={
                 "X-Api-Key": "USER_KEY",
                 "X-Forwarded-For": "192.168.1.100",  # Spoofed IP
+                "x-knocker-test-direct-ip": "10.10.10.10",
             },
         )
-        # This should fail with proper trusted proxy validation
-        # but currently succeeds because the header is blindly trusted
         assert response.status_code == 200
-
-        # Verify the spoofed IP was whitelisted instead of real IP
         data = response.json()
-        assert data["whitelisted_entry"] == "192.168.1.100"
+        assert data["whitelisted_entry"] == "10.10.10.10"
 
     def test_ip_spoofing_bypass_always_allowed(self):
         """Attacker spoofs IP to appear as an always-allowed IP."""
         response = client.get(
             "/verify",
-            headers={"X-Forwarded-For": "192.168.1.100"},  # Spoofed as always-allowed
+            headers={
+                "X-Forwarded-For": "192.168.1.100",  # Spoofed as always-allowed
+                "x-knocker-test-direct-ip": "10.10.10.10",
+            },
         )
-        # This should only work if the request actually comes from a trusted proxy
-        assert response.status_code == 200
+        assert response.status_code == 401
 
 
 class TestCIDRRangeAbuse:
