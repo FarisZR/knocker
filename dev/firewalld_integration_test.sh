@@ -229,9 +229,26 @@ test_startup_rule_recovery() {
     if ! echo "$response" | grep -q "whitelisted_entry"; then
         fail "Initial knock for recovery test failed"
     fi
-    
-    # Manually remove the firewalld rule (simulate rule loss)
-    docker compose exec -T knocker firewall-cmd --zone=knocker --remove-rich-rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"80\" accept" &>/dev/null
+
+    # Remove every exact timed allow rule to simulate complete runtime rule
+    # loss. The priority is part of Knocker's canonical rule, so omitting it
+    # would leave the original rule in place and make this recovery test lie.
+    for port in 80 443 22; do
+        rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"$port\" accept priority=\"1000\""
+
+        if ! docker compose exec -T knocker firewall-cmd --zone=knocker --query-rich-rule="$rule" 2>/dev/null | grep -qx "yes"; then
+            fail "Expected timed allow rule for $TEST_IP:$port before recovery"
+        fi
+
+        if ! docker compose exec -T knocker firewall-cmd --zone=knocker --remove-rich-rule="$rule" &>/dev/null; then
+            fail "Could not remove timed allow rule for $TEST_IP:$port"
+        fi
+
+        if docker compose exec -T knocker firewall-cmd --zone=knocker --query-rich-rule="$rule" 2>/dev/null | grep -qx "yes"; then
+            fail "Timed allow rule for $TEST_IP:$port was not removed"
+        fi
+        success "Removed timed allow rule for $TEST_IP:$port"
+    done
     
     # Restart the knocker container
     info "Restarting knocker container to test rule recovery..."
@@ -240,12 +257,14 @@ test_startup_rule_recovery() {
     # Wait for restart
     sleep 10
     
-    # Check if the rule was restored
-    if docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
-        success "Rules recovered after container restart"
-    else
-        fail "Rule recovery test did not restore $TEST_IP"
-    fi
+    # Check that every exact rule was restored
+    for port in 80 443 22; do
+        rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"$port\" accept priority=\"1000\""
+        if ! docker compose exec -T knocker firewall-cmd --zone=knocker --query-rich-rule="$rule" 2>/dev/null | grep -qx "yes"; then
+            fail "Rule recovery test did not restore $TEST_IP:$port"
+        fi
+    done
+    success "All rules recovered after container restart"
 }
 
 test_firewalld_error_handling() {

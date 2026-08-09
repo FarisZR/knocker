@@ -345,6 +345,13 @@ delete/reload path, cleanup temporarily stops it, performs the offline cleanup,
 and restores the daemon to its original active state. This prevents the test's
 DROP rules from surviving the test run and affecting the host firewall.
 
+The startup-recovery case creates timed allow rules for ports 80, 443, and 22,
+verifies each exact rule, removes all three rules, and then restarts Knocker.
+Removing all timed runtime rules before the restart simulates complete runtime
+rule loss while preserving the persisted whitelist that Knocker must restore.
+It also avoids relying on Firewalld timeout cleanup during the reload performed
+by startup on releases that do not handle active timeout entries reliably.
+
 ### Manual Testing
 
 1. **Enable firewalld integration** in configuration
