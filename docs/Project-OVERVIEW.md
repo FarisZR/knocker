@@ -26,7 +26,7 @@ This project uses GitHub Actions for continuous integration and deployment.
 *   **Docker Publish (`docker-publish.yml`)**: Validates pull requests with read-only permissions and publishes signed multi-arch Docker images only from non-PR events. The Dockerfile copies `uv` from an official digest-pinned image.
     - On push to `main` → `ghcr.io/fariszr/knocker:main` (rolling development)
     - On version tags (v1.2.3) → Multiple tags including `:latest`, `:v1.2.3`, `:1.2.3`, `:1.2`, `:1` (stable releases)
-*   **Release Workflow (`release.yml`)**: On version tags, automatically creates GitHub releases with changelogs and installation instructions
+*   **Release Workflow (`release.yml`)**: On version tags, automatically creates GitHub releases with changelogs and installation instructions. Workflow-file changes are included in the normal CI path.
 
 ## Deployment
 
@@ -248,6 +248,6 @@ documentation:
   openapi_output_path: "openapi.json"
 ```
 
-When documentation is disabled (default), Knocker removes these endpoints and deletes any previously generated schema file to prevent stale artifacts.
+The production container starts `src.main:create_app` as a Uvicorn factory, so these routes are selected declaratively for each app instance before requests are served. When documentation is disabled (default), the routes are not registered and any previously generated schema file is deleted during the explicit startup export step to prevent stale artifacts.
 
 For a formal API specification and a summary of the architectural choices, please see the [documentation](./docs/).

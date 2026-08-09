@@ -1,8 +1,6 @@
 # knocker.example.yaml
 
 server:
-  host: "0.0.0.0"
-  port: 8000
   trusted_proxies:
     # Trust the IPv4 and IPv6 subnets of the caddy_net docker network
     # Adjust these to match your specific Docker network configuration.
@@ -20,7 +18,7 @@ security:
     # the IP whitelist check entirely.
     # Prefer host-scoped exclusions below; a global exclusion affects every host.
   excluded_paths: []
-  excluded_paths_by_host:
+  excluded_paths_by_host: {}
     # Optional host-specific exclusions. These are only trusted when the
     # request comes through a trusted proxy that forwards host/path metadata.
     # "jellyfin.your-domain.com":

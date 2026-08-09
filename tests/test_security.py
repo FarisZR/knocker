@@ -5,7 +5,6 @@ Tests pass when attacks are successfully blocked.
 """
 
 import pytest
-import time
 import logging
 from fastapi.testclient import TestClient
 from src.main import app, get_settings
@@ -260,7 +259,8 @@ class TestRaceConditions:
         for thread in threads:
             thread.join()
 
-        whitelist = core.load_whitelist(app.dependency_overrides[get_settings]())
+        settings = app.dependency_overrides[get_settings]()
+        whitelist = core.ensure_runtime_state(settings).whitelist.active_snapshot()
         expected_ips = {f"10.0.0.{i}" for i in range(10)}
 
         assert set(whitelist) == expected_ips
@@ -290,9 +290,8 @@ class TestDenialOfService:
             )
             assert response.status_code == 200
 
-        whitelist = core.load_whitelist(
-            {"whitelist": {"storage_path": "./test_security_whitelist.json"}}
-        )
+        settings = app.dependency_overrides[get_settings]()
+        whitelist = core.ensure_runtime_state(settings).whitelist.active_snapshot()
         assert len(whitelist) <= 100
 
     @pytest.mark.skip(
@@ -300,7 +299,7 @@ class TestDenialOfService:
     )
     def test_deep_directory_creation(self):
         """Test if deep directory structures can be created."""
-        # This tests the save_whitelist function's mkdir behavior
+        # This tests whitelist persistence's mkdir behavior
         # with a malicious storage path (though this would require config control)
         pass
 
@@ -319,16 +318,9 @@ class TestDenialOfService:
         ]
 
         for dangerous_path in dangerous_paths:
-            # Create a temporary settings with dangerous storage path
-            temp_settings = {
-                "whitelist": {"storage_path": dangerous_path},
-                "api": {"keys": {"TEST_KEY": {"allow_remote_whitelist": True, "max_ttl": 3600}}},
-                "security": {"trusted_proxies": ["127.0.0.1"], "excluded_paths": []},
-            }
-
-            # Try to save whitelist - should fail due to system restrictions
+            # Validate the storage target through the configuration owner.
             try:
-                core.save_whitelist({"127.0.0.1": int(time.time()) + 3600}, temp_settings)
+                core.validate_whitelist_storage_path(dangerous_path)
                 # If it doesn't raise an exception, check that files aren't actually created in dangerous locations
                 if os.path.exists(dangerous_path):
                     # If file was created, clean it up and fail the test
@@ -343,15 +335,9 @@ class TestDenialOfService:
 
         # Test relative path traversal - this should work but should resolve to safe location
         safe_traversal_path = "../../safe_test_file.json"
-        safe_settings = {
-            "whitelist": {"storage_path": safe_traversal_path},
-            "api": {"keys": {"TEST_KEY": {"allow_remote_whitelist": True, "max_ttl": 3600}}},
-            "security": {"trusted_proxies": ["127.0.0.1"], "excluded_paths": []},
-        }
-
         # Relative traversal outside the working tree should be rejected.
         with pytest.raises(ValueError, match="must stay within"):
-            core.save_whitelist({"127.0.0.1": int(time.time()) + 3600}, safe_settings)
+            core.validate_whitelist_storage_path(safe_traversal_path)
 
 
 class TestConfigurationSecurity:

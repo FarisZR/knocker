@@ -69,4 +69,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # Define the command to run the application.
 # Keep Uvicorn from rewriting the direct peer from forwarded headers; Knocker
 # performs its own trusted-proxy validation using server.trusted_proxies.
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
+CMD ["uvicorn", "src.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

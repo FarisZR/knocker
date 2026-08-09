@@ -1,7 +1,7 @@
 import pytest
 import time
 import ipaddress
-from src import core
+from src import config, core
 
 # --- Test IP/CIDR Validation ---
 
@@ -26,53 +26,70 @@ def test_is_valid_ip_or_cidr(address, expected):
 # --- Test Whitelist Logic ---
 
 
-def test_ip_is_whitelisted(mock_settings):
-    """Tests if an IP is correctly identified within a whitelisted CIDR."""
+def test_runtime_whitelist_authorizes_cidr(mock_settings, tmp_path):
+    """The runtime whitelist index authorizes addresses within a CIDR."""
     now = int(time.time())
     whitelist = {"192.168.1.0/24": now + 3600}
-    assert core.is_ip_whitelisted("192.168.1.100", whitelist, mock_settings) == True
+    mock_settings["whitelist"] = {"storage_path": str(tmp_path / "whitelist.json")}
+    state = core.ensure_runtime_state(mock_settings)
+    state.whitelist.replace(whitelist)
+    assert state.is_authorized_ip("192.168.1.100") is True
 
 
-def test_ip_is_not_whitelisted(mock_settings):
-    """Tests if an IP outside a whitelisted CIDR is correctly rejected."""
+def test_runtime_whitelist_rejects_outside_cidr(mock_settings, tmp_path):
+    """The runtime whitelist index rejects addresses outside a CIDR."""
     now = int(time.time())
     whitelist = {"192.168.1.0/24": now + 3600}
-    assert core.is_ip_whitelisted("10.10.10.10", whitelist, mock_settings) == False
+    mock_settings["whitelist"] = {"storage_path": str(tmp_path / "whitelist.json")}
+    state = core.ensure_runtime_state(mock_settings)
+    state.whitelist.replace(whitelist)
+    assert state.is_authorized_ip("10.10.10.10") is False
 
 
-def test_ipv6_is_whitelisted(mock_settings):
-    """Tests if an IPv6 address is correctly identified within a whitelisted CIDR."""
+def test_runtime_whitelist_authorizes_ipv6_cidr(mock_settings, tmp_path):
+    """The runtime whitelist index supports IPv6 CIDRs."""
     now = int(time.time())
     whitelist = {"2001:db8:abcd::/48": now + 3600}
-    assert core.is_ip_whitelisted("2001:db8:abcd:0001::1", whitelist, mock_settings) == True
+    mock_settings["whitelist"] = {"storage_path": str(tmp_path / "whitelist.json")}
+    state = core.ensure_runtime_state(mock_settings)
+    state.whitelist.replace(whitelist)
+    assert state.is_authorized_ip("2001:db8:abcd:0001::1") is True
 
 
-def test_expired_ip_is_not_whitelisted(mock_settings):
-    """Tests if an IP with an expired timestamp is correctly rejected."""
+def test_runtime_whitelist_rejects_expired_entry(mock_settings, tmp_path):
+    """The runtime whitelist index rejects expired entries."""
     now = int(time.time())
     whitelist = {"1.1.1.1/32": now - 100}  # Expired
-    assert core.is_ip_whitelisted("1.1.1.1", whitelist, mock_settings) == False
+    mock_settings["whitelist"] = {"storage_path": str(tmp_path / "whitelist.json")}
+    state = core.ensure_runtime_state(mock_settings)
+    state.whitelist.replace(whitelist)
+    assert state.is_authorized_ip("1.1.1.1") is False
 
 
-def test_is_ip_whitelisted_with_invalid_ip_input(mock_settings):
+def test_runtime_whitelist_rejects_invalid_ip_input(mock_settings, tmp_path):
     """Tests that the function handles invalid IP input gracefully."""
     now = int(time.time())
     whitelist = {"192.168.1.0/24": now + 3600}
-    assert core.is_ip_whitelisted("not-a-real-ip", whitelist, mock_settings) == False
+    mock_settings["whitelist"] = {"storage_path": str(tmp_path / "whitelist.json")}
+    state = core.ensure_runtime_state(mock_settings)
+    state.whitelist.replace(whitelist)
+    assert state.is_authorized_ip("not-a-real-ip") is False
 
 
-def test_always_allowed_ip_is_whitelisted(mock_settings):
+def test_always_allowed_ip_is_authorized(mock_settings, tmp_path):
     """Tests that an IP in the always-allowed list is always whitelisted."""
     mock_settings["security"] = {"always_allowed_ips": ["10.20.30.40"]}
-    whitelist = {}  # Empty dynamic whitelist
-    assert core.is_ip_whitelisted("10.20.30.40", whitelist, mock_settings) == True
+    mock_settings["whitelist"] = {"storage_path": str(tmp_path / "whitelist.json")}
+    state = core.ensure_runtime_state(mock_settings)
+    assert state.is_authorized_ip("10.20.30.40") is True
 
 
-def test_always_allowed_cidr_is_whitelisted(mock_settings):
+def test_always_allowed_cidr_is_authorized(mock_settings, tmp_path):
     """Tests that an IP within an always-allowed CIDR is always whitelisted."""
     mock_settings["security"] = {"always_allowed_ips": ["10.20.30.0/24"]}
-    whitelist = {}
-    assert core.is_ip_whitelisted("10.20.30.50", whitelist, mock_settings) == True
+    mock_settings["whitelist"] = {"storage_path": str(tmp_path / "whitelist.json")}
+    state = core.ensure_runtime_state(mock_settings)
+    assert state.is_authorized_ip("10.20.30.50") is True
 
 
 # --- Test Path Exclusion ---
@@ -144,10 +161,8 @@ def test_is_invalid_api_key(mock_settings):
 
 def test_allow_remote_whitelist_must_be_boolean():
     with pytest.raises(ValueError, match="must define boolean allow_remote_whitelist"):
-        core.APIKeyRegistry.from_settings(
-            [
-                {"key": "admin_key", "max_ttl": 3600, "allow_remote_whitelist": "false"},
-            ]
+        config.validate_settings(
+            {"api_keys": [{"key": "admin_key", "max_ttl": 3600, "allow_remote_whitelist": "false"}]}
         )
 
 
@@ -178,28 +193,31 @@ def test_rate_limiter_prunes_stale_actor_buckets():
     assert ("success", "actor-a") not in limiter._events
 
 
-def test_whitelist_store_contains_reloads_shared_state(tmp_path):
+def test_whitelist_store_mutations_refresh_in_memory_index(tmp_path):
     whitelist_path = tmp_path / "whitelist.json"
     store = core.WhitelistStore(storage_path=whitelist_path, max_entries=10)
     address = ipaddress.ip_address("203.0.113.10")
+    replacement = ipaddress.ip_address("203.0.113.11")
     now = int(time.time())
 
     assert store.contains(address, now=now) is False
 
-    core._write_whitelist_file(whitelist_path, {"203.0.113.10": now + 60})
+    store.add("203.0.113.10", now + 60)
 
     assert store.contains(address, now=now) is True
 
+    store.replace({"203.0.113.11": now + 60})
 
-def test_whitelist_store_contains_skips_reload_when_storage_unchanged(tmp_path, monkeypatch):
+    assert store.contains(address, now=now) is False
+    assert store.contains(replacement, now=now) is True
+
+
+def test_whitelist_store_contains_does_not_stat_filesystem(tmp_path, monkeypatch):
     whitelist_path = tmp_path / "whitelist.json"
     store = core.WhitelistStore(storage_path=whitelist_path, max_entries=10)
     address = ipaddress.ip_address("203.0.113.10")
 
-    def unexpected_read(_: object) -> dict[str, int]:
-        pytest.fail("contains reloaded whitelist without a storage change")
-
-    monkeypatch.setattr(core, "_read_whitelist_file", unexpected_read)
+    monkeypatch.setattr(type(whitelist_path), "stat", lambda *_args, **_kwargs: pytest.fail())
 
     assert store.contains(address, now=int(time.time())) is False
     assert store.contains(address, now=int(time.time())) is False
@@ -274,3 +292,34 @@ def test_resolve_client_ip_rejects_malformed_forwarded_chain_from_trusted_proxy(
     trusted_proxies = core.ParsedNetworkSet.from_entries(["127.0.0.1"], "trusted_proxies")
 
     assert core.resolve_client_ip("127.0.0.1", forwarded_for, trusted_proxies) == (None, True)
+
+
+def test_resolve_client_ip_rejects_chain_with_only_trusted_hops():
+    trusted_proxies = core.ParsedNetworkSet.from_entries(["127.0.0.0/8"], "trusted_proxies")
+
+    assert core.resolve_client_ip("127.0.0.1", "127.0.0.2, 127.0.0.3", trusted_proxies) == (
+        None,
+        True,
+    )
+
+
+def test_settings_accepts_empty_host_exclusions_as_yaml_null(tmp_path):
+    settings = config.validate_settings(
+        {
+            "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+            "security": {"excluded_paths_by_host": None},
+            "whitelist": {"storage_path": str(tmp_path / "whitelist.json")},
+        }
+    )
+
+    assert settings.security.excluded_paths_by_host == {}
+
+
+def test_disabled_firewalld_still_validates_shared_mutation_capacity():
+    with pytest.raises(ValueError, match="mutation_queue_capacity must be a positive integer"):
+        config.validate_settings(
+            {
+                "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+                "firewalld": {"enabled": False, "mutation_queue_capacity": 0},
+            }
+        )

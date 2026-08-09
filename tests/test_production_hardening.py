@@ -4,8 +4,9 @@ Tests timing attack resistance, edge case handling, and input validation.
 """
 
 import pytest
-import time
+import inspect
 import logging
+from unittest.mock import Mock
 from pathlib import Path
 from fastapi.testclient import TestClient
 from src.main import app, get_settings
@@ -15,8 +16,6 @@ from src import core
 def _minimal_valid_config_yaml() -> str:
     return """
 server:
-  host: "0.0.0.0"
-  port: 8000
   trusted_proxies:
     - "127.0.0.1"
 cors:
@@ -107,107 +106,26 @@ class TestTimingAttackResistance:
         assert "--no-proxy-headers" in content
         assert "--forwarded-allow-ips" not in content
 
-    def test_constant_time_validation(self, test_settings):
-        """
-        Verify timing is consistent regardless of key validity using robust statistical analysis.
+    def test_constant_time_validation_scans_all_keys(self, test_settings, monkeypatch):
+        """Validation compares every configured key without an early return."""
+        compared_keys = []
+        original_verify = core.APIKeyRecord.verify
+        verify_source = inspect.getsource(original_verify)
 
-        Uses warm-up runs, large sample size, outlier removal, and statistical testing
-        to detect timing attack vulnerabilities.
-        """
-        valid_key = "valid_key_12345"
-        invalid_key = "invalid_key_12345"
+        def verify(record, presented_key):
+            compared_keys.append(record.key)
+            return original_verify(record, presented_key)
 
-        # Warm-up runs to stabilize timing
-        for _ in range(10):
-            core.is_valid_api_key(valid_key, test_settings)
-            core.is_valid_api_key(invalid_key, test_settings)
+        monkeypatch.setattr(core.APIKeyRecord, "verify", verify)
+        configured_keys = [record["key"] for record in test_settings["api_keys"]]
 
-        # Collect measurements with high-resolution timing
-        sample_size = 150
-        valid_times = []
-        invalid_times = []
+        assert core.is_valid_api_key(configured_keys[0], test_settings) is True
+        assert compared_keys == configured_keys
 
-        for _ in range(sample_size):
-            start = time.perf_counter_ns()
-            core.is_valid_api_key(valid_key, test_settings)
-            valid_times.append(time.perf_counter_ns() - start)
-
-            start = time.perf_counter_ns()
-            core.is_valid_api_key(invalid_key, test_settings)
-            invalid_times.append(time.perf_counter_ns() - start)
-
-        # Remove outliers using trimmed mean (remove top/bottom 10%)
-        def trimmed_mean(samples, trim_percent=0.1):
-            sorted_samples = sorted(samples)
-            trim_count = int(len(sorted_samples) * trim_percent)
-            if trim_count > 0:
-                trimmed = sorted_samples[trim_count:-trim_count]
-            else:
-                trimmed = sorted_samples
-            return sum(trimmed) / len(trimmed), trimmed
-
-        valid_mean, valid_trimmed = trimmed_mean(valid_times)
-        invalid_mean, invalid_trimmed = trimmed_mean(invalid_times)
-
-        # Calculate standard deviations
-        def std_dev(samples, mean):
-            variance = sum((x - mean) ** 2 for x in samples) / len(samples)
-            return variance**0.5
-
-        valid_std = std_dev(valid_trimmed, valid_mean)
-        invalid_std = std_dev(invalid_trimmed, invalid_mean)
-
-        # Perform Mann-Whitney U test (non-parametric)
-        # Null hypothesis: distributions are the same
-        def mann_whitney_u(samples1, samples2):
-            """Simplified Mann-Whitney U test for timing attack detection."""
-            n1, n2 = len(samples1), len(samples2)
-            combined = [(val, 0) for val in samples1] + [(val, 1) for val in samples2]
-            combined.sort(key=lambda x: x[0])
-
-            # Calculate ranks
-            rank_sum_1 = sum(i + 1 for i, (val, group) in enumerate(combined) if group == 0)
-
-            # Calculate U statistic
-            u1 = rank_sum_1 - (n1 * (n1 + 1)) / 2
-            u2 = n1 * n2 - u1
-            u = min(u1, u2)
-
-            # Calculate expected value and standard deviation under null hypothesis
-            mean_u = n1 * n2 / 2
-            std_u = ((n1 * n2 * (n1 + n2 + 1)) / 12) ** 0.5
-
-            # Calculate z-score
-            z = (u - mean_u) / std_u if std_u > 0 else 0
-
-            # For two-tailed test, we want |z| to be small (distributions similar)
-            # p-value approximation: larger |z| means more different distributions
-            return abs(z)
-
-        z_score = mann_whitney_u(valid_trimmed, invalid_trimmed)
-
-        # Check relative difference (must be < 10% for practical constant-time)
-        relative_diff = abs(valid_mean - invalid_mean) / max(valid_mean, invalid_mean)
-
-        # For timing attack resistance, we care about practical exploitability.
-        # Over a network, timing differences < 10% at nanosecond scale are not exploitable
-        # due to network jitter, OS scheduling, and other noise sources.
-        # This test validates the implementation follows constant-time principles.
-        assert relative_diff < 0.10, (
-            f"Timing difference too large: {relative_diff * 100:.1f}% difference between "
-            f"valid ({valid_mean:.0f}ns ± {valid_std:.0f}ns) and "
-            f"invalid ({invalid_mean:.0f}ns ± {invalid_std:.0f}ns) key validation times. "
-            f"This indicates a structural timing difference in the implementation."
-        )
-
-        # Log timing stats for informational purposes
-        import logging
-
-        logging.info(
-            f"Timing attack test: valid={valid_mean:.0f}ns ± {valid_std:.0f}ns, "
-            f"invalid={invalid_mean:.0f}ns ± {invalid_std:.0f}ns, "
-            f"diff={relative_diff * 100:.2f}%, z-score={z_score:.2f}"
-        )
+        compared_keys.clear()
+        assert core.is_valid_api_key("invalid_key_12345", test_settings) is False
+        assert compared_keys == configured_keys
+        assert "hmac.compare_digest" in verify_source
 
     def test_empty_api_key_handled(self, test_settings):
         """Empty API key should be handled gracefully."""
@@ -320,7 +238,7 @@ class TestInputSizeValidation:
 
 
 class TestHealthCheckDependencies:
-    """Test that health check validates critical dependencies."""
+    """Test liveness and readiness endpoint behavior."""
 
     def test_health_check_with_valid_config(self):
         """Health check should pass with valid configuration."""
@@ -343,14 +261,42 @@ class TestHealthCheckDependencies:
         app.dependency_overrides = {}
 
     def test_health_check_detects_storage_issues(self, test_settings, monkeypatch):
-        """Health check should detect inaccessible storage."""
+        """Readiness should detect inaccessible storage."""
         bad_settings = {**test_settings, "whitelist": {"storage_path": "./will_fail.json"}}
         app.dependency_overrides[get_settings] = lambda: bad_settings
 
         monkeypatch.setattr("src.main.os.access", lambda *_args, **_kwargs: False)
-        resp = client.get("/health")
+        resp = client.get("/ready")
         assert resp.status_code == 503
         app.dependency_overrides = {}
+
+    def test_health_does_not_probe_firewalld(self, test_settings, monkeypatch):
+        """Liveness must stay cheap even when firewalld is enabled."""
+        test_settings["firewalld"] = {"enabled": True}
+        app.dependency_overrides[get_settings] = lambda: test_settings
+
+        def unexpected_probe():
+            pytest.fail("liveness probe queried firewalld")
+
+        monkeypatch.setattr("src.main.firewalld.get_firewalld_integration", unexpected_probe)
+
+        response = client.get("/health")
+
+        assert response.status_code == 200
+
+    def test_readiness_verifies_firewalld(self, test_settings, monkeypatch):
+        """Readiness must retain the full read-only firewalld verification."""
+        test_settings["firewalld"] = {"enabled": True}
+        app.dependency_overrides[get_settings] = lambda: test_settings
+        integration = Mock()
+        integration.is_enabled.return_value = True
+        integration.verify_protection.return_value = False
+        monkeypatch.setattr("src.main.firewalld.get_firewalld_integration", lambda: integration)
+
+        response = client.get("/ready")
+
+        assert response.status_code == 503
+        integration.verify_protection.assert_called_once_with()
 
 
 class TestConfigurationValidation:

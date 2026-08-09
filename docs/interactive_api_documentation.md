@@ -28,7 +28,7 @@ When documentation is enabled (It's disabled by default), the service exposes th
 - Complete API specification in JSON format
 - Compatible with OpenAPI 3.1 standard
 - Can be imported into API development tools
-- Automatically generated on service startup
+- Exported explicitly during service startup when enabled
 
 ## Configuration
 
@@ -50,17 +50,20 @@ documentation:
 ```
 
 This will:
-- Enable automatic OpenAPI schema generation
+- Construct an app with the `/docs`, `/redoc`, and `/openapi.json` routes enabled
 - Publish the `/docs`, `/redoc`, and `/openapi.json` endpoints
 - Persist the OpenAPI file to the configured `openapi_output_path`
 
 ### Disabling Documentation (Default)
 
 When `documentation.enabled` is `false` or omitted, Knocker will:
-- Skip OpenAPI schema generation
-- Remove the `/docs` and `/redoc` endpoints (they return `404`)
+- Construct an app without the `/docs`, `/redoc`, and `/openapi.json` routes (they return `404`)
 - Disable the `/openapi.json` endpoint
 - Delete any existing schema file at `openapi_output_path` to avoid stale artifacts
+
+Documentation route selection happens in `create_app(settings)` before the app
+is served. Startup schema export does not add, remove, or rebuild routes on a
+shared global router.
 
 ## Schema Persistence
 
@@ -95,12 +98,14 @@ secrets and obvious placeholders are rejected at startup.
 - `OPTIONS /knock` - CORS preflight support
 
 ### System Endpoints  
-- `GET /health` - Health check and service status
+- `GET /health` - Cheap liveness check and service status
+- `GET /ready` - Full read-only readiness check
 
 `POST /knock` accepts an empty body or a strict JSON object containing only
-`ip_address` and `ttl`, up to 4096 bytes. Authentication happens before body
-reading. Invalid JSON is 400, oversized bodies are 413, non-JSON bodies are 415,
-and a saturated firewall mutation worker is 503.
+`ip_address` and `ttl`, up to 4096 bytes; `ip_address` is limited to 100
+characters. Authentication happens before body reading. Invalid JSON is 400,
+oversized bodies are 413, non-JSON bodies are 415, and a saturated firewall
+mutation worker is 503.
 
 ## Request/Response Schemas
 
@@ -157,8 +162,6 @@ print(f"Whitelisted until: {data['expires_at']}")
 
 When running in development mode (using `dev/docker-compose.yml`), the documentation is accessible through the Caddy reverse proxy at `http://localhost:18080/docs`, providing the same experience as production deployment.
 
-The generated OpenAPI schema reflects the exact API configuration including:
-- Configured CORS origins
-- Available API keys and their permissions  
-- All security settings and validation rules
-- Complete request/response examples
+The generated OpenAPI schema reflects the endpoint contract and validation
+rules. It does not include API-key material, the runtime whitelist, or other
+secret state.

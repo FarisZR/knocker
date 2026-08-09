@@ -21,14 +21,16 @@
 - Absolute path validation for configuration files
 
 **Health Check Improvements:**
-- Dependency verification (API keys, storage accessibility)
-- Returns 503 Service Unavailable for unhealthy states
-- Proper error reporting without exposing sensitive details
+- `/health` is a cheap liveness probe and avoids firewalld commands on every probe
+- `/ready` performs API-key, storage, and enabled-firewalld readiness verification
+- Returns 503 Service Unavailable for unhealthy states with proper error reporting
 
 **Validation coverage:**
 - Automated tests cover the security features and production hardening paths
 - Regression coverage protects both API behavior and whitelist persistence logic
 - Edge-case validation is part of the regular test suite
+- `/knock` authenticates before body parsing and applies one streamed-body/model-validation path before policy checks
+- Runtime authorization uses the in-memory `RuntimeState.whitelist` interface
 
 ## Overview
 
@@ -90,7 +92,7 @@ A security audit was performed on the Caddy Knocker project from an offensive se
 
 ## Test Coverage
 
-- The full suite currently collects 191 tests, with 188 passing and 3 skipped in this workspace
+- The full suite currently passes 222 tests, with 3 skipped in this workspace
 - Coverage includes core whitelist behavior, FastAPI request handling, firewalld integration, and security regressions
 - Storage path validation is exercised with accepted paths, suffix checks, and traversal rejection cases
 

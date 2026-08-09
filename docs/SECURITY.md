@@ -10,10 +10,10 @@ This document outlines the security improvements made to Caddy Knocker and best 
 
 **Fix**: Implemented trusted proxy validation that only honors X-Forwarded-For headers from configured trusted sources.
 
-If the direct peer is a configured proxy, a missing, malformed, or incomplete
-`X-Forwarded-For` chain resolves to no client IP. Knocker never falls back to
-the proxy address. Direct clients whose peer is not trusted continue to use
-their direct address and cannot influence forwarded headers.
+If the direct peer is a configured proxy, a missing, malformed, incomplete, or
+proxy-only `X-Forwarded-For` chain resolves to no client IP. Knocker never
+falls back to the proxy address. Direct clients whose peer is not trusted
+continue to use their direct address and cannot influence forwarded headers.
 
 **Configuration**:
 ```yaml
@@ -42,6 +42,10 @@ and oversized requests count as failures. The endpoint returns 413 for an
 oversized body, 415 for non-JSON content, and 503 when the serialized firewall
 mutation worker is unavailable or saturated.
 
+After `KnockRequest` has validated the streamed body, `/knock` performs only
+policy checks: remote-whitelist permission, safe CIDR width, and global/key TTL
+limits. All failed responses use the same CORS and failure-rate-limit path.
+
 ### 4. Path Traversal Protection (Medium)
 
 **Issue**: The excluded paths feature used simple string prefix matching, potentially vulnerable to path traversal attacks.
@@ -60,6 +64,9 @@ mutation worker is unavailable or saturated.
 - Thread-safe operations with threading locks
 - File locking (fcntl) for process-level safety
 - Atomic file operations (write to temp, then rename)
+
+The active whitelist is accessed through `RuntimeState.whitelist`, which keeps
+authorization on the in-memory index while preserving locked, atomic persistence.
 
 ### 6. Information Disclosure Reduction (Medium)
 
@@ -150,7 +157,8 @@ cors:
 When `firewalld.enabled` is true, startup fails before readiness unless the
 daemon, version, exact zone, configured priority/target/sources, default
 blocking rules, reload, and all active whitelist restorations verify correctly.
-Health performs only read-only storage checks and firewalld verification.
+`/health` is liveness-only and does not run `firewall-cmd`; `/ready` performs
+the read-only storage and firewalld verification for readiness monitoring.
 
 Firewall mutations run through one bounded in-process worker and return 503 when
 capacity is unavailable. A remaining architectural risk is privileged root

@@ -49,7 +49,10 @@ class TestCoreFirewalldIntegrationFunction:
         mock_integration.add_whitelist_rule.return_value = True
         mock_get_integration.return_value = mock_integration
 
-        settings = {"whitelist": {"storage_path": "/tmp/test_whitelist.json"}}
+        settings = {
+            "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+            "whitelist": {"storage_path": "/tmp/test_whitelist.json"},
+        }
 
         # Use a future timestamp
         future_time = int(time.time()) + 3600
@@ -61,7 +64,7 @@ class TestCoreFirewalldIntegrationFunction:
         mock_integration.add_whitelist_rule.assert_called_once_with("192.168.1.100", future_time)
 
         # Verify whitelist.json was updated
-        whitelist = core.load_whitelist(settings)
+        whitelist = core.ensure_runtime_state(settings).whitelist.active_snapshot()
         assert "192.168.1.100" in whitelist
         assert whitelist["192.168.1.100"] == future_time
 
@@ -74,7 +77,10 @@ class TestCoreFirewalldIntegrationFunction:
         mock_integration.add_whitelist_rule.return_value = False  # Firewalld failed
         mock_get_integration.return_value = mock_integration
 
-        settings = {"whitelist": {"storage_path": "/tmp/test_whitelist.json"}}
+        settings = {
+            "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+            "whitelist": {"storage_path": "/tmp/test_whitelist.json"},
+        }
 
         # Use a future timestamp
         future_time = int(time.time()) + 3600
@@ -86,7 +92,7 @@ class TestCoreFirewalldIntegrationFunction:
         mock_integration.add_whitelist_rule.assert_called_once_with("192.168.1.100", future_time)
 
         # Verify whitelist.json was NOT updated
-        whitelist = core.load_whitelist(settings)
+        whitelist = core.ensure_runtime_state(settings).whitelist.active_snapshot()
         assert "192.168.1.100" not in whitelist
 
     @patch("src.firewalld.get_firewalld_integration")
@@ -97,7 +103,10 @@ class TestCoreFirewalldIntegrationFunction:
         mock_integration.is_enabled.return_value = False
         mock_get_integration.return_value = mock_integration
 
-        settings = {"whitelist": {"storage_path": "/tmp/test_whitelist.json"}}
+        settings = {
+            "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+            "whitelist": {"storage_path": "/tmp/test_whitelist.json"},
+        }
 
         # Use a future timestamp
         future_time = int(time.time()) + 3600
@@ -109,7 +118,7 @@ class TestCoreFirewalldIntegrationFunction:
         mock_integration.add_whitelist_rule.assert_not_called()
 
         # Verify whitelist.json was still updated
-        whitelist = core.load_whitelist(settings)
+        whitelist = core.ensure_runtime_state(settings).whitelist.active_snapshot()
         assert "192.168.1.100" in whitelist
 
     @patch("src.firewalld.get_firewalld_integration")
@@ -118,7 +127,10 @@ class TestCoreFirewalldIntegrationFunction:
         # Mock no firewalld integration
         mock_get_integration.return_value = None
 
-        settings = {"whitelist": {"storage_path": "/tmp/test_whitelist.json"}}
+        settings = {
+            "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+            "whitelist": {"storage_path": "/tmp/test_whitelist.json"},
+        }
 
         # Use a future timestamp
         future_time = int(time.time()) + 3600
@@ -127,13 +139,13 @@ class TestCoreFirewalldIntegrationFunction:
         assert result is True
 
         # Verify whitelist.json was updated (fallback behavior)
-        whitelist = core.load_whitelist(settings)
+        whitelist = core.ensure_runtime_state(settings).whitelist.active_snapshot()
         assert "192.168.1.100" in whitelist
 
     @patch("src.firewalld.get_firewalld_integration")
     def test_add_with_firewalld_rollback_on_whitelist_failure(self, mock_get_integration):
         """Test rollback when whitelist.json update fails."""
-        with patch("src.core.add_ip_to_whitelist") as mock_add_whitelist:
+        with patch.object(core.WhitelistStore, "add") as mock_add_whitelist:
             # Mock firewalld integration success
             mock_integration = Mock()
             mock_integration.is_enabled.return_value = True
@@ -144,7 +156,10 @@ class TestCoreFirewalldIntegrationFunction:
             # Mock whitelist.json update failure
             mock_add_whitelist.side_effect = Exception("Disk full")
 
-            settings = {"whitelist": {"storage_path": "/tmp/test_whitelist.json"}}
+            settings = {
+                "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+                "whitelist": {"storage_path": "/tmp/test_whitelist.json"},
+            }
 
             # Use a future timestamp
             future_time = int(time.time()) + 3600
@@ -169,7 +184,7 @@ class TestEndpointFirewalldIntegration:
         """Test knock endpoint calls firewalld integration correctly."""
         # Create config with firewalld enabled
         config_dict = {
-            "server": {"host": "0.0.0.0", "port": 8000, "trusted_proxies": ["127.0.0.0/8"]},
+            "server": {"trusted_proxies": ["127.0.0.0/8"]},
             "cors": {"allowed_origin": "*"},
             "whitelist": {"storage_path": "/tmp/test_whitelist.json"},
             "api_keys": [{"key": "test_key", "max_ttl": 3600, "allow_remote_whitelist": False}],
@@ -229,7 +244,7 @@ class TestEndpointFirewalldIntegration:
     def test_knock_endpoint_firewalld_disabled(self):
         """Test knock endpoint when firewalld is disabled."""
         config_dict = {
-            "server": {"host": "0.0.0.0", "port": 8000, "trusted_proxies": ["127.0.0.0/8"]},
+            "server": {"trusted_proxies": ["127.0.0.0/8"]},
             "cors": {"allowed_origin": "*"},
             "whitelist": {"storage_path": "/tmp/test_whitelist.json"},
             "api_keys": [{"key": "test_key", "max_ttl": 3600, "allow_remote_whitelist": False}],

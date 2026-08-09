@@ -60,7 +60,7 @@ uv sync --all-groups
 ```bash
 # Set config path and run with uvicorn
 export KNOCKER_CONFIG_PATH=$(pwd)/knocker.yaml
-uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000 --no-proxy-headers
+uv run uvicorn src.main:create_app --factory --reload --host 0.0.0.0 --port 8000 --no-proxy-headers
 ```
 
 ### Building Docker Image

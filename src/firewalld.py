@@ -15,13 +15,14 @@ import ipaddress
 import asyncio
 import concurrent.futures
 import threading
-from typing import Dict, Any, List, Tuple, Optional
+import re
+from typing import Any, Dict, List, Mapping, Optional, Tuple, override
 from dataclasses import dataclass
 
 if __package__ in (None, ""):  # pragma: no cover - fallback for direct module execution
-    import core
+    from config import FirewalldPortSettings, FirewalldSettings, SettingsLike
 else:
-    from . import core
+    from .config import FirewalldPortSettings, FirewalldSettings, SettingsLike
 
 
 @dataclass
@@ -33,8 +34,22 @@ class FirewalldRule:
     protocol: str
     expiry_time: int
 
+    @override
     def __str__(self):
         return f"{self.ip_address}:{self.port}/{self.protocol} (expires: {self.expiry_time})"
+
+
+def _parse_rich_rule(line: str) -> Optional[FirewalldRule]:
+    """Parse a source-and-port rich rule, ignoring unrelated zone rules."""
+    if not line.strip() or "source address=" not in line or "port=" not in line:
+        return None
+
+    match = re.search(r'source address="([^"]+)".*?protocol="([^"]+)".*?port="([^"]+)"', line)
+    if match is None:
+        raise ValueError("missing rich-rule fields")
+
+    ip_address, protocol, port_text = match.groups()
+    return FirewalldRule(ip_address, int(port_text), protocol, 0)
 
 
 class MutationQueueUnavailable(RuntimeError):
@@ -81,58 +96,22 @@ class SerializedMutationExecutor:
 class FirewalldIntegration:
     """Handles all firewalld operations for Knocker."""
 
-    def __init__(self, settings: Dict[str, Any]):
-        """Initialize firewalld integration with configuration settings."""
-        self.settings = settings
-        self.firewalld_config = settings.get("firewalld", {})
-        self.enabled = self.firewalld_config.get("enabled", False)
-        self.zone_name = self.firewalld_config.get("zone_name", "knocker")
-        self.zone_priority = self.firewalld_config.get("zone_priority", -100)
-        self.default_action = self.firewalld_config.get("default_action", "drop")
-        self.zone_target = self.firewalld_config.get("zone_target", None)
-        self.monitored_ports = self.firewalld_config.get("monitored_ports", [])
-        self.monitored_ips = self.firewalld_config.get("monitored_ips", [])
+    def __init__(self, firewalld_config: FirewalldSettings | Mapping[str, Any]):
+        """Initialize firewalld integration from validated settings."""
+        if not isinstance(firewalld_config, FirewalldSettings):
+            if "firewalld" in firewalld_config and "enabled" not in firewalld_config:
+                firewalld_config = firewalld_config["firewalld"]
+            firewalld_config = FirewalldSettings.model_validate(firewalld_config)
+        self.firewalld_config = firewalld_config
+        self.enabled = firewalld_config.enabled
+        self.zone_name = firewalld_config.zone_name
+        self.zone_priority = firewalld_config.zone_priority
+        self.default_action = firewalld_config.default_action
+        self.zone_target = firewalld_config.zone_target
+        self.monitored_ports = firewalld_config.monitored_ports
+        self.monitored_ips = firewalld_config.monitored_ips
 
         self.logger = logging.getLogger(__name__)
-
-        if self.enabled:
-            if not isinstance(self.zone_name, str) or not core._ZONE_NAME_RE.fullmatch(
-                self.zone_name
-            ):
-                raise ValueError(
-                    "Invalid zone_name. Use only letters, numbers, dots, underscores, colons, and hyphens"
-                )
-
-            # Validate monitored IPs have proper CIDR notation
-            self._validate_monitored_ips()
-
-            # Validate default action
-            if self.default_action not in ["drop", "reject"]:
-                raise ValueError(
-                    f"Invalid default_action '{self.default_action}'. Must be 'drop' or 'reject'"
-                )
-
-            # Validate zone_target if specified
-            if self.zone_target is not None:
-                valid_targets = ["default", "ACCEPT", "REJECT", "DROP"]
-                if self.zone_target not in valid_targets:
-                    raise ValueError(
-                        f"Invalid zone_target '{self.zone_target}'. Must be one of: {', '.join(valid_targets)}"
-                    )
-
-    def _validate_monitored_ips(self):
-        """Validate that all monitored IPs have proper CIDR notation."""
-        for ip_str in self.monitored_ips:
-            try:
-                if not isinstance(ip_str, str):
-                    raise ValueError("Monitored IP entries must be strings")
-                if "/" not in ip_str:
-                    raise ValueError("Entries must include an explicit network mask")
-                ipaddress.ip_network(ip_str, strict=False)
-                # Check if it's a single host without explicit netmask
-            except ValueError as e:
-                self.logger.error(f"Invalid monitored IP '{ip_str}': {e}")
-                raise ValueError(f"Invalid monitored IP configuration: {e}")
 
     def is_enabled(self) -> bool:
         """Check if firewalld integration is enabled."""
@@ -222,6 +201,63 @@ class FirewalldIntegration:
         except (ValueError, ipaddress.AddressValueError) as e:
             self.logger.error(f"Invalid IP address or CIDR '{ip_address}': {e}")
             return None
+
+    def _rich_rule_args(
+        self,
+        operation: str,
+        rich_rule: str,
+        *,
+        timeout: Optional[int] = None,
+        permanent: bool = False,
+    ) -> List[str]:
+        args = ["--permanent"] if permanent else []
+        args.extend(
+            [
+                f"--zone={self.zone_name}",
+            ]
+        )
+        if operation == "list":
+            args.append("--list-rich-rules")
+        else:
+            args.append(f"--{operation}-rich-rule={rich_rule}")
+        if timeout is not None:
+            args.append(f"--timeout={timeout}")
+        return args
+
+    def _default_rich_rule(self, family: str, port_config: FirewalldPortSettings) -> str:
+        protocol = port_config.protocol
+        port = port_config.port
+        return (
+            f'rule family="{family}" port protocol="{protocol}" port="{port}" '
+            f'{self.default_action} priority="9999"'
+        )
+
+    def _parse_rich_rules(self, output: str, *, strict: bool) -> Optional[List[FirewalldRule]]:
+        rules: List[FirewalldRule] = []
+        for line in output.splitlines():
+            try:
+                rule = _parse_rich_rule(line)
+                if rule is not None:
+                    rules.append(rule)
+            except (ValueError, IndexError) as exc:
+                if strict:
+                    self.logger.error("Failed to parse active firewalld rule: %s", line)
+                    return None
+                self.logger.warning("Failed to parse firewalld rule: %s - %s", line, exc)
+        return rules
+
+    def _list_rich_rules(self, *, strict: bool) -> Optional[List[FirewalldRule]]:
+        success, stdout, stderr = self._run_firewall_cmd(
+            self._rich_rule_args("list", ""), check=False
+        )
+        if not success:
+            message = "Failed to get active rules: %s"
+            if strict:
+                self.logger.error(message, stderr)
+            else:
+                self.logger.warning(message, stderr)
+            return None
+        return self._parse_rich_rules(stdout, strict=strict)
 
     def is_firewalld_available(self) -> bool:
         """Check if firewalld is available and running."""
@@ -350,18 +386,14 @@ class FirewalldIntegration:
             # Add default action rules for monitored ports with low priority (high number)
             # These will be overridden by whitelist rules with higher priority (lower number)
             for port_config in self.monitored_ports:
-                port = port_config.get("port")
-                protocol = port_config.get("protocol", "tcp")
+                port = port_config.port
+                protocol = port_config.protocol
 
                 # Add default action rules for both IPv4 and IPv6 with low priority (high number = 9999)
                 for family in ["ipv4", "ipv6"]:
-                    default_rule = f'rule family="{family}" port protocol="{protocol}" port="{port}" {self.default_action} priority="9999"'
+                    default_rule = self._default_rich_rule(family, port_config)
                     success, _, stderr = self._run_firewall_cmd(
-                        [
-                            "--permanent",
-                            f"--zone={self.zone_name}",
-                            f"--add-rich-rule={default_rule}",
-                        ]
+                        self._rich_rule_args("add", default_rule, permanent=True)
                     )
                     if not success:
                         self.logger.error(
@@ -388,8 +420,7 @@ class FirewalldIntegration:
 
     def _required_default_rules(self) -> set[str]:
         return {
-            f'rule family="{family}" port protocol="{port_config.get("protocol", "tcp")}" '
-            f'port="{port_config.get("port")}" {self.default_action} priority="9999"'
+            self._default_rich_rule(family, port_config)
             for port_config in self.monitored_ports
             for family in ("ipv4", "ipv6")
         }
@@ -445,7 +476,7 @@ class FirewalldIntegration:
         missing_rules: list[str] = []
         for rich_rule in sorted(self._required_default_rules()):
             success, stdout, stderr = self._run_firewall_cmd(
-                [f"--zone={self.zone_name}", f"--query-rich-rule={rich_rule}"], check=False
+                self._rich_rule_args("query", rich_rule), check=False
             )
             if not success or stdout.strip().lower() != "yes":
                 self.logger.error(
@@ -473,11 +504,7 @@ class FirewalldIntegration:
             self.logger.error(f"Failed to build rich rule for {ip_address}:{port}/{protocol}")
             return False
 
-        add_args = [
-            f"--zone={self.zone_name}",
-            f"--add-rich-rule={rich_rule}",
-            f"--timeout={timeout_seconds}",
-        ]
+        add_args = self._rich_rule_args("add", rich_rule, timeout=timeout_seconds)
 
         success, stdout, stderr = self._run_firewall_cmd(add_args)
         combined_output = " ".join(filter(None, [stdout, stderr])).upper()
@@ -503,7 +530,7 @@ class FirewalldIntegration:
                 f"firewall-cmd reported rule already exists for {ip_address}:{port}/{protocol}: {stderr or stdout}. Attempting to replace it to update TTL."
             )
             # Try to remove the existing rule (don't fail the whole operation on remove failure)
-            rem_args = [f"--zone={self.zone_name}", f"--remove-rich-rule={rich_rule}"]
+            rem_args = self._rich_rule_args("remove", rich_rule)
             rem_success, rem_stdout, rem_stderr = self._run_firewall_cmd(rem_args, check=False)
             if not rem_success:
                 self.logger.warning(
@@ -567,8 +594,8 @@ class FirewalldIntegration:
         added_rules = []  # Track successfully added rules for potential rollback
 
         for port_config in self.monitored_ports:
-            port = port_config.get("port")
-            protocol = port_config.get("protocol", "tcp")
+            port = port_config.port
+            protocol = port_config.protocol
 
             # Attempt to add (and replace if needed) the rule
             ok = self._add_or_replace_rule(ip_address, port, protocol, timeout_seconds)
@@ -601,7 +628,7 @@ class FirewalldIntegration:
         self.logger.info(f"Rolling back {len(rules)} firewalld rules for {ip_address}")
         for rule in rules:
             success, stdout, stderr = self._run_firewall_cmd(
-                [f"--zone={self.zone_name}", f"--remove-rich-rule={rule}"], check=False
+                self._rich_rule_args("remove", rule), check=False
             )
             if not success:
                 self.logger.warning(f"Failed to rollback rule '{rule}': {stderr}")
@@ -627,8 +654,8 @@ class FirewalldIntegration:
         total_rules = len(self.monitored_ports)
 
         for port_config in self.monitored_ports:
-            port = port_config.get("port")
-            protocol = port_config.get("protocol", "tcp")
+            port = port_config.port
+            protocol = port_config.protocol
 
             # Build rich rule using helper function
             rich_rule = self._build_rich_rule(ip_address, port, protocol)
@@ -639,7 +666,7 @@ class FirewalldIntegration:
                 continue
 
             success, stdout, stderr = self._run_firewall_cmd(
-                [f"--zone={self.zone_name}", f"--remove-rich-rule={rich_rule}"], check=False
+                self._rich_rule_args("remove", rich_rule), check=False
             )
 
             if success:
@@ -666,47 +693,7 @@ class FirewalldIntegration:
         if not self.is_enabled() or not self.is_firewalld_available():
             return []
 
-        active_rules = []
-
-        # Get rich rules from the zone
-        success, stdout, stderr = self._run_firewall_cmd(
-            [f"--zone={self.zone_name}", "--list-rich-rules"], check=False
-        )
-
-        if not success:
-            self.logger.warning(f"Failed to get active rules: {stderr}")
-            return []
-
-        # Parse rich rules (this is a simplified parser)
-        # Format: rule family="ipv4" source address="1.2.3.4" port protocol="tcp" port="80" accept
-        for line in stdout.split("\n"):
-            if line.strip() and "source address=" in line and "port=" in line:
-                try:
-                    # Extract IP address
-                    ip_start = line.find('source address="') + 16
-                    ip_end = line.find('"', ip_start)
-                    ip_address = line[ip_start:ip_end]
-
-                    # Extract port
-                    port_start = line.rfind('port="') + 6
-                    port_end = line.find('"', port_start)
-                    port = int(line[port_start:port_end])
-
-                    # Extract protocol
-                    proto_start = line.find('protocol="') + 10
-                    proto_end = line.find('"', proto_start)
-                    protocol = line[proto_start:proto_end]
-
-                    # For now, we can't easily get expiry time from firewalld
-                    # We'll need to cross-reference with whitelist.json
-                    rule = FirewalldRule(ip_address, port, protocol, 0)
-                    active_rules.append(rule)
-
-                except (ValueError, IndexError) as e:
-                    self.logger.warning(f"Failed to parse firewalld rule: {line} - {e}")
-                    continue
-
-        return active_rules
+        return self._list_rich_rules(strict=False) or []
 
     def restore_missing_rules(self, whitelist: Dict[str, int]) -> bool:
         """
@@ -744,8 +731,8 @@ class FirewalldIntegration:
 
             # Check if rules exist for this IP for all monitored ports
             for port_config in self.monitored_ports:
-                port = port_config.get("port")
-                protocol = port_config.get("protocol", "tcp")
+                port = port_config.port
+                protocol = port_config.protocol
 
                 rule_tuple = (ip_address, port, protocol)
                 if rule_tuple not in active_rule_set:
@@ -768,31 +755,7 @@ class FirewalldIntegration:
 
     def _get_active_rules(self) -> Optional[List[FirewalldRule]]:
         """Return active rules, or None when firewalld could not be queried."""
-        success, stdout, stderr = self._run_firewall_cmd(
-            [f"--zone={self.zone_name}", "--list-rich-rules"], check=False
-        )
-        if not success:
-            self.logger.error("Failed to get active rules: %s", stderr)
-            return None
-
-        active_rules = []
-        for line in stdout.splitlines():
-            if line.strip() and "source address=" in line and "port=" in line:
-                try:
-                    ip_start = line.find('source address="') + 16
-                    ip_end = line.find('"', ip_start)
-                    ip_address = line[ip_start:ip_end]
-                    port_start = line.rfind('port="') + 6
-                    port_end = line.find('"', port_start)
-                    port = int(line[port_start:port_end])
-                    proto_start = line.find('protocol="') + 10
-                    proto_end = line.find('"', proto_start)
-                    protocol = line[proto_start:proto_end]
-                    active_rules.append(FirewalldRule(ip_address, port, protocol, 0))
-                except (ValueError, IndexError):
-                    self.logger.error("Failed to parse active firewalld rule: %s", line)
-                    return None
-        return active_rules
+        return self._list_rich_rules(strict=True)
 
     def _add_single_rule(
         self, ip_address: str, port: int, protocol: str, timeout_seconds: int
@@ -821,33 +784,40 @@ def get_firewalld_integration() -> Optional[FirewalldIntegration]:
     return firewalld_integration
 
 
-def initialize_firewalld(settings: Dict[str, Any]) -> Optional[FirewalldIntegration]:
+def _firewalld_config(settings: SettingsLike) -> FirewalldSettings:
+    if isinstance(settings, Mapping):
+        return FirewalldSettings.model_validate(settings.get("firewalld", {}) or {})
+    return settings.firewalld
+
+
+def initialize_firewalld(settings: SettingsLike) -> Optional[FirewalldIntegration]:
     """Initialize the global firewalld integration instance."""
     global firewalld_integration
-    firewalld_integration = FirewalldIntegration(settings)
+    firewalld_integration = FirewalldIntegration(_firewalld_config(settings))
     return firewalld_integration
 
 
-def initialize_mutation_executor(settings: Dict[str, Any]) -> SerializedMutationExecutor:
+def initialize_mutation_executor(settings: SettingsLike) -> SerializedMutationExecutor:
     """Create the process-local bounded firewall mutation worker."""
     global mutation_executor
     shutdown_mutation_executor()
-    capacity = int(settings.get("firewalld", {}).get("mutation_queue_capacity", 32))
-    mutation_executor = SerializedMutationExecutor(capacity)
+    mutation_executor = SerializedMutationExecutor(
+        _firewalld_config(settings).mutation_queue_capacity
+    )
     return mutation_executor
 
 
-def get_mutation_executor(settings: Optional[Dict[str, Any]] = None) -> SerializedMutationExecutor:
+def get_mutation_executor(settings: Optional[SettingsLike] = None) -> SerializedMutationExecutor:
     global mutation_executor
     if mutation_executor is None:
         capacity = 32
         if settings is not None:
-            capacity = int(settings.get("firewalld", {}).get("mutation_queue_capacity", 32))
+            capacity = _firewalld_config(settings).mutation_queue_capacity
         mutation_executor = SerializedMutationExecutor(capacity)
     return mutation_executor
 
 
-async def run_mutation(operation, settings: Optional[Dict[str, Any]] = None):
+async def run_mutation(operation, settings: Optional[SettingsLike] = None):
     """Submit one blocking mutation and await its result."""
     return await get_mutation_executor(settings).run(operation)
 

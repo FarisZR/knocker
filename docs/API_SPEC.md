@@ -22,9 +22,10 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
     ```
     *   Authentication is completed before this body is read.
     *   The body must be empty or a JSON object containing only `ip_address` and/or `ttl`.
-    *   Bodies are limited to 4096 bytes, and JSON values use strict string/integer types.
+    *   Bodies are limited to 4096 bytes, and JSON values use strict string/integer types. `ip_address` is limited to 100 characters.
+    *   When `/knock` is reached through a trusted reverse proxy, that proxy must forward the client address in `X-Forwarded-For`; an absent or proxy-only chain is rejected rather than treating a proxy address as the client.
     *   `ip_address` (string): The IPv4/IPv6 address or CIDR network to whitelist. If provided, the API key must have `allow_remote_whitelist: true` permission.
-    *   `ttl` (integer, optional): The desired time-to-live for the whitelist entry in seconds. If not provided, the key's default `max_ttl` will be used. If the provided TTL exceeds the key's `max_ttl`, the `max_ttl` will be used instead.
+    *   `ttl` (integer, optional): The desired time-to-live for the whitelist entry in seconds. If not provided, the key's `max_ttl` will be used. Values above the global ten-year cap are rejected; values above the key's `max_ttl` are capped at the key limit.
 
 #### Responses
 
@@ -105,9 +106,11 @@ This endpoint is used by Caddy's `forward_auth` directive to verify if a client'
 
 ---
 
-### 3. Health Check
+### 3. Health and Readiness Checks
 
-This endpoint is used to verify the operational status of the Knocker service.
+`/health` is the cheap liveness probe used by the container. It only checks
+that the initialized runtime is available; it does not call `firewall-cmd` or
+perform filesystem probes.
 
 *   **URL**: `/health`
 *   **Method**: `GET`
@@ -124,14 +127,23 @@ This endpoint is used to verify the operational status of the Knocker service.
         ```
 
 *   **`503 Service Unavailable`**
-    *   Returned when enabled firewalld protection is unavailable or fails a read-only readiness check. Health checks do not create or remove probe files.
+    *   Returned when the process cannot initialize its runtime.
+
+`/ready` is the read-only readiness probe. It checks whitelist storage and, when
+enabled, performs the full firewalld protection verification. Startup still
+performs zone setup, whitelist-rule restoration, and this verification before
+serving requests.
+
+*   **URL**: `/ready`
+*   **Method**: `GET`
+*   **`200 OK`**: Runtime dependencies are ready.
+*   **`503 Service Unavailable`**: Storage or enabled firewalld protection is not ready.
 
 ## Configuration (`knocker.yaml`)
 
 - **`server`** (object, required): Server settings.
-    - **`host`** (string, required): The host to bind to.
-    - **`port`** (integer, required): The port to listen on.
     - **`trusted_proxies`** (array of strings, required): A list of trusted proxy IPs/CIDRs.
+    - The container binds to `0.0.0.0:8000`; bind address and port are deployment settings, not YAML options.
 - **`whitelist`** (object, required): Whitelist settings.
     - **`storage_path`** (string, required): Path to the whitelist JSON file. Must end with `.json` and stay under the process working directory, `/data`, or `/tmp`.
     - **`cleanup_interval_seconds`** (integer, optional): Background cleanup cadence for expired whitelist entries. Defaults to `60`.
@@ -144,7 +156,7 @@ This endpoint is used to verify the operational status of the Knocker service.
 - **`security`** (object, optional): Security-related settings.
     - **`always_allowed_ips`** (array of strings, optional): A list of IPs or CIDR ranges that are always permitted by the `/verify` endpoint, bypassing the dynamic whitelist. It is empty by default; do not add a reverse-proxy network unless all clients behind it should be permanently allowed.
     - **`excluded_paths`** (array of strings, optional): Global exclusions are discouraged because they affect every host. Leave it empty and use host-scoped exclusions where needed.
-    - **`excluded_paths_by_host`** (mapping, optional): Host-specific excluded path prefixes, evaluated only for trusted forwarded host metadata.
+    - **`excluded_paths_by_host`** (mapping, optional): Host-specific excluded path prefixes, evaluated only for trusted forwarded host metadata. Omit it or use `{}` when no host-scoped exclusions are configured.
     - **`max_whitelist_entries`** (integer, optional): Maximum retained whitelist entries. Defaults to `10000`.
     - **`knock_rate_limit`** (object, optional): Sliding-window rate limits with `window_seconds`, `successful_requests`, and `failed_requests`.
 - **`cors`** (object, optional): CORS settings for the `/knock` endpoint.

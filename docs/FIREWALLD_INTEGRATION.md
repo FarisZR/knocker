@@ -7,6 +7,10 @@ Knocker provides advanced firewall integration through firewalld, allowing for d
 Minimum supported Firewalld version: 2.0.0+
 Knocker performs a quick compatibility check on startup using `firewall-cmd --version` and will fail fast with an error if the installed Firewalld is older than 2.0.0. If firewalld integration is disabled in the configuration, this check is skipped.
 
+The typed `config.Settings` model validates the complete firewalld section before
+the integration is constructed. The integration consumes those validated values
+and does not maintain a second configuration-validation path.
+
 The firewalld integration works by:
 
 1. **Creating a dedicated firewalld zone** with configurable priority (default: high priority)
@@ -311,9 +315,14 @@ journalctl -u firewalld -f
 
 ### Health Checks
 
-The `/health` endpoint can be used to verify the service is running, but it doesn't specifically check firewalld status. Consider adding monitoring for:
+The `/health` endpoint is a cheap liveness probe and does not run
+`firewall-cmd`. Use `/ready` for read-only storage and firewalld readiness; it
+repeats the protection verification without changing firewall state. Startup
+still performs zone setup, whitelist restoration, and full verification before
+serving requests. Consider monitoring:
 
 - Firewalld daemon status
+- Knocker `/ready` readiness endpoint
 - Knocker zone existence
 - Rule count consistency
 

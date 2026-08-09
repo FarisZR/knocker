@@ -1,8 +1,6 @@
 # knocker configuration for CI testing (firewalld disabled)
 
 server:
-  host: "0.0.0.0"
-  port: 8000
   trusted_proxies:
     # Trust the default Docker IPv4 and IPv6 subnets.
     # Adjust these to match your specific Docker network configuration if you've customized it.

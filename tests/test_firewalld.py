@@ -684,6 +684,23 @@ class TestWhitelistRules:
 class TestRuleRecovery:
     """Test startup rule recovery functionality."""
 
+    def test_rich_rule_commands_use_one_argument_builder(self, firewalld_integration):
+        rule = firewalld_integration._build_rich_rule("192.168.1.100", 80, "tcp")
+
+        assert firewalld_integration._rich_rule_args("add", rule, timeout=600) == [
+            "--zone=knocker-test",
+            f"--add-rich-rule={rule}",
+            "--timeout=600",
+        ]
+        assert firewalld_integration._rich_rule_args("remove", rule) == [
+            "--zone=knocker-test",
+            f"--remove-rich-rule={rule}",
+        ]
+        assert firewalld_integration._rich_rule_args("query", rule) == [
+            "--zone=knocker-test",
+            f"--query-rich-rule={rule}",
+        ]
+
     @patch.object(firewalld.FirewalldIntegration, "is_firewalld_available")
     @patch.object(firewalld.FirewalldIntegration, "_run_firewall_cmd")
     def test_get_active_rules(self, mock_cmd, mock_available, firewalld_integration):
@@ -716,6 +733,30 @@ rule family="ipv4" source address="10.0.0.50" port protocol="tcp" port="22" acce
         rules = firewalld_integration.get_active_rules()
 
         assert len(rules) == 0
+
+    def test_internal_active_rule_query_preserves_strict_failure(self, firewalld_integration):
+        malformed_output = (
+            'rule family="ipv4" source address="192.168.1.100" '
+            'port protocol="tcp" port="invalid" accept'
+        )
+
+        with patch.object(
+            firewalld_integration,
+            "_run_firewall_cmd",
+            return_value=(True, malformed_output, ""),
+        ):
+            assert firewalld_integration._get_active_rules() is None
+
+    @patch.object(firewalld.FirewalldIntegration, "is_firewalld_available", return_value=True)
+    def test_public_active_rule_query_returns_empty_on_command_failure(
+        self, _mock_available, firewalld_integration
+    ):
+        with patch.object(
+            firewalld_integration,
+            "_run_firewall_cmd",
+            return_value=(False, "", "unavailable"),
+        ):
+            assert firewalld_integration.get_active_rules() == []
 
     @patch.object(firewalld.FirewalldIntegration, "is_firewalld_available", return_value=True)
     @patch.object(firewalld.FirewalldIntegration, "_get_active_rules")

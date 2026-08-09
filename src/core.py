@@ -6,86 +6,52 @@ import ipaddress
 import json
 import logging
 import os
-import re
 import threading
 import time
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Deque, Dict, Iterable, Optional, Sequence, Tuple, Union
+from typing import Any, Deque, Dict, Iterable, Optional, Sequence, Tuple, Union, cast
 from urllib.parse import unquote, urlsplit
+
+try:
+    from .config import (
+        APIKeySettings,
+        KnockRateLimitSettings,
+        SecuritySettings,
+        Settings,
+        SettingsLike,
+        validate_settings,
+        validate_whitelist_storage_path,
+    )
+except ImportError:  # pragma: no cover - fallback for direct module execution
+    from config import (
+        APIKeySettings,
+        KnockRateLimitSettings,
+        SecuritySettings,
+        Settings,
+        SettingsLike,
+        validate_settings,
+        validate_whitelist_storage_path,
+    )
 
 IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
 
-_whitelist_lock = threading.RLock()
 _runtime_state_lock = threading.Lock()
 _RUNTIME_STATE_KEY = "_knocker_runtime_state"
-_ZONE_NAME_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
-_PUBLISHED_EXAMPLE_SECRETS = {
-    "CHANGE_ME_SUPER_SECRET_ADMIN_KEY",
-    "CHANGE_ME_SECRET_PHONE_KEY",
-    "CHANGE_ME_TEMPORARY_GUEST_KEY",
-}
 
 
-def _allowed_whitelist_storage_roots() -> Tuple[str, ...]:
-    roots: list[str] = []
-    seen: set[str] = set()
-    for candidate in (os.getcwd(), "/data", "/tmp"):
-        resolved = os.path.realpath(candidate)
-        if resolved == os.sep:
-            continue
-        if resolved in seen:
-            continue
-        roots.append(resolved)
-        seen.add(resolved)
-    return tuple(roots)
+def get_whitelist_storage_path(settings: SettingsLike) -> Path:
+    if isinstance(settings, Settings):
+        return Path(settings.whitelist.storage_path)
 
-
-def validate_whitelist_storage_path(
-    path_value: Union[str, os.PathLike[str]],
-    *,
-    allowed_suffixes: Tuple[str, ...] = (".json",),
-) -> Path:
-    """Restrict whitelist storage to known-safe roots and file types."""
-    try:
-        raw_path = os.fspath(path_value)
-    except TypeError as exc:
-        raise ValueError("whitelist.storage_path must be a non-empty string") from exc
-
-    if not isinstance(raw_path, str) or not raw_path:
-        raise ValueError("whitelist.storage_path must be a non-empty string")
-    if "\x00" in raw_path:
-        raise ValueError("whitelist.storage_path contains invalid characters")
-    if not any(raw_path.endswith(suffix) for suffix in allowed_suffixes):
-        allowed = ", ".join(allowed_suffixes)
-        raise ValueError(f"whitelist.storage_path must use one of these suffixes: {allowed}")
-
-    joined_path = raw_path if os.path.isabs(raw_path) else os.path.join(os.getcwd(), raw_path)
-    resolved_path = os.path.realpath(joined_path)
-    allowed_roots = _allowed_whitelist_storage_roots()
-    if not any(
-        resolved_path == root or resolved_path.startswith(f"{root}{os.sep}")
-        for root in allowed_roots
-    ):
-        allowed = ", ".join(allowed_roots)
-        raise ValueError(f"whitelist.storage_path must stay within one of these roots: {allowed}")
-
-    return Path(resolved_path)
-
-
-def get_whitelist_storage_path(settings: Dict[str, Any]) -> Path:
-    whitelist_settings = settings.setdefault("whitelist", {})
+    whitelist_settings = settings.get("whitelist", {}) or {}
     if not isinstance(whitelist_settings, dict):
         raise ValueError("whitelist configuration must be a mapping")
 
-    storage_path = validate_whitelist_storage_path(
-        whitelist_settings.get("storage_path", "whitelist.json")
-    )
-    whitelist_settings["storage_path"] = str(storage_path)
-    return storage_path
+    return validate_whitelist_storage_path(whitelist_settings.get("storage_path", "whitelist.json"))
 
 
 @contextmanager
@@ -337,7 +303,6 @@ class WhitelistStore:
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False)
     _index: DynamicWhitelistIndex = field(default_factory=DynamicWhitelistIndex, init=False)
     _pending_compaction: bool = field(default=False, init=False)
-    _storage_version: Optional[Tuple[int, int, int]] = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self.storage_path = validate_whitelist_storage_path(self.storage_path)
@@ -353,23 +318,11 @@ class WhitelistStore:
             )
         self.reload_from_disk()
 
-    def _storage_version_token(self) -> Optional[Tuple[int, int, int]]:
-        try:
-            stat_result = self.storage_path.stat()
-        except OSError:
-            return None
-        return (stat_result.st_mtime_ns, stat_result.st_size, stat_result.st_ino)
-
-    def _reload_from_disk_locked(
-        self, storage_version: Optional[Tuple[int, int, int]] = None
-    ) -> None:
+    def _reload_from_disk_locked(self) -> None:
         raw = _read_whitelist_file(self.storage_path)
         normalized, changed = _normalize_serialized_whitelist(raw, drop_expired=True)
         self._index = DynamicWhitelistIndex.from_serialized(normalized)
         self._pending_compaction = changed
-        self._storage_version = (
-            storage_version if storage_version is not None else self._storage_version_token()
-        )
 
     def reload_from_disk(self) -> None:
         with self._lock:
@@ -377,9 +330,6 @@ class WhitelistStore:
 
     def contains(self, address: IPAddress, now: Optional[int] = None) -> bool:
         with self._lock:
-            current_version = self._storage_version_token()
-            if current_version != self._storage_version:
-                self._reload_from_disk_locked(current_version)
             return self._index.contains(address, now)
 
     def add(self, ip_or_cidr: str, expiry_time: int) -> None:
@@ -404,7 +354,6 @@ class WhitelistStore:
                 _write_whitelist_file(self.storage_path, normalized)
                 self._index = DynamicWhitelistIndex.from_serialized(normalized)
                 self._pending_compaction = False
-                self._storage_version = self._storage_version_token()
 
     def replace(self, whitelist: Dict[str, Any]) -> Dict[str, int]:
         now = int(time.time())
@@ -418,7 +367,6 @@ class WhitelistStore:
                 )
                 self._index = DynamicWhitelistIndex.from_serialized(active)
                 self._pending_compaction = changed
-                self._storage_version = self._storage_version_token()
         return normalized
 
     def compact_expired(self, now: Optional[int] = None) -> bool:
@@ -442,76 +390,11 @@ class WhitelistStore:
                     _write_whitelist_file(self.storage_path, compacted)
             self._index = DynamicWhitelistIndex.from_serialized(compacted)
             self._pending_compaction = False
-            self._storage_version = self._storage_version_token()
             return wrote
 
     def active_snapshot(self) -> Dict[str, int]:
         with self._lock:
             return self._index.to_serialized(now=int(time.time()), include_expired=False)
-
-
-def load_whitelist(settings: Dict[str, Any]) -> Dict[str, int]:
-    """Load the persisted whitelist from disk."""
-    path = get_whitelist_storage_path(settings)
-    with _whitelist_lock:
-        return _read_whitelist_file(path)
-
-
-def save_whitelist(whitelist: Dict[str, int], settings: Dict[str, Any]):
-    """Persist the whitelist to disk and refresh in-memory state when available."""
-    path = get_whitelist_storage_path(settings)
-    max_entries = settings.get("security", {}).get("max_whitelist_entries", 10000)
-    with _whitelist_lock:
-        normalized, _ = _normalize_serialized_whitelist(whitelist, drop_expired=False)
-        normalized = _limit_whitelist_entries(normalized, max_entries)
-        with _interprocess_whitelist_lock(path):
-            _write_whitelist_file(path, normalized)
-
-        runtime_state = settings.get(_RUNTIME_STATE_KEY)
-        if isinstance(runtime_state, RuntimeState):
-            runtime_state.whitelist.reload_from_disk()
-
-
-def add_ip_to_whitelist(ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]):
-    runtime_state = settings.get(_RUNTIME_STATE_KEY)
-    if isinstance(runtime_state, RuntimeState):
-        runtime_state.whitelist.add(ip_or_cidr, expiry_time)
-        return
-
-    path = get_whitelist_storage_path(settings)
-    max_entries = settings.get("security", {}).get("max_whitelist_entries", 10000)
-    if not is_valid_ip_or_cidr(ip_or_cidr):
-        raise ValueError(f"Invalid IP address or CIDR notation: {ip_or_cidr}")
-
-    now = int(time.time())
-    if expiry_time <= now:
-        raise ValueError(f"Expiry time {expiry_time} is not in the future (current time: {now})")
-
-    canonical, _ = _canonical_network(ip_or_cidr)
-    with _whitelist_lock:
-        with _interprocess_whitelist_lock(path):
-            persisted = _read_whitelist_file(path)
-            normalized, _ = _normalize_serialized_whitelist(persisted, drop_expired=True, now=now)
-            normalized[canonical] = expiry_time
-            normalized = _limit_whitelist_entries(normalized, max_entries)
-            _write_whitelist_file(path, normalized)
-
-
-def cleanup_expired_ips(settings: Dict[str, Any]):
-    """Remove expired whitelist entries from persistent storage."""
-    runtime_state = settings.get(_RUNTIME_STATE_KEY)
-    if isinstance(runtime_state, RuntimeState):
-        runtime_state.whitelist.compact_expired()
-        return
-
-    path = get_whitelist_storage_path(settings)
-    with _whitelist_lock:
-        with _interprocess_whitelist_lock(path):
-            persisted = _read_whitelist_file(path)
-            normalized, _ = _normalize_serialized_whitelist(persisted, drop_expired=False)
-            active, changed = _normalize_serialized_whitelist(normalized, drop_expired=True)
-            if changed or active != normalized:
-                _write_whitelist_file(path, active)
 
 
 def normalize_path(path: str) -> str:
@@ -566,24 +449,13 @@ class PathExclusions:
     host_paths: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
 
     @classmethod
-    def from_settings(cls, security_settings: Dict[str, Any]) -> "PathExclusions":
-        excluded_paths = security_settings.get("excluded_paths", []) or []
-        if not isinstance(excluded_paths, list):
-            raise ValueError("security.excluded_paths must be a list of path prefixes")
-
-        global_paths = tuple(normalize_path(path) for path in excluded_paths)
-
-        host_paths_config = security_settings.get("excluded_paths_by_host", {}) or {}
-        if not isinstance(host_paths_config, dict):
-            raise ValueError("security.excluded_paths_by_host must be a mapping of host to paths")
-
+    def from_config(cls, security_settings: SecuritySettings) -> "PathExclusions":
+        global_paths = tuple(normalize_path(path) for path in security_settings.excluded_paths)
         host_paths: Dict[str, Tuple[str, ...]] = {}
-        for host, paths in host_paths_config.items():
+        for host, paths in security_settings.excluded_paths_by_host.items():
             normalized_host = normalize_host(host)
             if not normalized_host:
                 raise ValueError(f"Invalid excluded_paths_by_host host '{host}'")
-            if not isinstance(paths, list):
-                raise ValueError(f"security.excluded_paths_by_host['{host}'] must be a list")
             host_paths[normalized_host] = tuple(normalize_path(path) for path in paths)
 
         return cls(global_paths=global_paths, host_paths=host_paths)
@@ -606,12 +478,21 @@ class PathExclusions:
         )
 
 
-def is_path_excluded(path: str, settings: Dict[str, Any], host: Optional[str] = None) -> bool:
-    runtime_state = settings.get(_RUNTIME_STATE_KEY)
+def is_path_excluded(path: str, settings: SettingsLike, host: Optional[str] = None) -> bool:
+    runtime_state = (
+        settings._runtime_state
+        if isinstance(settings, Settings)
+        else settings.get(_RUNTIME_STATE_KEY)
+    )
     if isinstance(runtime_state, RuntimeState):
         return runtime_state.path_exclusions.matches(host, path)
 
-    path_exclusions = PathExclusions.from_settings(settings.get("security", {}) or {})
+    security_settings = (
+        settings.security
+        if isinstance(settings, Settings)
+        else SecuritySettings.model_validate(settings.get("security", {}) or {})
+    )
+    path_exclusions = PathExclusions.from_config(security_settings)
     return path_exclusions.matches(host, path)
 
 
@@ -674,7 +555,9 @@ def resolve_client_ip(
             continue
         return str(candidate), True
 
-    return str(parsed_entries[0]), True
+    # A chain containing only trusted hops still does not identify the client.
+    # Never turn a proxy address into an authorization identity.
+    return None, True
 
 
 def resolve_request_host(
@@ -717,55 +600,19 @@ class APIKeyRegistry:
     records: Tuple[APIKeyRecord, ...]
 
     @classmethod
-    def from_settings(cls, api_keys: Sequence[Dict[str, Any]]) -> "APIKeyRegistry":
-        records: list[APIKeyRecord] = []
-        seen_keys: set[str] = set()
-
-        for index, key_info in enumerate(api_keys):
-            if not isinstance(key_info, dict):
-                raise ValueError(f"API key at index {index} must be a dictionary")
-
-            key = key_info.get("key")
-            if not isinstance(key, str) or not key:
-                raise ValueError(f"API key at index {index} must define a non-empty string key")
-
-            normalized_key = key.upper()
-            if (
-                key in _PUBLISHED_EXAMPLE_SECRETS
-                or "CHANGE_ME" in normalized_key
-                or "REPLACE_WITH" in normalized_key
-            ):
-                raise ValueError(
-                    f"API key at index {index} uses a published or placeholder secret; "
-                    "generate a unique random API key"
-                )
-
-            if key in seen_keys:
-                raise ValueError(f"Duplicate API key material detected at index {index}")
-            seen_keys.add(key)
-
-            max_ttl = key_info.get("max_ttl")
-            if not isinstance(max_ttl, int) or max_ttl <= 0:
-                raise ValueError(f"API key at index {index} must define a positive integer max_ttl")
-
-            allow_remote_whitelist = key_info.get("allow_remote_whitelist", False)
-            if not isinstance(allow_remote_whitelist, bool):
-                raise ValueError(
-                    f"API key at index {index} must define boolean allow_remote_whitelist"
-                )
-            name = str(key_info.get("name") or f"key-{index + 1}")
-
-            record = APIKeyRecord(
-                name=name,
-                max_ttl=max_ttl,
-                allow_remote_whitelist=allow_remote_whitelist,
-                key=key,
+    def from_config(cls, api_keys: Sequence[APIKeySettings]) -> "APIKeyRegistry":
+        records = tuple(
+            APIKeyRecord(
+                name=record.name or f"key-{index + 1}",
+                max_ttl=record.max_ttl,
+                allow_remote_whitelist=record.allow_remote_whitelist,
+                key=record.key,
             )
-            records.append(record)
+            for index, record in enumerate(api_keys)
+        )
+        return cls(records=records)
 
-        return cls(records=tuple(records))
-
-    def resolve(self, candidate_key: str) -> Optional[APIKeyRecord]:
+    def resolve(self, candidate_key: Optional[str]) -> Optional[APIKeyRecord]:
         if not candidate_key:
             return None
 
@@ -789,19 +636,11 @@ class SlidingWindowRateLimiter:
     _last_global_prune: int = field(default=0, init=False)
 
     @classmethod
-    def from_settings(cls, security_settings: Dict[str, Any]) -> "SlidingWindowRateLimiter":
-        config = security_settings.get("knock_rate_limit", {}) or {}
-        window_seconds = int(config.get("window_seconds", 60))
-        successful_requests = int(config.get("successful_requests", 20))
-        failed_requests = int(config.get("failed_requests", 30))
-        if window_seconds <= 0:
-            raise ValueError("security.knock_rate_limit.window_seconds must be positive")
-        if successful_requests < 0 or failed_requests < 0:
-            raise ValueError("security.knock_rate_limit limits must be zero or greater")
+    def from_config(cls, config: KnockRateLimitSettings) -> "SlidingWindowRateLimiter":
         return cls(
-            window_seconds=window_seconds,
-            successful_requests=successful_requests,
-            failed_requests=failed_requests,
+            window_seconds=config.window_seconds,
+            successful_requests=config.successful_requests,
+            failed_requests=config.failed_requests,
         )
 
     def _prune_bucket(self, bucket: Deque[Tuple[int, int]], cutoff: int) -> None:
@@ -933,202 +772,137 @@ class RuntimeState:
         return self.whitelist.contains(address, int(time.time()))
 
 
-def _validate_firewalld_config(settings: Dict[str, Any]) -> None:
-    firewalld_settings = settings.get("firewalld", {}) or {}
-    if not firewalld_settings.get("enabled", False):
-        return
-
-    mutation_capacity = firewalld_settings.get("mutation_queue_capacity", 32)
-    if not isinstance(mutation_capacity, int) or mutation_capacity <= 0:
-        raise ValueError("firewalld.mutation_queue_capacity must be a positive integer")
-
-    zone_name = firewalld_settings.get("zone_name", "knocker")
-    if not isinstance(zone_name, str) or not _ZONE_NAME_RE.fullmatch(zone_name):
-        raise ValueError(
-            "firewalld.zone_name must only contain letters, numbers, dots, underscores, colons, and hyphens"
-        )
-
-    monitored_ports = firewalld_settings.get("monitored_ports", []) or []
-    if not isinstance(monitored_ports, list):
-        raise ValueError("firewalld.monitored_ports must be a list")
-
-    for index, port_config in enumerate(monitored_ports):
-        if not isinstance(port_config, dict):
-            raise ValueError(f"firewalld.monitored_ports[{index}] must be a dictionary")
-        port = port_config.get("port")
-        protocol = port_config.get("protocol", "tcp")
-        if not isinstance(port, int) or not (1 <= port <= 65535):
-            raise ValueError(
-                f"firewalld.monitored_ports[{index}].port must be an integer between 1 and 65535"
-            )
-        if protocol not in {"tcp", "udp"}:
-            raise ValueError(f"firewalld.monitored_ports[{index}].protocol must be 'tcp' or 'udp'")
-
-    monitored_ips = firewalld_settings.get("monitored_ips", []) or []
-    if not isinstance(monitored_ips, list):
-        raise ValueError("firewalld.monitored_ips must be a list")
-    for monitored_ip in monitored_ips:
-        if not isinstance(monitored_ip, str):
-            raise ValueError("firewalld.monitored_ips entries must be strings")
-        if "/" not in monitored_ip:
-            raise ValueError(
-                f"firewalld.monitored_ips entry '{monitored_ip}' must include an explicit CIDR mask"
-            )
-        _canonical_network(monitored_ip)
-
-
-def ensure_runtime_state(settings: Dict[str, Any]) -> RuntimeState:
+def _cached_runtime_state(settings: SettingsLike) -> Optional[RuntimeState]:
+    if isinstance(settings, Settings):
+        return settings._runtime_state
     runtime_state = settings.get(_RUNTIME_STATE_KEY)
+    return runtime_state if isinstance(runtime_state, RuntimeState) else None
+
+
+def _cache_runtime_state(settings: SettingsLike, runtime_state: RuntimeState) -> None:
+    if isinstance(settings, Settings):
+        settings._runtime_state = runtime_state
+    else:
+        cast(dict[str, Any], settings)[_RUNTIME_STATE_KEY] = runtime_state
+
+
+def ensure_runtime_state(settings: SettingsLike) -> RuntimeState:
+    runtime_state = _cached_runtime_state(settings)
+    if runtime_state is not None:
+        return runtime_state
+
+    validated = validate_settings(settings)
+    runtime_state = validated._runtime_state
     if isinstance(runtime_state, RuntimeState):
+        _cache_runtime_state(settings, runtime_state)
         return runtime_state
 
     with _runtime_state_lock:
-        runtime_state = settings.get(_RUNTIME_STATE_KEY)
-        if isinstance(runtime_state, RuntimeState):
+        runtime_state = _cached_runtime_state(settings)
+        if runtime_state is not None:
             return runtime_state
 
-        server_settings = settings.get("server", {}) or {}
-        security_settings = settings.get("security", {}) or {}
-        whitelist_settings = settings.get("whitelist", {}) or {}
-
         trusted_proxies = ParsedNetworkSet.from_entries(
-            server_settings.get("trusted_proxies", []) or [], "trusted_proxies"
+            validated.server.trusted_proxies, "trusted_proxies"
         )
         always_allowed = ParsedNetworkSet.from_entries(
-            security_settings.get("always_allowed_ips", []) or [],
-            "always_allowed_ips",
+            validated.security.always_allowed_ips, "always_allowed_ips"
         )
-        path_exclusions = PathExclusions.from_settings(security_settings)
-
-        api_keys_config = settings.get("api_keys", []) or []
-        if not api_keys_config:
-            raise ValueError("Configuration must contain at least one API key")
-        api_keys = APIKeyRegistry.from_settings(api_keys_config)
-
-        _validate_firewalld_config(settings)
-
-        storage_path = get_whitelist_storage_path(settings)
-        max_entries = int(security_settings.get("max_whitelist_entries", 10000))
-        if max_entries <= 0:
-            raise ValueError("security.max_whitelist_entries must be positive")
-
-        cleanup_interval_seconds = int(whitelist_settings.get("cleanup_interval_seconds", 60))
-        if cleanup_interval_seconds <= 0:
-            raise ValueError("whitelist.cleanup_interval_seconds must be positive")
-
+        api_keys = APIKeyRegistry.from_config(validated.api_keys)
         runtime_state = RuntimeState(
             trusted_proxies=trusted_proxies,
             always_allowed_ips=always_allowed,
-            path_exclusions=path_exclusions,
+            path_exclusions=PathExclusions.from_config(validated.security),
             api_keys=api_keys,
-            whitelist=WhitelistStore(storage_path=storage_path, max_entries=max_entries),
-            rate_limiter=SlidingWindowRateLimiter.from_settings(security_settings),
-            cleanup_interval_seconds=cleanup_interval_seconds,
+            whitelist=WhitelistStore(
+                storage_path=Path(validated.whitelist.storage_path),
+                max_entries=validated.security.max_whitelist_entries,
+            ),
+            rate_limiter=SlidingWindowRateLimiter.from_config(validated.security.knock_rate_limit),
+            cleanup_interval_seconds=validated.whitelist.cleanup_interval_seconds,
         )
-
-        settings[_RUNTIME_STATE_KEY] = runtime_state
-
+        _cache_runtime_state(settings, runtime_state)
+        if validated is not settings:
+            validated._runtime_state = runtime_state
         return runtime_state
 
 
-def start_runtime_state(settings: Dict[str, Any]) -> RuntimeState:
+def start_runtime_state(settings: SettingsLike) -> RuntimeState:
     runtime_state = ensure_runtime_state(settings)
     runtime_state.start()
     return runtime_state
 
 
-def stop_runtime_state(settings: Dict[str, Any]) -> None:
-    runtime_state = settings.get(_RUNTIME_STATE_KEY)
-    if isinstance(runtime_state, RuntimeState):
+def stop_runtime_state(settings: SettingsLike) -> None:
+    runtime_state = _cached_runtime_state(settings)
+    if runtime_state is not None:
         runtime_state.stop()
 
 
-def get_api_key_record(api_key: str, settings: Dict[str, Any]) -> Optional[APIKeyRecord]:
+def get_api_key_record(api_key: Optional[str], settings: SettingsLike) -> Optional[APIKeyRecord]:
     runtime_state = ensure_runtime_state(settings)
     return runtime_state.api_keys.resolve(api_key)
 
 
-def is_valid_api_key(api_key: str, settings: Dict[str, Any]) -> bool:
+def is_valid_api_key(api_key: Optional[str], settings: SettingsLike) -> bool:
     return get_api_key_record(api_key, settings) is not None
 
 
-def can_whitelist_remote(api_key: str, settings: Dict[str, Any]) -> bool:
+def can_whitelist_remote(api_key: Optional[str], settings: SettingsLike) -> bool:
     record = get_api_key_record(api_key, settings)
     return bool(record and record.allow_remote_whitelist)
 
 
-def get_max_ttl_for_key(api_key: str, settings: Dict[str, Any]) -> int:
+def get_max_ttl_for_key(api_key: Optional[str], settings: SettingsLike) -> int:
     record = get_api_key_record(api_key, settings)
     return record.max_ttl if record else 0
 
 
-def get_api_key_name(api_key: str, settings: Dict[str, Any]) -> str:
+def get_api_key_name(api_key: Optional[str], settings: SettingsLike) -> str:
     record = get_api_key_record(api_key, settings)
     return record.name if record else ""
 
 
-def is_ip_whitelisted(ip: str, whitelist: Dict[str, int], settings: Dict[str, Any]) -> bool:
-    try:
-        address = ipaddress.ip_address(ip)
-    except ValueError:
-        return False
-
-    runtime_state = settings.get(_RUNTIME_STATE_KEY)
-    if isinstance(runtime_state, RuntimeState) and runtime_state.always_allowed_ips.contains(
-        address
-    ):
-        return True
-
-    if not isinstance(runtime_state, RuntimeState):
-        always_allowed = ParsedNetworkSet.from_entries(
-            settings.get("security", {}).get("always_allowed_ips", []) or [],
-            "always_allowed_ips",
-        )
-        if always_allowed.contains(address):
-            return True
-
-    return DynamicWhitelistIndex.from_serialized(whitelist).contains(address, int(time.time()))
-
-
-def record_knock_attempt(settings: Dict[str, Any], actor: str, outcome: str) -> bool:
+def record_knock_attempt(settings: SettingsLike, actor: str, outcome: str) -> bool:
     runtime_state = ensure_runtime_state(settings)
     return runtime_state.rate_limiter.allow(actor, outcome, int(time.time()))
 
 
 def reserve_knock_attempt(
-    settings: Dict[str, Any], actor: str, outcome: str
+    settings: SettingsLike, actor: str, outcome: str
 ) -> Optional[Tuple[int, int]]:
     runtime_state = ensure_runtime_state(settings)
     return runtime_state.rate_limiter.reserve(actor, outcome, int(time.time()))
 
 
 def release_knock_attempt(
-    settings: Dict[str, Any], actor: str, outcome: str, reservation: Tuple[int, int]
+    settings: SettingsLike, actor: str, outcome: str, reservation: Tuple[int, int]
 ) -> None:
     runtime_state = ensure_runtime_state(settings)
     runtime_state.rate_limiter.release(actor, outcome, reservation)
 
 
-def can_record_knock_attempt(settings: Dict[str, Any], actor: str, outcome: str) -> bool:
+def can_record_knock_attempt(settings: SettingsLike, actor: str, outcome: str) -> bool:
     runtime_state = ensure_runtime_state(settings)
     return runtime_state.rate_limiter.can_allow(actor, outcome, int(time.time()))
 
 
 def add_ip_to_whitelist_with_firewalld(
-    ip_or_cidr: str, expiry_time: int, settings: Dict[str, Any]
+    ip_or_cidr: str, expiry_time: int, settings: SettingsLike
 ) -> bool:
     try:
         from . import firewalld
     except ImportError:
         import firewalld
 
+    runtime_state = ensure_runtime_state(settings)
     firewalld_integration = firewalld.get_firewalld_integration()
     if firewalld_integration and firewalld_integration.is_enabled():
         if not firewalld_integration.add_whitelist_rule(ip_or_cidr, expiry_time):
             return False
 
     try:
-        add_ip_to_whitelist(ip_or_cidr, expiry_time, settings)
+        runtime_state.whitelist.add(ip_or_cidr, expiry_time)
         return True
     except Exception as exc:
         if firewalld_integration and firewalld_integration.is_enabled():

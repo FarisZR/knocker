@@ -7,6 +7,7 @@ on:
       - pyproject.toml
       - uv.lock
       - Dockerfile
+      - .github/workflows/**
       - src/**
       - dev/**
       - tests/**
@@ -16,6 +17,7 @@ on:
       - pyproject.toml
       - uv.lock
       - Dockerfile
+      - .github/workflows/**
       - src/**
       - dev/**
       - tests/**

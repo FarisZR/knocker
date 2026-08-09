@@ -96,7 +96,7 @@ test_authorized_access_after_knock() {
 }
 
 test_remote_whitelist_success() {
-    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "Content-Type: application/json" -d "{\"ip_address\": \"$REMOTE_WHITELIST_IP\"}" $KNOCK_URL)
+    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $REGULAR_IP" -H "Content-Type: application/json" -d "{\"ip_address\": \"$REMOTE_WHITELIST_IP\"}" $KNOCK_URL)
     if echo "$response" | grep -q "whitelisted_entry.*$REMOTE_WHITELIST_IP"; then
         success "Remote whitelist for $REMOTE_WHITELIST_IP with admin key successful"
     else
@@ -105,7 +105,7 @@ test_remote_whitelist_success() {
 }
 
 test_remote_whitelist_permission_denied() {
-    response=$(curl -s -X POST -H "X-Api-Key: $NO_REMOTE_KEY" -H "Content-Type: application/json" -d "{\"ip_address\": \"$REMOTE_WHITELIST_IP\"}" $KNOCK_URL)
+    response=$(curl -s -X POST -H "X-Api-Key: $NO_REMOTE_KEY" -H "X-Forwarded-For: $REGULAR_IP" -H "Content-Type: application/json" -d "{\"ip_address\": \"$REMOTE_WHITELIST_IP\"}" $KNOCK_URL)
     if echo "$response" | grep -q "API key lacks remote whitelist permission"; then
         success "Remote whitelist with no-permission key correctly failed"
     else
@@ -165,7 +165,7 @@ test_knock_with_invalid_key() {
 }
 
 test_knock_with_custom_ttl_valid() {
-    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "Content-Type: application/json" -d '{"ttl": 120}' $KNOCK_URL)
+    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $REGULAR_IP" -H "Content-Type: application/json" -d '{"ttl": 120}' $KNOCK_URL)
     ttl=$(echo "$response" | sed -n 's/.*"expires_in_seconds":\([0-9]*\).*/\1/p')
     if [ "$ttl" -eq 120 ]; then
         success "Knock with valid custom TTL of 120s was successful"
@@ -186,7 +186,7 @@ test_knock_with_custom_ttl_capped() {
 }
 
 test_knock_with_custom_ttl_invalid() {
-    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "Content-Type: application/json" -d '{"ttl": -50}' $KNOCK_URL)
+    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $REGULAR_IP" -H "Content-Type: application/json" -d '{"ttl": -50}' $KNOCK_URL)
     if echo "$response" | grep -q "Invalid TTL specified"; then
         success "Knock with invalid (negative) TTL correctly failed"
     else
