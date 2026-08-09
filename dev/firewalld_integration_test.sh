@@ -28,6 +28,12 @@ KNOCK_URL="$BASE_URL/knock"
 # Test IP
 TEST_IP="192.168.178.23"
 
+# The integration configuration uses a dedicated host firewalld zone. The zone
+# is removed during cleanup so a test run does not leave host firewall state
+# behind.
+FIREWALLD_TEST_ZONE="knocker"
+FIREWALLD_TEST_ZONE_BACKUP="/etc/firewalld/zones/${FIREWALLD_TEST_ZONE}.xml.old"
+
 # API Key (from knocker.firewalld.yaml)
 VALID_ADMIN_KEY="dev-only-admin-9c2f4a6d0d4b8f17e6a1c5b9d3f7a2e8"
 
@@ -255,8 +261,77 @@ test_firewalld_error_handling() {
     fi
 }
 
+run_firewall_cmd_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        firewall-cmd "$@"
+    elif command -v sudo &>/dev/null && sudo -n true &>/dev/null; then
+        sudo -n firewall-cmd "$@"
+    else
+        docker compose exec -T knocker firewall-cmd "$@"
+    fi
+}
+
+run_firewall_offline_cmd_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        firewall-offline-cmd "$@"
+    elif command -v sudo &>/dev/null && sudo -n true &>/dev/null; then
+        sudo -n firewall-offline-cmd "$@"
+    else
+        return 1
+    fi
+}
+
+remove_firewalld_test_backup() {
+    if [ "$(id -u)" -eq 0 ]; then
+        rm -f -- "$FIREWALLD_TEST_ZONE_BACKUP"
+    elif command -v sudo &>/dev/null && sudo -n true &>/dev/null; then
+        sudo -n rm -f -- "$FIREWALLD_TEST_ZONE_BACKUP"
+    else
+        info "Could not remove firewalld backup file without root access: $FIREWALLD_TEST_ZONE_BACKUP"
+    fi
+}
+
+cleanup_firewalld_zone() {
+    info "Cleaning up firewalld test zone..."
+
+    if systemctl is-active --quiet firewalld 2>/dev/null; then
+        zones=$(run_firewall_cmd_as_root --permanent --get-zones 2>/dev/null || true)
+        if ! printf '%s\n' "$zones" | grep -Eq "(^|[[:space:]])${FIREWALLD_TEST_ZONE}([[:space:]]|$)"; then
+            info "Firewalld test zone is not present"
+            remove_firewalld_test_backup
+            return 0
+        fi
+
+        if run_firewall_cmd_as_root --permanent "--delete-zone=$FIREWALLD_TEST_ZONE" &>/dev/null; then
+            if run_firewall_cmd_as_root --reload &>/dev/null; then
+                success "Removed firewalld test zone and reloaded firewall"
+            else
+                info "Removed permanent firewalld test zone, but reload failed"
+            fi
+            remove_firewalld_test_backup
+        else
+            info "Could not remove firewalld test zone while the daemon is running"
+        fi
+    else
+        zones=$(run_firewall_offline_cmd_as_root --get-zones 2>/dev/null || true)
+        if ! printf '%s\n' "$zones" | grep -Eq "(^|[[:space:]])${FIREWALLD_TEST_ZONE}([[:space:]]|$)"; then
+            info "Firewalld test zone is not present in offline configuration"
+            remove_firewalld_test_backup
+            return 0
+        fi
+
+        if run_firewall_offline_cmd_as_root "--delete-zone=$FIREWALLD_TEST_ZONE" &>/dev/null; then
+            remove_firewalld_test_backup
+            success "Removed firewalld test zone from offline configuration"
+        else
+            info "Firewalld is stopped and its test zone could not be removed"
+        fi
+    fi
+}
+
 cleanup() {
     info "Cleaning up test environment..."
+    cleanup_firewalld_zone
     docker compose -f docker-compose.yml down -v --remove-orphans || true
     success "Cleanup completed"
 }
