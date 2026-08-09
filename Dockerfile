@@ -1,5 +1,5 @@
 # Pin the multi-architecture runtime base by immutable manifest digest.
-FROM python:3.13-slim@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91
+FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6
 
 ARG TARGETARCH
 ARG TARGETVARIANT
