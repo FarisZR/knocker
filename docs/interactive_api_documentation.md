@@ -84,7 +84,7 @@ When testing endpoints that require API keys (like `/knock`):
 3. Test protected endpoints with proper authentication
 
 `knocker.example.yaml` intentionally contains no usable API key material. Create
-your own random key (or hash) before starting the service; published example
+your own random key before starting the service; published example
 secrets and obvious placeholders are rejected at startup.
 
 ## API Endpoints Overview

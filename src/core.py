@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import hmac
 import ipaddress
 import json
@@ -28,9 +27,6 @@ _PUBLISHED_EXAMPLE_SECRETS = {
     "CHANGE_ME_SUPER_SECRET_ADMIN_KEY",
     "CHANGE_ME_SECRET_PHONE_KEY",
     "CHANGE_ME_TEMPORARY_GUEST_KEY",
-}
-_PUBLISHED_EXAMPLE_SECRET_HASHES = {
-    hashlib.sha256(secret.encode("utf-8")).hexdigest() for secret in _PUBLISHED_EXAMPLE_SECRETS
 }
 
 
@@ -708,29 +704,12 @@ class APIKeyRecord:
     name: str
     max_ttl: int
     allow_remote_whitelist: bool
-    secret_kind: str
-    secret_value: str
+    key: str
 
     def verify(self, presented_key: str) -> bool:
         if not isinstance(presented_key, str):
             return False
-        if self.secret_kind == "sha256":
-            presented_digest = hashlib.sha256(presented_key.encode("utf-8")).hexdigest()
-            return hmac.compare_digest(self.secret_value, presented_digest)
-        return hmac.compare_digest(self.secret_value, presented_key)
-
-
-def hash_api_key(secret: str) -> str:
-    return f"sha256:{hashlib.sha256(secret.encode('utf-8')).hexdigest()}"
-
-
-def _parse_hashed_secret(value: str) -> str:
-    candidate = value.strip().lower()
-    if candidate.startswith("sha256:"):
-        candidate = candidate.split(":", 1)[1]
-    if len(candidate) != 64 or not all(char in "0123456789abcdef" for char in candidate):
-        raise ValueError("API key hashes must use the format sha256:<64 lowercase hex chars>")
-    return candidate
+        return hmac.compare_digest(self.key, presented_key)
 
 
 @dataclass
@@ -740,50 +719,30 @@ class APIKeyRegistry:
     @classmethod
     def from_settings(cls, api_keys: Sequence[Dict[str, Any]]) -> "APIKeyRegistry":
         records: list[APIKeyRecord] = []
-        seen_secrets: set[str] = set()
+        seen_keys: set[str] = set()
 
         for index, key_info in enumerate(api_keys):
             if not isinstance(key_info, dict):
                 raise ValueError(f"API key at index {index} must be a dictionary")
 
-            plain_secret = key_info.get("key")
-            hashed_secret = key_info.get("key_hash")
-            if bool(plain_secret) == bool(hashed_secret):
+            key = key_info.get("key")
+            if not isinstance(key, str) or not key:
+                raise ValueError(f"API key at index {index} must define a non-empty string key")
+
+            normalized_key = key.upper()
+            if (
+                key in _PUBLISHED_EXAMPLE_SECRETS
+                or "CHANGE_ME" in normalized_key
+                or "REPLACE_WITH" in normalized_key
+            ):
                 raise ValueError(
-                    f"API key at index {index} must define exactly one of 'key' or 'key_hash'"
+                    f"API key at index {index} uses a published or placeholder secret; "
+                    "generate a unique random API key"
                 )
 
-            if plain_secret:
-                if not isinstance(plain_secret, str):
-                    raise ValueError(f"API key at index {index} has a non-string key value")
-                normalized_secret = plain_secret.upper()
-                if (
-                    plain_secret in _PUBLISHED_EXAMPLE_SECRETS
-                    or "CHANGE_ME" in normalized_secret
-                    or "REPLACE_WITH" in normalized_secret
-                ):
-                    raise ValueError(
-                        f"API key at index {index} uses a published or placeholder secret; "
-                        "generate a unique random API key"
-                    )
-                secret_kind = "plaintext"
-                secret_value = plain_secret
-                secret_fingerprint = hash_api_key(plain_secret)
-            else:
-                if not isinstance(hashed_secret, str):
-                    raise ValueError(f"API key at index {index} has a non-string key_hash value")
-                secret_kind = "sha256"
-                secret_value = _parse_hashed_secret(hashed_secret)
-                if secret_value in _PUBLISHED_EXAMPLE_SECRET_HASHES:
-                    raise ValueError(
-                        f"API key at index {index} uses a hash of a published example secret; "
-                        "generate a unique random API key"
-                    )
-                secret_fingerprint = f"sha256:{secret_value}"
-
-            if secret_fingerprint in seen_secrets:
+            if key in seen_keys:
                 raise ValueError(f"Duplicate API key material detected at index {index}")
-            seen_secrets.add(secret_fingerprint)
+            seen_keys.add(key)
 
             max_ttl = key_info.get("max_ttl")
             if not isinstance(max_ttl, int) or max_ttl <= 0:
@@ -800,8 +759,7 @@ class APIKeyRegistry:
                 name=name,
                 max_ttl=max_ttl,
                 allow_remote_whitelist=allow_remote_whitelist,
-                secret_kind=secret_kind,
-                secret_value=secret_value,
+                key=key,
             )
             records.append(record)
 
@@ -1069,11 +1027,6 @@ def ensure_runtime_state(settings: Dict[str, Any]) -> RuntimeState:
         )
 
         settings[_RUNTIME_STATE_KEY] = runtime_state
-
-        if any(record.secret_kind == "plaintext" for record in api_keys.records):
-            logging.getLogger(__name__).warning(
-                "Plaintext API keys are deprecated. Prefer api_keys[].key_hash."
-            )
 
         return runtime_state
 
