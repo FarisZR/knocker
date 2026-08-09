@@ -340,8 +340,10 @@ cd dev/
 The integration script treats the `knocker` zone as test-owned. Its exit cleanup
 removes the permanent zone, reloads firewalld, and removes firewalld's zone
 backup file. If the daemon is stopped, cleanup removes the zone from the
-offline configuration instead. This prevents the test's DROP rules from
-surviving the test run and affecting the host firewall.
+offline configuration instead. If an active daemon cannot complete the normal
+delete/reload path, cleanup temporarily stops it, performs the offline cleanup,
+and restores the daemon to its original active state. This prevents the test's
+DROP rules from surviving the test run and affecting the host firewall.
 
 ### Manual Testing
 

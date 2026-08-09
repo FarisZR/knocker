@@ -33,6 +33,8 @@ TEST_IP="192.168.178.23"
 # behind.
 FIREWALLD_TEST_ZONE="knocker"
 FIREWALLD_TEST_ZONE_BACKUP="/etc/firewalld/zones/${FIREWALLD_TEST_ZONE}.xml.old"
+FIREWALLD_WAS_ACTIVE=0
+CLEANUP_DONE=0
 
 # API Key (from knocker.firewalld.yaml)
 VALID_ADMIN_KEY="dev-only-admin-9c2f4a6d0d4b8f17e6a1c5b9d3f7a2e8"
@@ -51,6 +53,7 @@ check_prerequisites() {
     if ! systemctl is-active --quiet firewalld 2>/dev/null; then
         fail "Firewalld is not running on host system"
     fi
+    FIREWALLD_WAS_ACTIVE=1
     
     success "Prerequisites check passed"
 }
@@ -281,6 +284,16 @@ run_firewall_offline_cmd_as_root() {
     fi
 }
 
+run_systemctl_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        systemctl "$@"
+    elif command -v sudo &>/dev/null && sudo -n true &>/dev/null; then
+        sudo -n systemctl "$@"
+    else
+        return 1
+    fi
+}
+
 remove_firewalld_test_backup() {
     if [ "$(id -u)" -eq 0 ]; then
         rm -f -- "$FIREWALLD_TEST_ZONE_BACKUP"
@@ -289,6 +302,19 @@ remove_firewalld_test_backup() {
     else
         info "Could not remove firewalld backup file without root access: $FIREWALLD_TEST_ZONE_BACKUP"
     fi
+}
+
+cleanup_firewalld_zone_offline() {
+    zones=$(run_firewall_offline_cmd_as_root --get-zones 2>/dev/null || true)
+    if printf '%s\n' "$zones" | grep -Eq "(^|[[:space:]])${FIREWALLD_TEST_ZONE}([[:space:]]|$)"; then
+        if ! run_firewall_offline_cmd_as_root "--delete-zone=$FIREWALLD_TEST_ZONE" &>/dev/null; then
+            info "Could not remove firewalld test zone from offline configuration"
+            return 1
+        fi
+    fi
+
+    remove_firewalld_test_backup
+    return 0
 }
 
 cleanup_firewalld_zone() {
@@ -302,36 +328,55 @@ cleanup_firewalld_zone() {
             return 0
         fi
 
-        if run_firewall_cmd_as_root --permanent "--delete-zone=$FIREWALLD_TEST_ZONE" &>/dev/null; then
-            if run_firewall_cmd_as_root --reload &>/dev/null; then
-                success "Removed firewalld test zone and reloaded firewall"
-            else
-                info "Removed permanent firewalld test zone, but reload failed"
-            fi
+        if run_firewall_cmd_as_root --permanent "--delete-zone=$FIREWALLD_TEST_ZONE" &>/dev/null && \
+            run_firewall_cmd_as_root --reload &>/dev/null; then
             remove_firewalld_test_backup
-        else
-            info "Could not remove firewalld test zone while the daemon is running"
-        fi
-    else
-        zones=$(run_firewall_offline_cmd_as_root --get-zones 2>/dev/null || true)
-        if ! printf '%s\n' "$zones" | grep -Eq "(^|[[:space:]])${FIREWALLD_TEST_ZONE}([[:space:]]|$)"; then
-            info "Firewalld test zone is not present in offline configuration"
-            remove_firewalld_test_backup
+            success "Removed firewalld test zone and reloaded firewall"
             return 0
         fi
 
-        if run_firewall_offline_cmd_as_root "--delete-zone=$FIREWALLD_TEST_ZONE" &>/dev/null; then
-            remove_firewalld_test_backup
-            success "Removed firewalld test zone from offline configuration"
-        else
+        info "Firewalld cleanup failed while the daemon was running; retrying offline"
+        if ! run_systemctl_as_root stop firewalld &>/dev/null; then
+            info "Could not stop firewalld for offline cleanup"
+            return 1
+        fi
+
+        if ! cleanup_firewalld_zone_offline; then
+            return 1
+        fi
+
+        if [ "$FIREWALLD_WAS_ACTIVE" -eq 1 ]; then
+            if run_systemctl_as_root start firewalld &>/dev/null; then
+                success "Removed firewalld test zone offline and restored firewalld"
+            else
+                info "Removed firewalld test zone, but could not restore firewalld"
+                return 1
+            fi
+        fi
+    else
+        if ! cleanup_firewalld_zone_offline; then
             info "Firewalld is stopped and its test zone could not be removed"
+        elif [ "$FIREWALLD_WAS_ACTIVE" -eq 1 ]; then
+            if run_systemctl_as_root start firewalld &>/dev/null; then
+                success "Removed firewalld test zone and restored firewalld"
+            else
+                info "Removed firewalld test zone, but could not restore firewalld"
+            fi
+        else
+            info "Completed firewalld offline test-zone cleanup"
         fi
     fi
 }
 
 cleanup() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return 0
+    fi
+    CLEANUP_DONE=1
     info "Cleaning up test environment..."
-    cleanup_firewalld_zone
+    if ! cleanup_firewalld_zone; then
+        info "Firewalld cleanup did not complete successfully"
+    fi
     docker compose -f docker-compose.yml down -v --remove-orphans || true
     success "Cleanup completed"
 }
