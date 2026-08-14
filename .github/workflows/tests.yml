@@ -59,7 +59,7 @@ jobs:
       run: uv run pytest
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226 # v3.0.0
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
     - name: Run docker compose stack
       run: docker compose -f dev/docker-compose.ci.yml up -d --build
