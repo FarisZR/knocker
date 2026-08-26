@@ -424,6 +424,30 @@ def normalize_path(path: str) -> str:
     return normalized or "/"
 
 
+_AMBIGUOUS_PATH_MARKERS: Tuple[str, ...] = ("%", ";", "\\", "\x00", "�")
+
+
+def _is_ambiguous_request_path(path: str) -> bool:
+    """Detect request paths a backend may normalize differently than Knocker.
+
+    Knocker decodes percent-escapes once and folds only literal ``.``/``..``
+    segments. Backends that strip path parameters (``;``), double-decode escapes,
+    translate separators, truncate at NUL, or map invalid UTF-8 to ``.`` can turn
+    such a path into one outside an excluded prefix, so the unauthenticated
+    exclusion shortcut must not be offered for them.
+    """
+    if not path:
+        return False
+
+    if "://" in path:
+        raw_path = urlsplit(path).path or "/"
+    else:
+        raw_path = path.split("#", 1)[0].split("?", 1)[0]
+
+    decoded_path = unquote(raw_path)
+    return any(marker in decoded_path for marker in _AMBIGUOUS_PATH_MARKERS)
+
+
 def normalize_host(host: Optional[str]) -> Optional[str]:
     """Normalize forwarded/request hosts for exclusion matching."""
     if not host:
@@ -461,6 +485,13 @@ class PathExclusions:
         return cls(global_paths=global_paths, host_paths=host_paths)
 
     def matches(self, host: Optional[str], path: str) -> bool:
+        # Fail closed for request paths that stay ambiguous after one decode:
+        # a re-normalizing backend could resolve them outside the excluded
+        # prefix. The request then falls through to the IP whitelist check.
+        # Configured prefixes are normalized in from_config and never reach this.
+        if _is_ambiguous_request_path(path):
+            return False
+
         normalized_host = normalize_host(host)
         normalized_path = normalize_path(path)
 

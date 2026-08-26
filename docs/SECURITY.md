@@ -54,6 +54,30 @@ limits. All failed responses use the same CORS and failure-rate-limit path.
 
 **Example**: `/api/status/../../../etc/passwd` is normalized to `/etc/passwd` and properly rejected.
 
+#### Fail-closed guard for ambiguous request paths
+
+Normalization decodes percent-escapes once and folds only literal `.`/`..`
+segments. Backends behind the proxy may normalize further: strip `;` path
+parameters (Tomcat, Jetty, Spring), double-decode `%252e%252e`, translate `\`
+separators, truncate at a NUL byte, or read overlong UTF-8 as `.`. Such request
+targets stay under an excluded prefix in Knocker's view while the backend routes
+them onto a protected path.
+
+`PathExclusions.matches()` therefore refuses the unauthenticated exclusion
+shortcut for any request path that still contains one of `%` (residual
+double-encoding), `;` (path parameters), `\` (separator translation), a NUL byte,
+or U+FFFD (invalid UTF-8) after one decoding pass. This covers both global and
+host-scoped exclusions, because `/verify` resolves exclusions through
+`matches()`. Configured prefixes are normalized once when settings load and are
+never rejected by this guard.
+
+Refusing the shortcut fails closed: the request falls through to the normal IP
+whitelist check, so legitimate clients can still knock and whitelisted IPs keep
+access. The tradeoff is that rare legitimate URLs on public paths using `;`
+matrix parameters or encoded percents (`%25`) now require a whitelisted IP
+instead of matching an exclusion. Leading `//` authority-form targets are a
+separate concern and are deliberately not handled here.
+
 ### 5. Race Condition Prevention (Medium)
 
 **Issue**: Concurrent access to the whitelist file could cause data corruption or inconsistent state.
@@ -173,6 +197,7 @@ The project includes comprehensive security tests in `tests/test_security_fixes.
 - Trusted proxy validation
 - CIDR range limits
 - Path traversal prevention
+- Ambiguous request paths refusing the exclusion shortcut
 - Information disclosure protection
 - Size limits and DoS prevention
 - Rate limiting
