@@ -82,7 +82,7 @@ Knocker provides different image tags for different use cases:
 1.  **Configuration**:
     - Rename `knocker.example.yaml` to `knocker.yaml`.
     - Add at least one secure, random API key to `knocker.yaml`; the example intentionally contains no usable defaults.
-    - Review the `trusted_proxies` list in `knocker.yaml`, they should match the subnet of the reverse proxy's network (`docker network inspect xxx`)
+    - Review the `trusted_proxies` list in `knocker.yaml`: it must contain **only the reverse proxy's own address(es)**, not its subnet. Because knocker only trusts `X-Forwarded-For` from a listed peer, a whole-subnet entry (e.g. `172.16.238.0/24`) turns *every* container on that network into an identity authority -- any one of them could claim any client IP, or whitelist arbitrary addresses with a regular key. Docker doesn't assign stable container IPs by default, so pin the proxy with `ipv4_address` / `ipv6_address` (see the commented-out `caddy` service in `docker-compose.yml`) and list those exact `/32` and `/128` addresses.
     - Keep `whitelist.storage_path` under the app working directory, `/data`, or `/tmp`.
     - (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
 
@@ -252,7 +252,7 @@ This endpoint validates an API key and whitelists an IP.
 
 ### `/verify` (GET)
 
-This endpoint is used by Caddy's `forward_auth` to check if the client's IP is whitelisted. It returns `200 OK` on success and `401 Unauthorized` on failure. `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Uri` are only trusted when the request originates from `server.trusted_proxies`.
+This endpoint is used by Caddy's `forward_auth` to check if the client's IP is whitelisted. It returns `200 OK` on success and `401 Unauthorized` on failure. `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Uri` are only trusted when the direct peer of the connection is listed in `server.trusted_proxies`. Keep that list to the reverse proxy itself (`/32` / `/128` addresses); see the deployment notes above for why broader ranges are unsafe.
 
 The optional `/knock` body is empty or a strict JSON object containing only
 `ip_address` and `ttl`, limited to 4096 bytes. Authentication happens before

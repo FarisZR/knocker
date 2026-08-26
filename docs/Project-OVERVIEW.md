@@ -39,7 +39,7 @@ This project is designed to be deployed as a set of Docker containers using the 
 2.  **Configuration**:
     *   Rename `knocker.example.yaml` to `knocker.yaml`.
     *   Add at least one secure, random API key to `knocker.yaml`; the example intentionally contains no usable defaults.
-    *   Review the `trusted_proxies` list in `knocker.yaml`, they should match the subnet of the reverse proxys network (`docker network inspect xxx`)
+    *   Review the `trusted_proxies` list in `knocker.yaml`: it must contain **only the reverse proxy's own address(es)** (`/32` / `/128`), never its subnet. Trusting a subnet would let any container on that network claim any client identity via `X-Forwarded-For`. Pin the proxy with `ipv4_address` / `ipv6_address` (see the commented-out `caddy` service in `docker-compose.yml`) and mirror those exact addresses here.
     *   (Optional) Enable interactive documentation by setting `documentation.enabled: true` (it is disabled by default).
     *   (Optional) Configure firewalld integration by setting `firewalld.enabled: true` and adjusting the related settings. **Note**: This requires the container to run as root.
     *   Create a `Caddyfile` in the `knocker` directory. See the "Caddy Integration" section below for examples.

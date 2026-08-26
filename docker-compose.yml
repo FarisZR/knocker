@@ -7,7 +7,13 @@ services:
   #     - "443:443"
   #     - "443:443/udp" # For HTTP/3
   #   networks:
-  #     - caddy_net
+  #     caddy_net:
+  #       # Pin Caddy to fixed addresses so knocker.yaml can trust exactly one
+  #       # peer instead of a whole subnet. Mirror these exact addresses into
+  #       # `server.trusted_proxies` (and, if desired, `security.always_allowed_ips`)
+  #       # in your knocker.yaml.
+  #       ipv4_address: 172.16.238.2
+  #       ipv6_address: fd00:dead:beef::2
   #   volumes:
   #     - ./Caddyfile:/etc/caddy/Caddyfile
   #     - ./knocker.yaml:/app/knocker.yaml
@@ -43,7 +49,10 @@ networks:
       driver: default
       config:
         # Define subnets for both IPv4 and IPv6.
-        # Your 'trusted_proxies' in knocker.yaml should include these.
+        # Do NOT put these subnets in knocker.yaml's trusted_proxies -- that would
+        # make every container on the network an identity authority. Pin the proxy
+        # with ipv4_address/ipv6_address (see the caddy service above) and list
+        # only that address (/32, /128) in knocker.yaml.
         - subnet: 172.16.238.0/24
         - subnet: fd00:dead:beef::/64
 

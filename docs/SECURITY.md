@@ -19,9 +19,14 @@ continue to use their direct address and cannot influence forwarded headers.
 ```yaml
 server:
   trusted_proxies:
-    - "172.29.238.0/24"  # Docker network
-    - "127.0.0.1"        # Localhost
+    - "172.16.238.2/32"       # The reverse proxy's pinned IPv4 (single host)
+    - "fd00:dead:beef::2/128" # The reverse proxy's pinned IPv6 (single host)
+    - "127.0.0.1"             # Localhost, only if something local calls knocker directly
 ```
+
+Assign those addresses to the proxy container with `ipv4_address` /
+`ipv6_address` on the shared Docker network so they are stable; do not
+substitute the network's subnet (`172.16.238.0/24`, `fd00:dead:beef::/64`).
 
 ### 2. CIDR Range Abuse Prevention (High)
 
@@ -117,7 +122,8 @@ cors:
 
 ### 1. Network Configuration
 
-- **Always configure trusted_proxies**: Only include the actual reverse proxy IPs/networks
+- **Keep the trust scope minimal — just the proxy**: `trusted_proxies` must contain only the reverse proxy's own address(es) as single hosts (`/32` for IPv4, `/128` for IPv6). Threat note: every container inside a trusted range can forge client identity. Since Knocker derives the client IP from headers sent by a trusted peer, a compromised backend container or an SSRF bug in one could claim any `X-Forwarded-For`, impersonate an already-whitelisted address to pass `/verify`, and use `/knock` with a regular key (no `allow_remote_whitelist`) to whitelist arbitrary IPs. Never trust the proxy network's subnet.
+- **Pin the proxy's addresses**: Docker does not assign stable container IPs by default; set `ipv4_address` / `ipv6_address` for the proxy on the shared network so its `/32` / `/128` entries stay valid across restarts (see the commented-out `caddy` service in `docker-compose.yml`)
 - **Leave proxy-header resolution to Knocker**: Run Uvicorn with `--no-proxy-headers` so Knocker can resolve the direct peer from `request.client.host` before consulting `server.trusted_proxies`
 - **Reject malformed forwarded chains**: If a trusted proxy sends an invalid `X-Forwarded-For` chain, Knocker now treats the client IP as unresolved instead of falling back to the proxy IP
 - **Use Docker networks**: Isolate knocker service on a private Docker network
@@ -136,7 +142,7 @@ cors:
 
 - **Restrict file permissions**: Ensure knocker.yaml is only readable by the service user
 - **Environment variables**: Store the config path in `KNOCKER_CONFIG_PATH`
-- **Always-allowed IPs**: Minimize the always-allowed IP list to only essential systems
+- **Always-allowed IPs**: Minimize the always-allowed IP list to only essential systems as single hosts (`/32` / `/128`, e.g. the proxy itself and loopback)
 - **Proxy networks are not allowlists**: Keep `always_allowed_ips` empty unless every address in the range is meant to bypass verification.
 - **Use host-scoped exclusions**: Do not globally exclude `/knock`; put the dedicated knock hostname on a direct proxy route and protect other hosts with `forward_auth`.
 
