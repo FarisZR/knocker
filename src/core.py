@@ -954,6 +954,30 @@ def can_record_knock_attempt(settings: SettingsLike, actor: str, outcome: str) -
     return runtime_state.rate_limiter.can_allow(actor, outcome, int(time.time()))
 
 
+def _describe_monitored_ports(firewalld_integration: Any) -> str:
+    """Best-effort monitored-ports context for rollback logs; never raises.
+
+    FirewalldIntegration.monitored_ports entries are plain dicts
+    (``{"port": 443, "protocol": "tcp"}``); attribute-style entries are also
+    accepted for test doubles. Log context must never break the rollback
+    path that reports it.
+    """
+    monitored_ports = getattr(firewalld_integration, "monitored_ports", None)
+    if not isinstance(monitored_ports, list):
+        return ""
+    labels: list[str] = []
+    for entry in monitored_ports:
+        if isinstance(entry, dict):
+            port = entry.get("port")
+            protocol = entry.get("protocol", "tcp")
+        else:
+            port = getattr(entry, "port", None)
+            protocol = getattr(entry, "protocol", None)
+        if port is not None and protocol is not None:
+            labels.append(f"{port}/{protocol}")
+    return f" on monitored ports {', '.join(labels)}" if labels else ""
+
+
 def add_ip_to_whitelist_with_firewalld(
     ip_or_cidr: str, expiry_time: int, settings: SettingsLike
 ) -> bool:
@@ -973,12 +997,6 @@ def add_ip_to_whitelist_with_firewalld(
         return True
     except Exception as exc:
         if firewalld_integration and firewalld_integration.is_enabled():
-            monitored_ports = getattr(firewalld_integration, "monitored_ports", None)
-            port_details = ""
-            if isinstance(monitored_ports, list):
-                port_details = ", ".join(f"{port.port}/{port.protocol}" for port in monitored_ports)
-            ports_context = f" on monitored ports {port_details}" if port_details else ""
-
             try:
                 rollback_succeeded = firewalld_integration.remove_whitelist_rule(ip_or_cidr)
             except Exception as rollback_error:
@@ -987,6 +1005,8 @@ def add_ip_to_whitelist_with_firewalld(
                 rollback_failure = (
                     "remove_whitelist_rule returned False" if not rollback_succeeded else None
                 )
+
+            ports_context = _describe_monitored_ports(firewalld_integration)
 
             if rollback_failure:
                 logging.error(

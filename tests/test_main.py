@@ -373,7 +373,6 @@ def test_knock_at_capacity_logs_failed_firewalld_rollback(monkeypatch, mock_sett
     """A failed capacity rollback is visible while the endpoint still returns 503."""
     import logging
     import time
-    from types import SimpleNamespace
     from unittest.mock import Mock
 
     from src import core
@@ -388,7 +387,8 @@ def test_knock_at_capacity_logs_failed_firewalld_rollback(monkeypatch, mock_sett
     integration.is_enabled.return_value = True
     integration.add_whitelist_rule.return_value = True
     integration.remove_whitelist_rule.return_value = False
-    integration.monitored_ports = [SimpleNamespace(port=443, protocol="tcp")]
+    # Real FirewalldIntegration.monitored_ports entries are plain dicts.
+    integration.monitored_ports = [{"port": 443, "protocol": "tcp"}]
     monkeypatch.setattr("src.firewalld.get_firewalld_integration", lambda: integration)
     caplog.set_level(logging.ERROR)
 
