@@ -387,3 +387,102 @@ def test_verify_success_excluded_path_prefix():
         headers={"X-Forwarded-For": "9.9.9.9", "X-Forwarded-Uri": "/api/v1/public/status"},
     )
     assert response.status_code == 200
+
+
+# --- Test Host-Scoped Exclusions ---
+
+
+def test_verify_success_host_scoped_exclusion_for_forwarded_host(mock_settings):
+    """A trusted forwarded host still unlocks its own scoped exclusions."""
+    mock_settings["security"]["excluded_paths_by_host"] = {"jellyfin.example.com": ["/web"]}
+
+    response = client.get(
+        "/verify",
+        headers={
+            "X-Forwarded-For": "9.9.9.9",
+            "X-Forwarded-Uri": "/web/managers",
+            "X-Forwarded-Host": "jellyfin.example.com",
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_verify_success_host_scoped_exclusion_strips_forwarded_port(mock_settings):
+    """Ports are legitimate authority decorations and keep being stripped."""
+    mock_settings["security"]["excluded_paths_by_host"] = {"jellyfin.example.com": ["/web"]}
+
+    response = client.get(
+        "/verify",
+        headers={
+            "X-Forwarded-For": "9.9.9.9",
+            "X-Forwarded-Uri": "/web/managers",
+            "X-Forwarded-Host": "jellyfin.example.com:443",
+        },
+    )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "forwarded_host",
+    [
+        "public.example.com,app.example.com",
+        ",public.example.com",
+        "user@public.example.com",
+        "public.example.com?x=1",
+        "public.example.com#fragment",
+        "public.example.com\\shared",
+        "public.example.com/public",
+    ],
+)
+def test_verify_host_scoped_exclusion_fails_closed_on_ambiguous_forwarded_host(
+    mock_settings, forwarded_host
+):
+    """Comma chains and decorated authorities must not claim an exclusion host."""
+    mock_settings["security"]["excluded_paths_by_host"] = {"public.example.com": ["/public"]}
+
+    response = client.get(
+        "/verify",
+        headers={
+            "X-Forwarded-For": "9.9.9.9",
+            "X-Forwarded-Uri": "/public",
+            "X-Forwarded-Host": forwarded_host,
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_verify_global_path_exclusion_survives_rejected_forwarded_host(mock_settings):
+    """Failing closed on a forwarded host chain keeps global exclusions intact."""
+    mock_settings["security"]["excluded_paths_by_host"] = {"public.example.com": ["/public"]}
+
+    response = client.get(
+        "/verify",
+        headers={
+            "X-Forwarded-For": "9.9.9.9",
+            "X-Forwarded-Uri": "/healthz",
+            "X-Forwarded-Host": "public.example.com,app.example.com",
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_verify_untrusted_peer_cannot_use_host_scoped_exclusion(mock_settings):
+    """Host-scoped exclusions stay limited to requests routed by a trusted proxy."""
+    mock_settings["security"]["excluded_paths_by_host"] = {"jellyfin.example.com": ["/web"]}
+    mock_settings["server"]["trusted_proxies"] = ["127.0.0.1"]
+
+    response = client.get(
+        "/verify",
+        headers={
+            "X-Forwarded-For": "192.168.1.100",
+            "X-Forwarded-Uri": "/web/managers",
+            "X-Forwarded-Host": "jellyfin.example.com",
+            "x-knocker-test-direct-ip": "10.10.10.10",
+        },
+    )
+
+    assert response.status_code == 401

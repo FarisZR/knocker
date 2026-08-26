@@ -424,17 +424,33 @@ def normalize_path(path: str) -> str:
     return normalized or "/"
 
 
+# Characters that mark a value as something other than a single bare authority.
+# urlsplit("//host") silently drops userinfo ("@"), query ("?"), fragment ("#")
+# and path separators ("/", "\"), and strips control characters, so a decorated
+# value would otherwise be trimmed into a hostname no routing layer used.
+_UNSAFE_HOST_CHARACTERS = ("@", "?", "#", "/", "\\", "\t", "\n", "\r", "\0")
+
+
 def normalize_host(host: Optional[str]) -> Optional[str]:
-    """Normalize forwarded/request hosts for exclusion matching."""
+    """Normalize a single host authority for exclusion matching.
+
+    Fails closed on anything that is not one bare authority: comma-separated
+    lists (no single entry can be attributed to the routing decision) and
+    decorated authorities are rejected with None instead of being trimmed down.
+    Ports stay legitimate in Host/X-Forwarded-Host values and keep being
+    stripped below. Configuration keys for excluded_paths_by_host go through
+    this function too, so invalid keys fail settings validation instead of
+    matching a normalized alias.
+    """
     if not host:
         return None
 
-    first = host.split(",", 1)[0].strip()
-    if not first:
+    candidate = host.strip()
+    if "," in candidate or any(character in candidate for character in _UNSAFE_HOST_CHARACTERS):
         return None
 
-    parsed = urlsplit(f"//{first}")
-    return parsed.hostname.lower() if parsed.hostname else first.lower()
+    parsed = urlsplit(f"//{candidate}")
+    return parsed.hostname.lower() if parsed.hostname else candidate.lower()
 
 
 def _is_path_prefix_match(path: str, prefix: str) -> bool:
@@ -565,7 +581,16 @@ def resolve_request_host(
     forwarded_host: Optional[str],
     forwarded_header_is_trusted: bool,
 ) -> Optional[str]:
+    # A single trusted proxy hop sets exactly one X-Forwarded-Host value. A
+    # comma-separated chain cannot be attributed to the one routing decision
+    # that produced this request, so fail closed (no host-scoped exclusions;
+    # global exclusions and the IP whitelist verdict are unaffected) instead of
+    # trusting an entry the proxy never routed by. normalize_host applies the
+    # same rule to any value it is given, which also rejects such configuration
+    # keys.
     if forwarded_header_is_trusted and forwarded_host:
+        if "," in forwarded_host:
+            return None
         return normalize_host(forwarded_host)
     if forwarded_header_is_trusted:
         return None
