@@ -343,10 +343,14 @@ def test_normalize_host_accepts_bare_authorities(host, expected):
         "public.example.com\tindent",
         "public.example.com\nnewline",
         "public.example.com\0nul",
+        "\x0bhost",
+        "\x0chost",
+        "\x01host",
+        "\x7fhost",
     ],
 )
 def test_normalize_host_rejects_ambiguous_host_values(host):
-    """Comma lists and decorated authorities must not normalize into a hostname."""
+    """Ambiguous and control-character authorities must not normalize into a hostname."""
     assert core.normalize_host(host) is None
 
 
@@ -388,10 +392,14 @@ def test_resolve_request_host_without_trusted_forwarded_metadata():
         "public.example.com?x=1",
         "public.example.com#fragment",
         "public.example.com/public",
+        "\x0bpublic.example.com",
+        "\x0cpublic.example.com",
+        "\x01public.example.com",
+        "\x7fpublic.example.com",
     ],
 )
 def test_excluded_paths_by_host_rejects_ambiguous_configuration_keys(host_key, tmp_path):
-    """Invalid host keys must fail validation instead of matching a trimmed alias."""
+    """Invalid host keys must fail runtime-state construction."""
     with pytest.raises(ValueError, match="Invalid excluded_paths_by_host host"):
         core.ensure_runtime_state(
             {

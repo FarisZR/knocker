@@ -434,12 +434,16 @@ def test_verify_success_host_scoped_exclusion_strips_forwarded_port(mock_setting
         "public.example.com#fragment",
         "public.example.com\\shared",
         "public.example.com/public",
+        "\x0bpublic.example.com",
+        "\x0cpublic.example.com",
+        "\x01public.example.com",
+        "\x7fpublic.example.com",
     ],
 )
 def test_verify_host_scoped_exclusion_fails_closed_on_ambiguous_forwarded_host(
     mock_settings, forwarded_host
 ):
-    """Comma chains and decorated authorities must not claim an exclusion host."""
+    """Ambiguous and control-character authorities must not claim an exclusion host."""
     mock_settings["security"]["excluded_paths_by_host"] = {"public.example.com": ["/public"]}
 
     response = client.get(
@@ -448,6 +452,7 @@ def test_verify_host_scoped_exclusion_fails_closed_on_ambiguous_forwarded_host(
             "X-Forwarded-For": "9.9.9.9",
             "X-Forwarded-Uri": "/public",
             "X-Forwarded-Host": forwarded_host,
+            "x-knocker-test-direct-ip": "127.0.0.1",
         },
     )
 

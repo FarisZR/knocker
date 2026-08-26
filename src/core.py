@@ -428,7 +428,7 @@ def normalize_path(path: str) -> str:
 # urlsplit("//host") silently drops userinfo ("@"), query ("?"), fragment ("#")
 # and path separators ("/", "\"), and strips control characters, so a decorated
 # value would otherwise be trimmed into a hostname no routing layer used.
-_UNSAFE_HOST_CHARACTERS = ("@", "?", "#", "/", "\\", "\t", "\n", "\r", "\0")
+_UNSAFE_HOST_CHARACTERS = ("@", "?", "#", "/", "\\")
 
 
 def normalize_host(host: Optional[str]) -> Optional[str]:
@@ -439,10 +439,13 @@ def normalize_host(host: Optional[str]) -> Optional[str]:
     decorated authorities are rejected with None instead of being trimmed down.
     Ports stay legitimate in Host/X-Forwarded-Host values and keep being
     stripped below. Configuration keys for excluded_paths_by_host go through
-    this function too, so invalid keys fail settings validation instead of
-    matching a normalized alias.
+    this function too, so invalid keys fail runtime-state construction instead
+    of matching a normalized alias.
     """
     if not host:
+        return None
+
+    if any(ord(character) <= 0x1F or ord(character) == 0x7F for character in host):
         return None
 
     candidate = host.strip()
