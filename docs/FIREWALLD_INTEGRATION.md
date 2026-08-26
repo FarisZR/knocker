@@ -319,7 +319,10 @@ The `/health` endpoint is a cheap liveness probe and does not run
 `firewall-cmd`. Use `/ready` for read-only storage and firewalld readiness; it
 repeats the protection verification without changing firewall state. Startup
 still performs zone setup, whitelist restoration, and full verification before
-serving requests. Consider monitoring:
+serving requests. On `/ready`, that protection verification (a blocking chain of
+`firewall-cmd` calls) is cached for about 10 seconds and shared by concurrent
+pollers, so polling frequently does not multiply `firewall-cmd` invocations;
+startup verification always runs uncached. Consider monitoring:
 
 - Firewalld daemon status
 - Knocker `/ready` readiness endpoint
