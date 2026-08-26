@@ -369,6 +369,43 @@ def test_knock_at_capacity_rejects_new_entry(monkeypatch, mock_settings):
     integration.remove_whitelist_rule.assert_called_once_with("3.3.3.3")
 
 
+def test_knock_at_capacity_logs_failed_firewalld_rollback(monkeypatch, mock_settings, caplog):
+    """A failed capacity rollback is visible while the endpoint still returns 503."""
+    import logging
+    import time
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from src import core
+
+    mock_settings["security"]["max_whitelist_entries"] = 1
+    core._write_whitelist_file(
+        Path(mock_settings["whitelist"]["storage_path"]),
+        {"6.6.6.6": int(time.time()) + 3600},
+    )
+
+    integration = Mock()
+    integration.is_enabled.return_value = True
+    integration.add_whitelist_rule.return_value = True
+    integration.remove_whitelist_rule.return_value = False
+    integration.monitored_ports = [SimpleNamespace(port=443, protocol="tcp")]
+    monkeypatch.setattr("src.firewalld.get_firewalld_integration", lambda: integration)
+    caplog.set_level(logging.ERROR)
+
+    response = client.post(
+        "/knock", headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "7.7.7.7"}
+    )
+
+    assert response.status_code == 503
+    assert any(
+        record.levelno == logging.ERROR
+        and "7.7.7.7" in record.getMessage()
+        and "443/tcp" in record.getMessage()
+        and "may remain active until TTL expiry" in record.getMessage()
+        for record in caplog.records
+    )
+
+
 def test_knock_at_capacity_refreshes_existing_entry(mock_settings):
     """Re-knocking an IP that is already whitelisted still succeeds at capacity."""
     import time

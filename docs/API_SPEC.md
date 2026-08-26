@@ -76,7 +76,7 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
 
 *   **`503 Service Unavailable`**
     *   Returned when the serialized firewall mutation worker is unavailable or saturated, with body `{"error": "Firewall mutation capacity is unavailable."}`.
-    *   Also returned when the whitelist is already at `security.max_whitelist_entries` and the request would insert a brand-new entry, with body `{"error": "Whitelist is at capacity. Try again later."}`. Knocker fails closed instead of reporting success for an entry it could not store; refreshing an entry that is already whitelisted is not affected.
+    *   Also returned when the whitelist is already at `security.max_whitelist_entries` and the request would insert a brand-new entry, with body `{"error": "Whitelist is at capacity. Try again later."}`. Knocker fails closed instead of reporting success for an entry it could not store; refreshing an entry that is already whitelisted is not affected. Firewalld rollback after this capacity rejection is best-effort: failures are logged at ERROR level, and the rule may remain active until its TTL expires.
 
 *   **`500 Internal Server Error`**
     *   Returned if whitelist persistence or firewall configuration fails.

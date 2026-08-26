@@ -973,18 +973,34 @@ def add_ip_to_whitelist_with_firewalld(
         return True
     except Exception as exc:
         if firewalld_integration and firewalld_integration.is_enabled():
+            monitored_ports = getattr(firewalld_integration, "monitored_ports", None)
+            port_details = ""
+            if isinstance(monitored_ports, list):
+                port_details = ", ".join(f"{port.port}/{port.protocol}" for port in monitored_ports)
+            ports_context = f" on monitored ports {port_details}" if port_details else ""
+
             try:
-                firewalld_integration.remove_whitelist_rule(ip_or_cidr)
+                rollback_succeeded = firewalld_integration.remove_whitelist_rule(ip_or_cidr)
+            except Exception as rollback_error:
+                rollback_failure = f"remove_whitelist_rule raised: {rollback_error}"
+            else:
+                rollback_failure = (
+                    "remove_whitelist_rule returned False" if not rollback_succeeded else None
+                )
+
+            if rollback_failure:
+                logging.error(
+                    "Failed to rollback firewalld rules for whitelist entry %s%s; "
+                    "the firewall rule may remain active until TTL expiry (orphan window): %s",
+                    ip_or_cidr,
+                    ports_context,
+                    rollback_failure,
+                )
+            else:
                 logging.error(
                     "Rolled back firewalld rules for %s due to whitelist persistence failure: %s",
                     ip_or_cidr,
                     exc,
-                )
-            except Exception as rollback_error:
-                logging.error(
-                    "Failed to rollback firewalld rules for %s: %s",
-                    ip_or_cidr,
-                    rollback_error,
                 )
         if isinstance(exc, WhitelistCapacityExceededError):
             # Capacity is a policy outcome, not an internal failure: surface it
