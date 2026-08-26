@@ -17,6 +17,7 @@ dev = [
 ]
 lint = [
     "ruff>=0.16.1",
+    "radon>=6.0.1",
 ]
 type = [
     "ty>=0.0.64",
@@ -50,3 +51,4 @@ all = "warn"
 [tool.ty.terminal]
 error-on-warning = false
 output-format = "concise"
+
