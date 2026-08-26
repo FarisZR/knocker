@@ -642,6 +642,7 @@ class SlidingWindowRateLimiter:
     _events: Dict[Tuple[str, str], Deque[Tuple[int, int]]] = field(
         default_factory=lambda: defaultdict(deque)
     )
+    _actor_order: Dict[str, None] = field(default_factory=dict)
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _token_counter: int = field(default=0, init=False)
     _last_global_prune: int = field(default=0, init=False)
@@ -659,27 +660,38 @@ class SlidingWindowRateLimiter:
         while bucket and bucket[0][0] <= cutoff:
             bucket.popleft()
 
-    def _enforce_actor_cap(self, incoming_key: Tuple[str, str]) -> None:
-        """Bound how many actor buckets the limiter tracks.
+    def _remove_bucket(self, bucket_key: Tuple[str, str]) -> None:
+        self._events.pop(bucket_key, None)
+        actor = bucket_key[1]
+        if not any(key[1] == actor for key in self._events):
+            self._actor_order.pop(actor, None)
+
+    def _enforce_actor_cap(self, incoming_actor: str) -> None:
+        """Bound how many distinct actors the limiter tracks.
 
         Actor identity is resolved client IP, which a trusted proxy derives
         from client-claimable headers (X-Forwarded-For). Without a bound, a
         flood of invented identities allocates an unbounded number of buckets.
-        Evicting oldest-inserted buckets fails open for those actors - they
-        simply lose their throttle history - because an exhausted rate limiter
+        Evicting oldest-inserted actors fails open for those actors - they
+        simply lose all their throttle history - because an exhausted rate limiter
         must never become a memory-exhaustion primitive against this process.
         """
-        if self._events.get(incoming_key):
+        if incoming_actor in self._actor_order:
             return
 
         # Plain dict iteration order is insertion order, so next(iter(...))
-        # yields the least recently created remaining bucket. Amortized O(1):
-        # each admitted actor evicts at most one predecessor.
-        while len(self._events) >= self.max_tracked_actors:
-            oldest_key = next(iter(self._events), None)
-            if oldest_key is None or oldest_key == incoming_key:
+        # yields the least recently seen remaining actor. Remove all outcome
+        # buckets for that actor before admitting the incoming actor.
+        while len(self._actor_order) >= self.max_tracked_actors:
+            oldest_actor = next(iter(self._actor_order), None)
+            if oldest_actor is None or oldest_actor == incoming_actor:
                 break
-            self._events.pop(oldest_key, None)
+            self._actor_order.pop(oldest_actor, None)
+            for bucket_key in tuple(self._events):
+                if bucket_key[1] == oldest_actor:
+                    self._events.pop(bucket_key, None)
+
+        self._actor_order[incoming_actor] = None
 
     def _prune_all_buckets(self, cutoff: int, now: int) -> None:
         if self._last_global_prune and now - self._last_global_prune < self.window_seconds:
@@ -692,7 +704,7 @@ class SlidingWindowRateLimiter:
                 empty_keys.append(bucket_key)
 
         for bucket_key in empty_keys:
-            self._events.pop(bucket_key, None)
+            self._remove_bucket(bucket_key)
 
         self._last_global_prune = now
 
@@ -708,12 +720,12 @@ class SlidingWindowRateLimiter:
         bucket_key = (outcome, actor)
         with self._lock:
             self._prune_all_buckets(cutoff, timestamp)
-            self._enforce_actor_cap(bucket_key)
+            self._enforce_actor_cap(actor)
             bucket = self._events[bucket_key]
             self._prune_bucket(bucket, cutoff)
             if len(bucket) >= limit:
                 if not bucket:
-                    self._events.pop(bucket_key, None)
+                    self._remove_bucket(bucket_key)
                 return None
             self._token_counter += 1
             reservation = (timestamp, self._token_counter)
@@ -734,7 +746,7 @@ class SlidingWindowRateLimiter:
             except ValueError:
                 return
             if not bucket:
-                self._events.pop(bucket_key, None)
+                self._remove_bucket(bucket_key)
 
     def allow(self, actor: str, outcome: str, now: Optional[int] = None) -> bool:
         reservation = self.reserve(actor, outcome, now)
@@ -755,7 +767,7 @@ class SlidingWindowRateLimiter:
             bucket = self._events[bucket_key]
             self._prune_bucket(bucket, cutoff)
             if not bucket:
-                self._events.pop(bucket_key, None)
+                self._remove_bucket(bucket_key)
             return len(bucket) < limit
 
 

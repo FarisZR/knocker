@@ -222,6 +222,24 @@ def test_rate_limiter_actor_cap_keeps_existing_actor_tracking():
     assert list(limiter._events) == [("success", "actor-a")]
 
 
+def test_rate_limiter_actor_cap_tracks_distinct_actors_and_all_outcomes():
+    limiter = core.SlidingWindowRateLimiter(
+        window_seconds=60, successful_requests=1, failed_requests=1, max_tracked_actors=1
+    )
+
+    assert limiter.reserve("actor-a", "success", now=10) is not None
+    assert limiter.reserve("actor-a", "failure", now=10) is not None
+    assert set(limiter._events) == {("success", "actor-a"), ("failure", "actor-a")}
+
+    assert limiter.reserve("actor-a", "success", now=10) is None
+    assert limiter.reserve("actor-a", "failure", now=10) is None
+
+    assert limiter.reserve("actor-b", "success", now=10) is not None
+    assert ("success", "actor-a") not in limiter._events
+    assert ("failure", "actor-a") not in limiter._events
+    assert ("success", "actor-b") in limiter._events
+
+
 def test_rate_limiter_reads_max_tracked_actors_from_config():
     settings = config.validate_settings(
         {

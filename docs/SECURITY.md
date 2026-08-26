@@ -124,8 +124,9 @@ grow process memory without bound.
 **Fix**: Two bounds.
 - Forwarded entries longer than 64 characters are rejected outright (fail
   closed), so implausibly long identity strings never reach actor state or logs.
-- `max_tracked_actors` caps how many actor buckets are retained. When a new
-  actor needs a slot at the cap, the least recently created buckets are evicted.
+- `max_tracked_actors` caps how many distinct actors are retained. When a new
+  actor needs a slot at the cap, the least recently created actor and all of
+  that actor's outcome buckets are evicted.
 
 **Tradeoff**: Eviction fails open for the affected actors - they lose their
 throttle history and get fresh windows. An exhausted rate limiter must not
