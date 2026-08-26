@@ -113,6 +113,31 @@ cors:
   allowed_origin: "https://your-trusted-domain.com"
 ```
 
+### 10. Bounded Rate Limiter Memory (Low)
+
+**Issue**: The knock rate limiter kept one bucket per resolved client IP with no
+limit on distinct actors. A peer inside `trusted_proxies` controls the
+`X-Forwarded-For` chain, so each invented-but-well-formed address allocated
+persistent limiter state that outlived the window, allowing sustained floods to
+grow process memory without bound.
+
+**Fix**: Two bounds.
+- Forwarded entries longer than 64 characters are rejected outright (fail
+  closed), so implausibly long identity strings never reach actor state or logs.
+- `max_tracked_actors` caps how many actor buckets are retained. When a new
+  actor needs a slot at the cap, the least recently created buckets are evicted.
+
+**Tradeoff**: Eviction fails open for the affected actors - they lose their
+throttle history and get fresh windows. An exhausted rate limiter must not
+become a memory-exhaustion primitive against Knocker itself.
+
+**Configuration**:
+```yaml
+security:
+  knock_rate_limit:
+    max_tracked_actors: 100000  # Default limit on tracked client IPs
+```
+
 ## Security Best Practices
 
 ### 1. Network Configuration

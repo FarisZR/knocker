@@ -39,6 +39,11 @@ except ImportError:  # pragma: no cover - fallback for direct module execution
 IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
 
+# Forwarded entries become per-actor identities, so they are length-bounded
+# before they can reach rate-limiter state or logs. 64 characters covers every
+# real IPv6 literal (including a scope ID) with wide margin.
+MAX_FORWARDED_ENTRY_LENGTH = 64
+
 _runtime_state_lock = threading.Lock()
 _RUNTIME_STATE_KEY = "_knocker_runtime_state"
 
@@ -539,7 +544,12 @@ def resolve_client_ip(
         return None, True
 
     raw_entries = [entry.strip() for entry in forwarded_for.split(",")]
-    if not raw_entries or any(not entry for entry in raw_entries) or len(raw_entries) > 20:
+    if (
+        not raw_entries
+        or any(not entry for entry in raw_entries)
+        or len(raw_entries) > 20
+        or any(len(entry) > MAX_FORWARDED_ENTRY_LENGTH for entry in raw_entries)
+    ):
         return None, True
     entries = raw_entries
 
@@ -628,6 +638,7 @@ class SlidingWindowRateLimiter:
     window_seconds: int
     successful_requests: int
     failed_requests: int
+    max_tracked_actors: int = 100_000
     _events: Dict[Tuple[str, str], Deque[Tuple[int, int]]] = field(
         default_factory=lambda: defaultdict(deque)
     )
@@ -641,11 +652,34 @@ class SlidingWindowRateLimiter:
             window_seconds=config.window_seconds,
             successful_requests=config.successful_requests,
             failed_requests=config.failed_requests,
+            max_tracked_actors=config.max_tracked_actors,
         )
 
     def _prune_bucket(self, bucket: Deque[Tuple[int, int]], cutoff: int) -> None:
         while bucket and bucket[0][0] <= cutoff:
             bucket.popleft()
+
+    def _enforce_actor_cap(self, incoming_key: Tuple[str, str]) -> None:
+        """Bound how many actor buckets the limiter tracks.
+
+        Actor identity is resolved client IP, which a trusted proxy derives
+        from client-claimable headers (X-Forwarded-For). Without a bound, a
+        flood of invented identities allocates an unbounded number of buckets.
+        Evicting oldest-inserted buckets fails open for those actors - they
+        simply lose their throttle history - because an exhausted rate limiter
+        must never become a memory-exhaustion primitive against this process.
+        """
+        if self._events.get(incoming_key):
+            return
+
+        # Plain dict iteration order is insertion order, so next(iter(...))
+        # yields the least recently created remaining bucket. Amortized O(1):
+        # each admitted actor evicts at most one predecessor.
+        while len(self._events) >= self.max_tracked_actors:
+            oldest_key = next(iter(self._events), None)
+            if oldest_key is None or oldest_key == incoming_key:
+                break
+            self._events.pop(oldest_key, None)
 
     def _prune_all_buckets(self, cutoff: int, now: int) -> None:
         if self._last_global_prune and now - self._last_global_prune < self.window_seconds:
@@ -674,6 +708,7 @@ class SlidingWindowRateLimiter:
         bucket_key = (outcome, actor)
         with self._lock:
             self._prune_all_buckets(cutoff, timestamp)
+            self._enforce_actor_cap(bucket_key)
             bucket = self._events[bucket_key]
             self._prune_bucket(bucket, cutoff)
             if len(bucket) >= limit:
