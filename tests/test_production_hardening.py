@@ -417,6 +417,42 @@ class TestHealthCheckDependencies:
         assert running_chains == 1
         assert len(calls) == 1
 
+    def test_cancelled_readiness_request_keeps_shared_verification(
+        self, test_settings, monkeypatch
+    ):
+        """Cancelling one poller must not start a second verification chain."""
+        test_settings["firewalld"] = {"enabled": True}
+        app.dependency_overrides[get_settings] = lambda: test_settings
+        integration = Mock()
+        integration.is_enabled.return_value = True
+        started = threading.Event()
+        release = threading.Event()
+
+        def verify():
+            started.set()
+            release.wait(timeout=5)
+            return True
+
+        integration.verify_protection.side_effect = verify
+        monkeypatch.setattr("src.main.firewalld.get_firewalld_integration", lambda: integration)
+
+        async def cancel_then_retry():
+            first = asyncio.create_task(_full_readiness_check(test_settings))
+            assert await asyncio.to_thread(started.wait, 5)
+
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+
+            second = asyncio.create_task(_full_readiness_check(test_settings))
+            release.set()
+            return await second
+
+        result = asyncio.run(cancel_then_retry())
+
+        assert result is None
+        assert integration.verify_protection.call_count == 1
+
 
 class TestConfigurationValidation:
     """Test configuration loading validation."""

@@ -322,6 +322,7 @@ still performs zone setup, whitelist restoration, and full verification before
 serving requests. On `/ready`, that protection verification (a blocking chain of
 `firewall-cmd` calls) is cached for about 10 seconds and shared by concurrent
 pollers, so polling frequently does not multiply `firewall-cmd` invocations;
+canceling one poller does not cancel the shared verification task;
 startup verification always runs uncached. Consider monitoring:
 
 - Firewalld daemon status
