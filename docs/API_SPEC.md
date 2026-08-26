@@ -75,7 +75,8 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
     *   Returned when a non-empty request body does not use `application/json`.
 
 *   **`503 Service Unavailable`**
-    *   Returned when the serialized firewall mutation worker is unavailable or saturated.
+    *   Returned when the serialized firewall mutation worker is unavailable or saturated, with body `{"error": "Firewall mutation capacity is unavailable."}`.
+    *   Also returned when the whitelist is already at `security.max_whitelist_entries` and the request would insert a brand-new entry, with body `{"error": "Whitelist is at capacity. Try again later."}`. Knocker fails closed instead of reporting success for an entry it could not store; refreshing an entry that is already whitelisted is not affected.
 
 *   **`500 Internal Server Error`**
     *   Returned if whitelist persistence or firewall configuration fails.
@@ -157,7 +158,7 @@ serving requests.
     - **`always_allowed_ips`** (array of strings, optional): A list of IPs or CIDR ranges that are always permitted by the `/verify` endpoint, bypassing the dynamic whitelist. It is empty by default; do not add a reverse-proxy network unless all clients behind it should be permanently allowed.
     - **`excluded_paths`** (array of strings, optional): Global exclusions are discouraged because they affect every host. Leave it empty and use host-scoped exclusions where needed.
     - **`excluded_paths_by_host`** (mapping, optional): Host-specific excluded path prefixes, evaluated only for trusted forwarded host metadata. Omit it or use `{}` when no host-scoped exclusions are configured.
-    - **`max_whitelist_entries`** (integer, optional): Maximum retained whitelist entries. Defaults to `10000`.
+    - **`max_whitelist_entries`** (integer, optional): Maximum retained whitelist entries. Defaults to `10000`. When the limit is reached, knocks that would insert a new entry are rejected with `503`; entries already in the whitelist can still be refreshed.
     - **`knock_rate_limit`** (object, optional): Sliding-window rate limits with `window_seconds`, `successful_requests`, and `failed_requests`.
 - **`cors`** (object, optional): CORS settings for the `/knock` endpoint.
     - **`allowed_origin`** (string, optional): The allowed origin for CORS requests. Defaults to "*" (any origin). Set to your web app's origin (e.g., "https://your-web-app.com") for security.

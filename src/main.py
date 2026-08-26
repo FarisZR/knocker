@@ -344,7 +344,12 @@ async def knock_options(settings: SettingsLike = Depends(get_settings)):
         413: {"model": ErrorResponse, "description": "Request body exceeds 4096 bytes"},
         415: {"model": ErrorResponse, "description": "Request body is not JSON"},
         429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
-        503: {"model": ErrorResponse, "description": "Firewall mutation capacity is unavailable"},
+        503: {
+            "model": ErrorResponse,
+            "description": (
+                "Whitelist is at capacity or firewall mutation capacity is unavailable"
+            ),
+        },
         500: {
             "model": ErrorResponse,
             "description": "Internal server error - failed to persist whitelist or create firewall rules",
@@ -469,6 +474,16 @@ async def knock(
             allowed_origin,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Firewall mutation capacity is unavailable.",
+        )
+    except core.WhitelistCapacityExceededError as exc:
+        core.release_knock_attempt(settings, rate_limit_actor, "success", success_reservation)
+        logging.warning("Whitelist capacity rejected %s: %s", ip_to_whitelist, exc)
+        return _knock_failure(
+            settings,
+            rate_limit_actor,
+            allowed_origin,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Whitelist is at capacity. Try again later.",
         )
     except Exception:
         core.release_knock_attempt(settings, rate_limit_actor, "success", success_reservation)

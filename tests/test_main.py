@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 from typing import Any, cast
 from fastapi import status
 from fastapi.testclient import TestClient
@@ -324,6 +325,102 @@ def test_knock_post_cors_header():
     )
     assert response.status_code == 200
     assert response.headers["Access-Control-Allow-Origin"] == "*"
+
+
+# --- Test /knock Whitelist Capacity ---
+
+
+def test_knock_at_capacity_rejects_new_entry(monkeypatch, mock_settings):
+    """A knock for a new entry at capacity returns 503 instead of a phantom grant."""
+    import time
+    from unittest.mock import Mock
+
+    from src import core
+
+    mock_settings["security"]["max_whitelist_entries"] = 2
+    now = int(time.time())
+    long_expiry = now + 3600
+    core._write_whitelist_file(
+        Path(mock_settings["whitelist"]["storage_path"]),
+        {"1.1.1.1": long_expiry, "2.2.2.2": long_expiry},
+    )
+
+    integration = Mock()
+    integration.is_enabled.return_value = True
+    integration.add_whitelist_rule.return_value = True
+    monkeypatch.setattr("src.firewalld.get_firewalld_integration", lambda: integration)
+
+    response = client.post(
+        "/knock", headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "3.3.3.3"}
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"error": "Whitelist is at capacity. Try again later."}
+    assert response.headers["Access-Control-Allow-Origin"] == "*"
+
+    # The grant was never persisted.
+    snapshot = core.ensure_runtime_state(mock_settings).whitelist.active_snapshot()
+    assert snapshot == {"1.1.1.1": long_expiry, "2.2.2.2": long_expiry}
+
+    # The pre-installed firewalld ACCEPT rule was rolled back.
+    added_entry, added_expiry = integration.add_whitelist_rule.call_args.args
+    assert added_entry == "3.3.3.3"
+    assert now < added_expiry
+    integration.remove_whitelist_rule.assert_called_once_with("3.3.3.3")
+
+
+def test_knock_at_capacity_refreshes_existing_entry(mock_settings):
+    """Re-knocking an IP that is already whitelisted still succeeds at capacity."""
+    import time
+
+    from src import core
+
+    mock_settings["security"]["max_whitelist_entries"] = 2
+    long_expiry = int(time.time()) + 100000
+    core._write_whitelist_file(
+        Path(mock_settings["whitelist"]["storage_path"]),
+        {"4.4.4.4": long_expiry, "5.5.5.5": long_expiry},
+    )
+
+    response = client.post(
+        "/knock",
+        headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "4.4.4.4"},
+        json={"ttl": 600},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["whitelisted_entry"] == "4.4.4.4"
+
+    snapshot = core.ensure_runtime_state(mock_settings).whitelist.active_snapshot()
+    assert len(snapshot) == 2
+    assert snapshot["4.4.4.4"] == data["expires_at"]
+    assert snapshot["4.4.4.4"] < long_expiry
+
+
+def test_knock_capacity_failure_counts_toward_failure_limit(mock_settings):
+    """Capacity rejections feed the same failure limiter as other knock failures."""
+    import time
+
+    from src import core
+
+    mock_settings["security"]["max_whitelist_entries"] = 1
+    mock_settings["security"]["knock_rate_limit"] = {
+        "window_seconds": 60,
+        "successful_requests": 20,
+        "failed_requests": 1,
+    }
+    core._write_whitelist_file(
+        Path(mock_settings["whitelist"]["storage_path"]), {"6.6.6.6": int(time.time()) + 3600}
+    )
+
+    headers = {"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "7.7.7.7"}
+    first = client.post("/knock", headers=headers)
+    second = client.post("/knock", headers=headers)
+
+    assert first.status_code == 503
+    assert second.status_code == 429
+    assert second.json() == {"error": "Too many knock attempts."}
 
 
 # --- Test /verify Endpoint ---
