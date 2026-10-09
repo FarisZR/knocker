@@ -1,76 +1,29 @@
-# knocker configuration with firewalld integration enabled for testing
-
+# Test-only keys, usable only on the isolated internal Docker network.
 server:
-  trusted_proxies:
-    # Trust the default Docker IPv4 and IPv6 subnets.
-    # Adjust these to match your specific Docker network configuration if you've customized it.
-    - "172.29.238.0/24"
-    - "fd00:dead:c0de::/64"
-
+  trusted_proxies: []  # Test the actual peer, including spoofed forwarded headers.
 logging:
   level: DEBUG
-
-cors:
-  allowed_origin: "*"  # SECURITY: Set to your web app's origin (e.g., "https://your-web-app.com") in production instead of "*"
-
-security:
-    # These IPs/CIDRs are always allowed to pass through the /verify endpoint
-    # without needing to be dynamically whitelisted.
-    # Proxy networks are not permanent allowlists.
-  always_allowed_ips: []
-  excluded_paths:
-    # Request paths that start with any of these values will bypass
-    # the IP whitelist check entirely.
-    # Example:
-    # - "/api/v1/status"
-    # - "/metrics"
-    - "/public"
-  # Maximum number of entries in the whitelist (default: 10000)
-  max_whitelist_entries: 10000
-
 whitelist:
-  # The path where the whitelist file will be stored.
-  # This path must stay under /data, /tmp, or the process working directory.
-  # The docker-compose.yml file will mount a volume to this location.
-  storage_path: "/data/whitelist.json"
-
-# Firewalld integration for advanced firewall control
+  storage_path: /data/whitelist.json
 firewalld:
-  enabled: true  # Enable for testing
-  zone_name: "knocker"  # Name of the firewalld zone to create
-  zone_priority: -100  # Zone priority (negative numbers = higher priority)
-  default_action: "drop"  # Default action for blocked traffic: "drop" or "reject"
+  enabled: true
+  zone_name: knocker
+  zone_priority: -100
+  # Allow the knock API and unmonitored control port; protected ports have DROP rules.
+  zone_target: ACCEPT
+  default_action: drop
   monitored_ports:
-    # Ports that will be protected by knocker firewall rules
-    # Only whitelisted IPs will be able to access these ports
-    - port: 80
-      protocol: tcp
-    - port: 443
-      protocol: tcp
-    - port: 22
-      protocol: tcp
+    - {port: 9000, protocol: tcp}
+    - {port: 9001, protocol: udp}
   monitored_ips:
-    # IP ranges that the firewalld zone will apply to
-    # MUST include network mask (e.g., /32 for single IPv4 host, /128 for single IPv6 host)
-    - "192.168.178.77/32"  # Single host with proper CIDR notation
-    # - "::/0"
-
+    - 0.0.0.0/0
+    - ::/0
 api_keys:
-  - name: "admin-key-for-remote-whitelisting"
-    key: "dev-only-admin-9c2f4a6d0d4b8f17e6a1c5b9d3f7a2e8"
-    max_ttl: 3600 # Whitelist IPs for a maximum of 1 hour (in seconds)
-    allow_remote_whitelist: true # This key CAN whitelist other IPs/CIDRs
-
-  - name: "personal-phone"
-    key: "dev-only-phone-4b7e1a9d2c6f8e3a5d0b7c1f9a4e6d2b"
-    max_ttl: 14400 # Whitelist IPs for a maximum of 4 hours
-    allow_remote_whitelist: false # This key can ONLY whitelist its own IP
-
-  - name: "guest-access"
-    key: "dev-only-guest-8e1d4c7a2b9f5d3e6c0a4b8f1d7e2c9a"
-    max_ttl: 600 # Whitelist IPs for a maximum of 10 minutes
+  - name: admin
+    key: dev-only-admin-9c2f4a6d0d4b8f17e6a1c5b9d3f7a2e8
+    max_ttl: 3600
+    allow_remote_whitelist: true
+  - name: personal
+    key: dev-only-phone-4b7e1a9d2c6f8e3a5d0b7c1f9a4e6d2b
+    max_ttl: 3600
     allow_remote_whitelist: false
-
-documentation:
-  enabled: true  # Set to false to disable OpenAPI generation and docs endpoints
-  openapi_output_path: "openapi.json"  # Path where OpenAPI schema will be saved on startup

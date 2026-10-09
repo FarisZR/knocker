@@ -22,7 +22,7 @@ This is ideal for homelab environments where you want to expose services to the 
 
 This project uses GitHub Actions for continuous integration and deployment.
 
-*   **CI (`tests.yml`)**: On every pull request to `main`, this workflow runs the full Python test suite and then performs a live integration test with Docker Compose to ensure the Caddy and Knocker services work together correctly.
+*   **CI (`tests.yml`)**: Every pull request runs Python checks and two independent Docker Compose integration jobs: Caddy authentication and real FirewallD packet filtering over IPv4/IPv6 and TCP/UDP. See [TESTING.md](TESTING.md).
 *   **Docker Publish (`docker-publish.yml`)**: Validates pull requests with read-only permissions and publishes signed multi-arch Docker images only from non-PR events. The Dockerfile copies `uv` from an official digest-pinned image.
     - On push to `main` → `ghcr.io/fariszr/knocker:main` (rolling development)
     - On version tags (v1.2.3) → Multiple tags including `:latest`, `:v1.2.3`, `:1.2.3`, `:1.2`, `:1` (stable releases)
@@ -234,9 +234,11 @@ To run the tests locally:
     ```
 
 ### Integration Tests
-There's a dev environment under [dev](./dev/), with bash scripts for integrations tests with caddy and a separate one with firewalld.
-The standard test stacks are `dev/docker-compose.yml` and `dev/docker-compose.ci.yml`; both expose Caddy on `http://localhost:18080` and `https://localhost:18443`.
-The CI runs the caddy tests, but firewalld needs a privileged runner, which is why it needs to be run locally and isn't a part of the CI.
+Run `bash dev/test.sh` for Python checks and both isolated integration suites.
+`dev/docker-compose.yml` runs container-local FirewallD and D-Bus;
+`dev/docker-compose.ci.yml` runs Caddy authentication tests. Neither publishes
+host ports or mounts host D-Bus. Both run in CI on every pull request.
+See [TESTING.md](TESTING.md) for individual commands and requirements.
 
 ## Docs
 

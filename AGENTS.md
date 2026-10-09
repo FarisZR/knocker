@@ -9,7 +9,7 @@ This file provides guidance to agents when working with code in this repository.
 - **Astral Toolchain**: This project uses `uv` for environment and dependency management, `ruff` for linting and formatting, and `ty` for type checking.
 - **Whitelist Persistence**: The IP whitelist is stored in a simple JSON file (`/data/whitelist.json` inside the container), not a database. The path is configured in `knocker.yaml`.
 - **API Key Permissions**: API keys have two important properties: `allow_remote_whitelist` (boolean) and `max_ttl` (integer). A key with `allow_remote_whitelist: false` can only whitelist its own source IP. `max_ttl` defines the maximum duration in seconds an IP can be whitelisted for with that key.
-- **Development/Test Stacks**: Use `dev/docker-compose.yml` for the firewalld/local stack and `dev/docker-compose.ci.yml` for the CI/unprivileged stack. Both are test stacks and expose Caddy on host ports `18080` and `18443`.
+- **Development/Test Stacks**: Use `dev/docker-compose.yml` for isolated FirewallD tests and `dev/docker-compose.ci.yml` for Caddy tests. Neither publishes host ports or mounts host D-Bus. Run `bash dev/test.sh` for all checks and both stacks; the integration runner creates and cleans up a unique Compose project for each run.
 
 ## Workflow
 

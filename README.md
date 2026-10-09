@@ -295,9 +295,22 @@ To run the tests locally:
     ```
 
 ### Integration Tests
-There's a dev environment under [dev](./dev/), with bash scripts for integrations tests with caddy and a separate one with firewalld.
-The standard test stacks are `dev/docker-compose.yml` and `dev/docker-compose.ci.yml`; both expose Caddy on `http://localhost:18080` and `https://localhost:18443`.
-The CI runs the caddy tests, but firewalld needs a privileged runner, which is why it needs to be run locally and isn't a part of the CI.
+Run all checks and both live integration suites with:
+
+```bash
+bash dev/test.sh
+```
+
+Every pull request runs the Python checks, Caddy suite, and real FirewallD suite.
+The test stacks require Linux Docker with Compose v2 and IPv6 support, not a host
+FirewallD installation. FirewallD and D-Bus run inside a disposable container with
+`NET_ADMIN`; separate clients verify actual TCP/UDP traffic over IPv4 and IPv6.
+Neither stack mounts host D-Bus, uses host networking, or publishes host ports.
+
+Run either suite independently with `bash dev/local_integration_tests.sh` or
+`bash dev/firewalld_integration_test.sh`. Each command builds its image, waits for
+readiness, reports failures, and removes its containers, network, volume, and image
+tag. See [the testing guide](docs/TESTING.md) for the isolation boundary and coverage.
 
 ## Docs
 
