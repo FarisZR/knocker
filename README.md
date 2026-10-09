@@ -295,9 +295,29 @@ To run the tests locally:
     ```
 
 ### Integration Tests
-There's a dev environment under [dev](./dev/), with bash scripts for integrations tests with caddy and a separate one with firewalld.
-The standard test stacks are `dev/docker-compose.yml` and `dev/docker-compose.ci.yml`; both expose Caddy on `http://localhost:18080` and `https://localhost:18443`.
-The CI runs the caddy tests, but firewalld needs a privileged runner, which is why it needs to be run locally and isn't a part of the CI.
+Run the complete Linux suite, matching the required GitHub Actions checks, with:
+
+```bash
+bash dev/test.sh linux
+```
+
+Every pull request runs Python checks, Caddy, isolated FirewallD packet tests,
+and the existing Linux host FirewallD Bash suite. Each job runs in parallel on its
+own runner; the required `test` check needs every suite to pass.
+
+Use `bash dev/test.sh` for the portable subset without host FirewallD checks.
+The isolated stacks require Linux Docker with Compose v2 and IPv6 support.
+FirewallD and D-Bus run inside a disposable container with
+`NET_ADMIN`; separate clients verify actual TCP/UDP traffic over IPv4 and IPv6.
+Neither isolated stack mounts host D-Bus, uses host networking, or publishes host ports.
+
+Run either CI suite with `bash dev/integration_tests.sh caddy` or
+`bash dev/integration_tests.sh firewalld`. The host checks run the same
+`bash dev/firewalld_integration_test.sh` used on a dedicated Linux development host
+with FirewallD 2.0+ and root or passwordless sudo. The isolated
+runner builds its image, waits for readiness, reports failures, and removes its
+containers, network, volume, and image tag. See [the testing guide](docs/TESTING.md)
+for the isolation boundary and coverage.
 
 ## Docs
 
