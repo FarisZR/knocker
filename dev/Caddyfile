@@ -14,7 +14,7 @@
 			}
 			reverse_proxy knocker:8000 {
 				# Trust the proxy network to preserve the original X-Forwarded-For
-				trusted_proxies 172.29.238.0/24 fd00:dead:c0de::/64
+				trusted_proxies 172.16.0.0/12 fc00::/7
 			}
 		}
 
@@ -30,7 +30,7 @@
 			# Caddy will copy the original request's method and headers.
 			forward_auth knocker:8000 {
 				uri /verify?
-				trusted_proxies 172.29.238.0/24 fd00:dead:c0de::/64
+				trusted_proxies 172.16.0.0/12 fc00::/7
 			}
 
 			# If authentication is successful (knocker returns 2xx),
