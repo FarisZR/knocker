@@ -121,3 +121,4 @@ openapi.json
 test_openapi.json
 
 # Docker
+dev/.host-firewalld.*
