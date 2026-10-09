@@ -92,7 +92,8 @@ knock() {
     expected="$1"; ip="$2"; ttl="$3"; key="${4:-$admin_key}"
     status=$(curl --noproxy '*' --silent --show-error --max-time 15 \
         --output "$response_file" --write-out '%{http_code}' \
-        -H "X-Api-Key: $key" -H 'Content-Type: application/json' \
+        -H "X-Api-Key: $key" -H 'X-Forwarded-For: 192.0.2.254' \
+        -H 'Content-Type: application/json' \
         -d "{\"ip_address\":\"$ip\",\"ttl\":$ttl}" http://127.0.0.1:18080/knock)
     [ "$status" = "$expected" ] || { cat "$response_file" >&2; return 1; }
     if [ "$expected" = 200 ]; then

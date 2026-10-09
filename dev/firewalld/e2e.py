@@ -144,7 +144,8 @@ class FirewallEndToEnd(unittest.TestCase):
 
     def expires(self, family, service="client", deadline=None):
         """Wait for daemon expiry, then prove that fresh packets are blocked."""
-        deadline = deadline or time.monotonic() + 20
+        if deadline is None:
+            deadline = time.monotonic() + 20
         # Inspect the real daemon, then verify its expiry actually blocks packets.
         ip = self.addresses[service][family]
         while ip in firewall("--zone=knocker", "--list-rich-rules"):

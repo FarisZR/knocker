@@ -9,7 +9,7 @@ integration suites. GitHub Actions runs Python checks and both integration modes
 in parallel on every PR. There is no emulation or VM boot step in the workflow.
 
 Requirements: uv, Python 3.13+, Linux Docker 27+ with a kernel supporting
-namespaced nftables and IPv6, and Docker Compose v2. Docker Desktop provides a
+namespaced nftables and IPv6, and Docker Compose v2.20.2+. Docker Desktop provides a
 Linux daemon too. The isolated suites do not require host FirewallD or systemd.
 Unsupported firewall/kernel capabilities fail the suite rather than skip it.
 
@@ -61,6 +61,8 @@ The suite checks the actual host daemon, default zone target/priority/sources,
 every IPv4/IPv6 TCP/UDP rule, expiry and shorter TTL replacement, recovery of all
 eight timed rules with unchanged persistence, rejected keys/remote permissions,
 and readiness when protection is missing.
+As in the original host test, requests through the development Caddy proxy use
+a simulated documentation address; real peer/packet checks live in the CI suite.
 The host test client disables its container AppArmor profile to reach the host
 system bus; the isolated CI stack retains Docker's default confinement.
 
@@ -79,6 +81,7 @@ The required `test` check aggregates Python and both isolated integration jobs.
 Any failed, cancelled or skipped required suite fails the gate. Each integration
 job has an eight-minute limit, Python has five minutes and the gate has one minute.
 Older runs of the same PR are cancelled when a new commit arrives.
+Manual runs use a separate concurrency group so a push cannot interrupt them.
 
 GitHub Actions builds and loads the production image from the PR checkout with
 BuildKit caching. Each mode has its own cache scope. No host CA bundle, custom
