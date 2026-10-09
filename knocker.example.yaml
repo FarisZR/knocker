@@ -30,6 +30,11 @@ security:
     window_seconds: 60
     successful_requests: 20
     failed_requests: 30
+    # Maximum number of distinct client IPs tracked at once. The actor identity
+    # is client-claimable via X-Forwarded-For behind a trusted proxy, so this
+    # cap bounds the rate limiter's memory; least-recently created actors are
+    # dropped (losing their throttle history) when the cap is hit.
+    max_tracked_actors: 100000
 
 whitelist:
   # The path where the whitelist file will be stored.

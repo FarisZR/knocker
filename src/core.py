@@ -39,6 +39,11 @@ except ImportError:  # pragma: no cover - fallback for direct module execution
 IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
 
+# Forwarded entries become per-actor identities, so they are length-bounded
+# before they can reach rate-limiter state or logs. 64 characters covers every
+# real IPv6 literal (including a scope ID) with wide margin.
+MAX_FORWARDED_ENTRY_LENGTH = 64
+
 _runtime_state_lock = threading.Lock()
 _RUNTIME_STATE_KEY = "_knocker_runtime_state"
 
@@ -570,7 +575,12 @@ def resolve_client_ip(
         return None, True
 
     raw_entries = [entry.strip() for entry in forwarded_for.split(",")]
-    if not raw_entries or any(not entry for entry in raw_entries) or len(raw_entries) > 20:
+    if (
+        not raw_entries
+        or any(not entry for entry in raw_entries)
+        or len(raw_entries) > 20
+        or any(len(entry) > MAX_FORWARDED_ENTRY_LENGTH for entry in raw_entries)
+    ):
         return None, True
     entries = raw_entries
 
@@ -659,9 +669,11 @@ class SlidingWindowRateLimiter:
     window_seconds: int
     successful_requests: int
     failed_requests: int
+    max_tracked_actors: int = 100_000
     _events: Dict[Tuple[str, str], Deque[Tuple[int, int]]] = field(
         default_factory=lambda: defaultdict(deque)
     )
+    _actor_order: Dict[str, None] = field(default_factory=dict)
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _token_counter: int = field(default=0, init=False)
     _last_global_prune: int = field(default=0, init=False)
@@ -672,11 +684,45 @@ class SlidingWindowRateLimiter:
             window_seconds=config.window_seconds,
             successful_requests=config.successful_requests,
             failed_requests=config.failed_requests,
+            max_tracked_actors=config.max_tracked_actors,
         )
 
     def _prune_bucket(self, bucket: Deque[Tuple[int, int]], cutoff: int) -> None:
         while bucket and bucket[0][0] <= cutoff:
             bucket.popleft()
+
+    def _remove_bucket(self, bucket_key: Tuple[str, str]) -> None:
+        self._events.pop(bucket_key, None)
+        actor = bucket_key[1]
+        if not any(key[1] == actor for key in self._events):
+            self._actor_order.pop(actor, None)
+
+    def _enforce_actor_cap(self, incoming_actor: str) -> None:
+        """Bound how many distinct actors the limiter tracks.
+
+        Actor identity is resolved client IP, which a trusted proxy derives
+        from client-claimable headers (X-Forwarded-For). Without a bound, a
+        flood of invented identities allocates an unbounded number of buckets.
+        Evicting oldest-inserted actors fails open for those actors - they
+        simply lose all their throttle history - because an exhausted rate limiter
+        must never become a memory-exhaustion primitive against this process.
+        """
+        if incoming_actor in self._actor_order:
+            return
+
+        # Plain dict iteration order is insertion order, so next(iter(...))
+        # yields the least recently seen remaining actor. Remove all outcome
+        # buckets for that actor before admitting the incoming actor.
+        while len(self._actor_order) >= self.max_tracked_actors:
+            oldest_actor = next(iter(self._actor_order), None)
+            if oldest_actor is None or oldest_actor == incoming_actor:
+                break
+            self._actor_order.pop(oldest_actor, None)
+            for bucket_key in tuple(self._events):
+                if bucket_key[1] == oldest_actor:
+                    self._events.pop(bucket_key, None)
+
+        self._actor_order[incoming_actor] = None
 
     def _prune_all_buckets(self, cutoff: int, now: int) -> None:
         if self._last_global_prune and now - self._last_global_prune < self.window_seconds:
@@ -689,7 +735,7 @@ class SlidingWindowRateLimiter:
                 empty_keys.append(bucket_key)
 
         for bucket_key in empty_keys:
-            self._events.pop(bucket_key, None)
+            self._remove_bucket(bucket_key)
 
         self._last_global_prune = now
 
@@ -705,11 +751,12 @@ class SlidingWindowRateLimiter:
         bucket_key = (outcome, actor)
         with self._lock:
             self._prune_all_buckets(cutoff, timestamp)
+            self._enforce_actor_cap(actor)
             bucket = self._events[bucket_key]
             self._prune_bucket(bucket, cutoff)
             if len(bucket) >= limit:
                 if not bucket:
-                    self._events.pop(bucket_key, None)
+                    self._remove_bucket(bucket_key)
                 return None
             self._token_counter += 1
             reservation = (timestamp, self._token_counter)
@@ -730,7 +777,7 @@ class SlidingWindowRateLimiter:
             except ValueError:
                 return
             if not bucket:
-                self._events.pop(bucket_key, None)
+                self._remove_bucket(bucket_key)
 
     def allow(self, actor: str, outcome: str, now: Optional[int] = None) -> bool:
         reservation = self.reserve(actor, outcome, now)
@@ -751,7 +798,7 @@ class SlidingWindowRateLimiter:
             bucket = self._events[bucket_key]
             self._prune_bucket(bucket, cutoff)
             if not bucket:
-                self._events.pop(bucket_key, None)
+                self._remove_bucket(bucket_key)
             return len(bucket) < limit
 
 

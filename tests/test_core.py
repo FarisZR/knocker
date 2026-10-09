@@ -193,6 +193,82 @@ def test_rate_limiter_prunes_stale_actor_buckets():
     assert ("success", "actor-a") not in limiter._events
 
 
+def test_rate_limiter_evicts_oldest_bucket_when_actor_cap_is_reached():
+    """A new actor stays servable once the tracked-actor bound is exhausted."""
+    limiter = core.SlidingWindowRateLimiter(
+        window_seconds=60, successful_requests=1, failed_requests=1, max_tracked_actors=2
+    )
+
+    assert limiter.reserve("actor-a", "success", now=10) is not None
+    assert limiter.reserve("actor-b", "success", now=10) is not None
+
+    assert limiter.reserve("actor-c", "success", now=10) is not None
+
+    assert len(limiter._events) == 2
+    assert ("success", "actor-a") not in limiter._events
+    assert ("success", "actor-b") in limiter._events
+    assert ("success", "actor-c") in limiter._events
+
+
+def test_rate_limiter_actor_cap_keeps_existing_actor_tracking():
+    """An exhausted actor neither evicts itself nor frees capacity on retry."""
+    limiter = core.SlidingWindowRateLimiter(
+        window_seconds=60, successful_requests=1, failed_requests=1, max_tracked_actors=1
+    )
+
+    assert limiter.reserve("actor-a", "success", now=10) is not None
+    assert limiter.reserve("actor-a", "success", now=10) is None
+
+    assert list(limiter._events) == [("success", "actor-a")]
+
+
+def test_rate_limiter_actor_cap_tracks_distinct_actors_and_all_outcomes():
+    limiter = core.SlidingWindowRateLimiter(
+        window_seconds=60, successful_requests=1, failed_requests=1, max_tracked_actors=1
+    )
+
+    assert limiter.reserve("actor-a", "success", now=10) is not None
+    assert limiter.reserve("actor-a", "failure", now=10) is not None
+    assert set(limiter._events) == {("success", "actor-a"), ("failure", "actor-a")}
+
+    assert limiter.reserve("actor-a", "success", now=10) is None
+    assert limiter.reserve("actor-a", "failure", now=10) is None
+
+    assert limiter.reserve("actor-b", "success", now=10) is not None
+    assert ("success", "actor-a") not in limiter._events
+    assert ("failure", "actor-a") not in limiter._events
+    assert ("success", "actor-b") in limiter._events
+
+
+def test_rate_limiter_reads_max_tracked_actors_from_config():
+    settings = config.validate_settings(
+        {
+            "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+            "security": {"knock_rate_limit": {"max_tracked_actors": 5}},
+        }
+    )
+    limiter = core.SlidingWindowRateLimiter.from_config(settings.security.knock_rate_limit)
+
+    assert limiter.max_tracked_actors == 5
+
+
+def test_knock_rate_limit_default_max_tracked_actors():
+    settings = config.validate_settings({"api_keys": [{"key": "test-key", "max_ttl": 3600}]})
+
+    assert settings.security.knock_rate_limit.max_tracked_actors == 100000
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_knock_rate_limit_max_tracked_actors_must_be_positive(value):
+    with pytest.raises(ValueError, match="max_tracked_actors must be positive"):
+        config.validate_settings(
+            {
+                "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+                "security": {"knock_rate_limit": {"max_tracked_actors": value}},
+            }
+        )
+
+
 def test_whitelist_store_mutations_refresh_in_memory_index(tmp_path):
     whitelist_path = tmp_path / "whitelist.json"
     store = core.WhitelistStore(storage_path=whitelist_path, max_entries=10)
@@ -286,12 +362,24 @@ def test_ensure_runtime_state_is_initialized_once(tmp_path):
         "not-an-ip",
         ",1.2.3.4",
         ",".join(["1.2.3.4"] * 21),
+        # A 750-character IPv6 scope ID parses fine, so the identity has to be
+        # bounded by length before it reaches actor state.
+        f"fe80::1%{'a' * 750}",
     ],
 )
 def test_resolve_client_ip_rejects_malformed_forwarded_chain_from_trusted_proxy(forwarded_for):
     trusted_proxies = core.ParsedNetworkSet.from_entries(["127.0.0.1"], "trusted_proxies")
 
     assert core.resolve_client_ip("127.0.0.1", forwarded_for, trusted_proxies) == (None, True)
+
+
+def test_resolve_client_ip_allows_realistic_scoped_ipv6_entry():
+    trusted_proxies = core.ParsedNetworkSet.from_entries(["127.0.0.1"], "trusted_proxies")
+
+    assert core.resolve_client_ip("127.0.0.1", "fe80::1%eth0", trusted_proxies) == (
+        "fe80::1%eth0",
+        True,
+    )
 
 
 def test_resolve_client_ip_rejects_chain_with_only_trusted_hops():
