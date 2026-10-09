@@ -49,8 +49,8 @@ Knocker is a dynamic IP whitelisting service that integrates with reverse proxie
 
 ### Integration Tests
 
-- **Development/Test Stacks**: Use `dev/docker-compose.yml` for the firewalld/local stack and `dev/docker-compose.ci.yml` for the CI/unprivileged stack. Both are test stacks and expose Caddy on host ports `18080` and `18443`.
-- **CI workflow shows integration tests**: The `.github/workflows/ci.yml` file contains the `curl` commands that serve as the project's integration tests. This is the best place to understand the expected request/response flow.
+- **Development/Test Stacks**: `dev/docker-compose.yml` retains the host FirewallD/local stack. The isolated CI stacks are `dev/docker-compose.ci.yml` (Caddy) and `dev/docker-compose.firewalld-ci.yml` (FirewallD); these publish no host ports and mount no host D-Bus. All three stacks are required on every PR.
+- **CI workflow shows integration tests**: `.github/workflows/tests.yml` runs `dev/integration_tests.sh` for both isolated modes and the original `dev/firewalld_integration_test.sh` on a separate Linux runner. The required gate needs Python checks and all three integration suites to pass. Run `bash dev/test.sh linux` for full local parity or `bash dev/test.sh` for the portable subset. See `docs/TESTING.md` for commands and coverage.
 - **Integration tests are authoritative**: Integration tests (dev/firewalld_integration_test.sh and dev/docker-compose.yml) exercise real interactions with the system (firewalld, Caddy). Use them as the final verification step for changes that touch networking, firewall rules, or startup/restore logic.
 
 ## Firewalld Integration
