@@ -106,4 +106,7 @@ On environments with an HTTPS interception proxy, Compose mounts
 `CODEX_PROXY_CERT` as the optional BuildKit `proxy_ca` secret, falling back to the
 host CA bundle. The Dockerfile uses that certificate for curl and uv downloads
 with TLS verification enabled. The mount exists only during the build and is
-not stored in the image. Preserve Docker's configured proxy settings.
+not stored in the image. The runner stages a temporary copy under `dev/` so Bake
+can read it within its default filesystem permissions; Git and the Docker build
+context ignore that copy, and exit cleanup removes it. Preserve Docker's
+configured proxy settings.

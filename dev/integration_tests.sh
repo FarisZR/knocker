@@ -18,6 +18,7 @@ esac
 # Override any caller's project name so cleanup cannot remove a development stack.
 export COMPOSE_PROJECT_NAME="knocker-test-${mode}-$$-${RANDOM}"
 compose=(docker compose --project-name "$COMPOSE_PROJECT_NAME" -f "$compose_file")
+ca_file=""
 
 cleanup() {
     result=$?
@@ -36,11 +37,22 @@ cleanup() {
             [ "$result" -ne 0 ] || result=1
         fi
     fi
+    if [ -n "$ca_file" ]; then
+        rm -f -- "$ca_file"
+    fi
     exit "$result"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# Bake restricts file reads outside its working directory. Stage the CA bundle
+# under dev/ (excluded from Git and the build context), without granting access
+# to arbitrary host files. Compose sends it only as a BuildKit secret.
+ca_source="${CODEX_PROXY_CERT:-/etc/ssl/certs/ca-certificates.crt}"
+ca_file="$(mktemp "$PWD/.integration-ca.XXXXXX")"
+cp -- "$ca_source" "$ca_file"
+export CODEX_PROXY_CERT="$ca_file"
 
 "${compose[@]}" build knocker
 "${compose[@]}" up -d --wait --wait-timeout 180
