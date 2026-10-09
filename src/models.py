@@ -15,6 +15,7 @@ class KnockRequest(BaseModel):
     ip_address: Optional[str] = Field(
         None,
         strict=True,
+        max_length=100,
         description="IP address or CIDR range to whitelist. If not provided, the client's IP is used.",
         json_schema_extra={"example": "192.168.1.100"},
     )

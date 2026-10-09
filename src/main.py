@@ -1,19 +1,15 @@
 import asyncio
-import time
-import logging
 import json
+import logging
 import os
+import time
 from pathlib import Path
-from typing import Optional, Dict, Tuple
+from typing import Any, Optional, Tuple, cast, override
 from functools import lru_cache
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response, status, Depends
+from fastapi import APIRouter, Depends, FastAPI, Request, Response, status
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
-from fastapi.openapi.docs import (
-    get_redoc_html,
-    get_swagger_ui_html,
-    get_swagger_ui_oauth2_redirect_html,
-)
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
@@ -21,26 +17,29 @@ try:
     from . import core
     from . import config
     from . import firewalld
+    from .config import Settings, SettingsLike
     from .models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse
+    from .version import __version__
 except ImportError:  # pragma: no cover - fallback for direct module execution
     import core
     import config
     import firewalld
+    from config import Settings, SettingsLike
     from models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse
+    from version import __version__
 
 
-MAX_TTL = 315360000
+MAX_TTL = config.MAX_TTL
 
 
 @lru_cache()
-def get_settings() -> Dict:
+def get_settings() -> Settings:
     """
     Loads settings from the YAML file and caches the result.
     The path is relative to the project root where the app is run from.
     """
     settings = config.load_config()
     config.setup_logging(settings)
-    core.ensure_runtime_state(settings)
     return settings
 
 
@@ -52,13 +51,13 @@ async def lifespan(app: FastAPI):
     """
     logging.info("Knocker service starting up...")
 
-    settings = get_settings()
+    settings_provider = app.dependency_overrides.get(get_settings, get_settings)
+    settings = config.validate_settings(settings_provider())
     runtime_state = core.start_runtime_state(settings)
     runtime_state.whitelist.compact_expired()
     firewalld.initialize_mutation_executor(settings)
 
     try:
-        # Generate and persist OpenAPI schema
         await generate_and_persist_openapi(app, settings)
 
         # Initialize firewalld integration
@@ -93,130 +92,28 @@ async def lifespan(app: FastAPI):
         logging.info("Knocker service shutting down.")
 
 
-def _remove_documentation_routes(app: FastAPI) -> None:
-    """Remove existing documentation-related routes from the app router."""
-    doc_paths = {
-        getattr(app, "docs_url", None),
-        getattr(app, "redoc_url", None),
-        getattr(app, "openapi_url", None),
-        getattr(app, "swagger_ui_oauth2_redirect_url", None),
-    }
-    doc_paths.discard(None)
-    if not doc_paths:
-        return
-
-    router = app.router
-    router.routes = [
-        route for route in router.routes if getattr(route, "path", None) not in doc_paths
-    ]
-
-    routes_by_name = getattr(router, "routes_by_name", None)
-    if isinstance(routes_by_name, dict):
-        for name, route in list(routes_by_name.items()):
-            if getattr(route, "path", None) in doc_paths:
-                routes_by_name.pop(name, None)
-
-
-def _configure_documentation_routes(app: FastAPI, enabled: bool) -> None:
-    """Apply FastAPI documentation URL configuration."""
-    if enabled:
-        app.docs_url = "/docs"
-        app.redoc_url = "/redoc"
-        app.openapi_url = "/openapi.json"
-        app.swagger_ui_oauth2_redirect_url = f"{app.docs_url}/oauth2-redirect"
-
-        _remove_documentation_routes(app)
-
-        async def openapi_json(_: Request):
-            return JSONResponse(app.openapi())
-
-        async def swagger_ui_html(_: Request):
-            return get_swagger_ui_html(
-                openapi_url=app.openapi_url,
-                title=f"{app.title} - Swagger UI",
-            )
-
-        async def swagger_ui_redirect(_: Request):
-            return get_swagger_ui_oauth2_redirect_html()
-
-        async def redoc_html(_: Request):
-            return get_redoc_html(
-                openapi_url=app.openapi_url,
-                title=f"{app.title} - ReDoc",
-            )
-
-        app.add_route(app.openapi_url, openapi_json, include_in_schema=False)
-        app.add_route(app.docs_url, swagger_ui_html, include_in_schema=False)
-        app.add_route(
-            app.swagger_ui_oauth2_redirect_url,
-            swagger_ui_redirect,
-            include_in_schema=False,
-        )
-        app.add_route(app.redoc_url, redoc_html, include_in_schema=False)
-    else:
-        _remove_documentation_routes(app)
-        app.docs_url = None
-        app.redoc_url = None
-        app.openapi_url = None
-        app.swagger_ui_oauth2_redirect_url = None
-
-
-async def generate_and_persist_openapi(app: FastAPI, settings: Dict):
-    """Generate OpenAPI schema and persist it to disk."""
-    docs_config = settings.get("documentation") or {}
-    docs_enabled = bool(docs_config.get("enabled", False))
-    output_path_str = docs_config.get("openapi_output_path", "openapi.json")
-    output_path = Path(output_path_str)
-
-    _configure_documentation_routes(app, docs_enabled)
-
-    if not docs_enabled:
+async def generate_and_persist_openapi(app: FastAPI, settings: SettingsLike) -> None:
+    """Explicitly export the already-configured app schema when documentation is enabled."""
+    resolved = config.validate_settings(settings)
+    output_path = Path(resolved.documentation.openapi_output_path)
+    if not resolved.documentation.enabled:
         logging.info("OpenAPI documentation generation is disabled")
         try:
-            if output_path.exists():
-                output_path.unlink()
-                logging.info(
-                    f"OpenAPI schema removed because documentation is disabled: {output_path}"
-                )
-        except Exception as exc:
-            logging.warning(f"Failed to remove OpenAPI schema file at {output_path}: {exc}")
+            output_path.unlink(missing_ok=True)
+        except OSError as exc:
+            logging.warning("Failed to remove OpenAPI schema file at %s: %s", output_path, exc)
         return
 
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-    except Exception as exc:
-        logging.error(f"Failed to prepare directory for OpenAPI schema at {output_path}: {exc}")
-        return
-
-    app.openapi_schema = None
-    try:
-        openapi_schema = app.openapi()
-        components = openapi_schema.setdefault("components", {}).setdefault("schemas", {})
-        components.setdefault("KnockRequest", KnockRequest.model_json_schema())
-        openapi_schema["paths"]["/knock"]["post"]["requestBody"] = {
-            "required": False,
-            "content": {
-                "application/json": {"schema": {"$ref": "#/components/schemas/KnockRequest"}}
-            },
-        }
-        with output_path.open("w", encoding="utf-8") as f:
-            json.dump(openapi_schema, f, indent=2)
-        logging.info(f"OpenAPI schema generated and saved to {output_path}")
-    except Exception as exc:
-        logging.error(f"Failed to generate or persist OpenAPI schema: {exc}")
-        try:
-            if output_path.exists():
-                output_path.unlink()
-        except Exception:
-            pass
+        with output_path.open("w", encoding="utf-8") as handle:
+            json.dump(app.openapi(), handle, indent=2)
+        logging.info("OpenAPI schema generated and saved to %s", output_path)
+    except OSError as exc:
+        logging.error("Failed to generate or persist OpenAPI schema: %s", exc)
 
 
-# Configure FastAPI app with proper metadata
-# Documentation URLs will be configured dynamically during lifespan based on settings
-app_config = {
-    "lifespan": lifespan,
-    "title": "Knocker API",
-    "description": """
+APP_DESCRIPTION = """
 A dynamic IP whitelisting service that works with reverse proxy authorization.
 
 ## Features
@@ -233,28 +130,26 @@ A dynamic IP whitelisting service that works with reverse proxy authorization.
 1. Use the `/knock` endpoint to add IPs to the whitelist
 2. Reverse proxies can use `/verify` to check if an IP is authorized
 3. Monitor service health with the `/health` endpoint
-""",
-    "version": "1.0.0",
-    "openapi_tags": [
-        {"name": "Authentication", "description": "Endpoints for IP whitelisting and verification"},
-        {"name": "System", "description": "Health monitoring and system status"},
-    ],
-}
-app = FastAPI(**app_config)
+"""
+OPENAPI_TAGS = [
+    {"name": "Authentication", "description": "Endpoints for IP whitelisting and verification"},
+    {"name": "System", "description": "Health monitoring and system status"},
+]
+router = APIRouter()
 
 
 # Custom exception handler to maintain backward compatibility
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
+async def validation_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Convert Pydantic validation errors to 400 Bad Request for backward compatibility."""
-    settings_provider = app.dependency_overrides.get(get_settings, get_settings)
-    settings = settings_provider()
-    allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
+    validation_error = cast(RequestValidationError, exc)
+    settings_provider = request.app.dependency_overrides.get(get_settings, get_settings)
+    settings = config.validate_settings(settings_provider())
+    allowed_origin = settings.cors.allowed_origin
 
     # Extract a user-friendly error message
     error_msg = "Invalid request data."
-    if exc.errors():
-        first_error = exc.errors()[0]
+    if validation_error.errors():
+        first_error = validation_error.errors()[0]
         if first_error.get("type") == "value_error":
             error_msg = str(first_error.get("msg", "Invalid request data."))
         elif "ttl" in str(first_error.get("loc", [])):
@@ -271,7 +166,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # --- Dependency for getting the real client IP ---
 def _resolve_request_context(
-    request: Request, settings: dict
+    request: Request, settings: SettingsLike
 ) -> Tuple[Optional[str], bool, Optional[str], str]:
     """Resolve client IP and forwarded request metadata from trusted proxies only."""
     direct_ip = request.client.host if request.client else None
@@ -300,7 +195,7 @@ def _resolve_request_context(
     return client_ip, forwarded_headers_trusted, request_host, request_path
 
 
-def get_client_ip(request: Request, settings: Optional[dict] = None) -> Optional[str]:
+def get_client_ip(request: Request, settings: Optional[SettingsLike] = None) -> Optional[str]:
     """
     Returns the client's real IP address with trusted proxy validation.
     Only trusts X-Forwarded-For header if the request comes from a trusted proxy.
@@ -316,7 +211,7 @@ def get_client_ip(request: Request, settings: Optional[dict] = None) -> Optional
 
 
 def get_client_ip_dependency(
-    request: Request, settings: dict = Depends(get_settings)
+    request: Request, settings: SettingsLike = Depends(get_settings)
 ) -> Optional[str]:
     """Dependency wrapper for get_client_ip that includes settings."""
     return get_client_ip(request, settings)
@@ -324,7 +219,7 @@ def get_client_ip_dependency(
 
 def get_request_context_dependency(
     request: Request,
-    settings: dict = Depends(get_settings),
+    settings: SettingsLike = Depends(get_settings),
 ) -> Tuple[Optional[str], bool, Optional[str], str]:
     """Dependency wrapper for trusted proxy metadata resolution."""
     return _resolve_request_context(request, settings)
@@ -341,7 +236,7 @@ async def _read_knock_body(
     if content_length:
         try:
             if int(content_length) > MAX_KNOCK_BODY_BYTES:
-                return None, (status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Request body too large.")
+                return None, (status.HTTP_413_CONTENT_TOO_LARGE, "Request body too large.")
         except ValueError:
             # A malformed Content-Length is not trusted; the bounded stream below
             # remains the authoritative limit.
@@ -353,7 +248,7 @@ async def _read_knock_body(
         async for chunk in request.stream():
             total += len(chunk)
             if total > MAX_KNOCK_BODY_BYTES:
-                return None, (status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Request body too large.")
+                return None, (status.HTTP_413_CONTENT_TOO_LARGE, "Request body too large.")
             chunks.append(chunk)
     except Exception:
         return None, (status.HTTP_400_BAD_REQUEST, "Malformed JSON request body.")
@@ -373,8 +268,6 @@ async def _read_knock_body(
 
     if not isinstance(decoded, dict):
         return None, (status.HTTP_400_BAD_REQUEST, "Request body must be a JSON object.")
-    if isinstance(decoded.get("ip_address"), str) and len(decoded["ip_address"]) > 100:
-        return None, (status.HTTP_400_BAD_REQUEST, "IP address or CIDR notation too long.")
 
     try:
         return KnockRequest.model_validate(decoded), None
@@ -385,6 +278,12 @@ async def _read_knock_body(
                 "Invalid TTL specified. Must be a positive integer.",
             )
         if any("ip_address" in str(error.get("loc", ())) for error in exc.errors()):
+            if any(
+                error.get("type") == "string_too_long"
+                for error in exc.errors()
+                if "ip_address" in str(error.get("loc", ()))
+            ):
+                return None, (status.HTTP_400_BAD_REQUEST, "IP address or CIDR notation too long.")
             return None, (
                 status.HTTP_400_BAD_REQUEST,
                 "Invalid IP address or CIDR notation in request body.",
@@ -392,21 +291,38 @@ async def _read_knock_body(
         return None, (status.HTTP_400_BAD_REQUEST, "Invalid request data.")
 
 
+def _knock_failure(
+    settings: SettingsLike,
+    actor: str,
+    allowed_origin: str,
+    status_code: int,
+    message: str,
+) -> JSONResponse:
+    if not core.record_knock_attempt(settings, actor, "failure"):
+        status_code = status.HTTP_429_TOO_MANY_REQUESTS
+        message = "Too many knock attempts."
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": message},
+        headers={"Access-Control-Allow-Origin": allowed_origin},
+    )
+
+
 # --- API Endpoints ---
 
 
-@app.options(
+@router.options(
     "/knock",
     tags=["Authentication"],
     summary="CORS Preflight",
     description="Handles OPTIONS requests for CORS preflight checks.",
     status_code=204,
 )
-async def knock_options(settings: dict = Depends(get_settings)):
+async def knock_options(settings: SettingsLike = Depends(get_settings)):
     """
     Handles OPTIONS requests for CORS preflight.
     """
-    allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
+    allowed_origin = config.validate_settings(settings).cors.allowed_origin
     return Response(
         status_code=status.HTTP_204_NO_CONTENT,
         headers={
@@ -417,7 +333,7 @@ async def knock_options(settings: dict = Depends(get_settings)):
     )
 
 
-@app.post(
+@router.post(
     "/knock",
     response_model=KnockResponse,
     responses={
@@ -449,11 +365,11 @@ async def knock_options(settings: dict = Depends(get_settings)):
 async def knock(
     request: Request,
     response: Response,
-    client_ip: str = Depends(get_client_ip_dependency),
-    settings: dict = Depends(get_settings),
+    client_ip: Optional[str] = Depends(get_client_ip_dependency),
+    settings: SettingsLike = Depends(get_settings),
 ):
     api_key = request.headers.get("X-Api-Key")
-    allowed_origin = settings.get("cors", {}).get("allowed_origin", "*")
+    allowed_origin = config.validate_settings(settings).cors.allowed_origin
     direct_ip = request.client.host if request.client else None
     if direct_ip == "testclient":
         direct_ip = request.headers.get("x-knocker-test-direct-ip", "127.0.0.1")
@@ -461,31 +377,23 @@ async def knock(
 
     if not client_ip:
         logging.warning("Could not determine client IP.")
-        if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-            return JSONResponse(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                content={"error": "Too many knock attempts."},
-                headers={"Access-Control-Allow-Origin": allowed_origin},
-            )
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"error": "Could not determine client IP."},
-            headers={"Access-Control-Allow-Origin": allowed_origin},
+        return _knock_failure(
+            settings,
+            rate_limit_actor,
+            allowed_origin,
+            status.HTTP_400_BAD_REQUEST,
+            "Could not determine client IP.",
         )
 
     api_key_record = core.get_api_key_record(api_key, settings)
     if not api_key_record:
-        if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-            return JSONResponse(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                content={"error": "Too many knock attempts."},
-                headers={"Access-Control-Allow-Origin": allowed_origin},
-            )
         logging.warning(f"Invalid or missing API key provided by {client_ip}.")
-        return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"error": "Invalid or missing API key."},
-            headers={"Access-Control-Allow-Origin": allowed_origin},
+        return _knock_failure(
+            settings,
+            rate_limit_actor,
+            allowed_origin,
+            status.HTTP_401_UNAUTHORIZED,
+            "Invalid or missing API key.",
         )
 
     # Authentication and the failure limiter intentionally happen before any
@@ -493,158 +401,45 @@ async def knock(
     body, body_error = await _read_knock_body(request)
     if body_error:
         body_status, body_message = body_error
-        if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-            return JSONResponse(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                content={"error": "Too many knock attempts."},
-                headers={"Access-Control-Allow-Origin": allowed_origin},
-            )
-        return JSONResponse(
-            status_code=body_status,
-            content={"error": body_message},
-            headers={"Access-Control-Allow-Origin": allowed_origin},
-        )
+        return _knock_failure(settings, rate_limit_actor, allowed_origin, body_status, body_message)
 
     ip_to_whitelist = client_ip
-    if body:
-        ip_address = body.ip_address
-        if ip_address:
-            # Security: Validate input size to prevent DoS
-            if not isinstance(ip_address, str):
-                logging.warning(f"Invalid IP address type from {client_ip}.")
-                if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-                    return JSONResponse(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        content={"error": "Too many knock attempts."},
-                        headers={"Access-Control-Allow-Origin": allowed_origin},
-                    )
-                return JSONResponse(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    content={"error": "IP address must be a string."},
-                    headers={"Access-Control-Allow-Origin": allowed_origin},
-                )
-
-            if len(ip_address) > 100:  # Max length for IPv6 with CIDR
-                logging.warning(f"IP address too long ({len(ip_address)} chars) from {client_ip}.")
-                if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-                    return JSONResponse(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        content={"error": "Too many knock attempts."},
-                        headers={"Access-Control-Allow-Origin": allowed_origin},
-                    )
-                return JSONResponse(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    content={"error": "IP address or CIDR notation too long."},
-                    headers={"Access-Control-Allow-Origin": allowed_origin},
-                )
-
-            if not api_key_record.allow_remote_whitelist:
-                logging.warning(f"API key used by {client_ip} lacks remote whitelist permission.")
-                if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-                    return JSONResponse(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        content={"error": "Too many knock attempts."},
-                        headers={"Access-Control-Allow-Origin": allowed_origin},
-                    )
-                return JSONResponse(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    content={"error": "API key lacks remote whitelist permission."},
-                    headers={"Access-Control-Allow-Origin": allowed_origin},
-                )
-
-            if not core.is_valid_ip_or_cidr(ip_address):
-                logging.warning(
-                    f"Invalid IP address or CIDR notation '{ip_address}' in request body from {client_ip}."
-                )
-                if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-                    return JSONResponse(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        content={"error": "Too many knock attempts."},
-                        headers={"Access-Control-Allow-Origin": allowed_origin},
-                    )
-                return JSONResponse(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    content={"error": "Invalid IP address or CIDR notation in request body."},
-                    headers={"Access-Control-Allow-Origin": allowed_origin},
-                )
-
-            # Security check: prevent overly broad CIDR ranges
-            if not core.is_safe_cidr_range(ip_address):
-                logging.warning(f"Unsafe CIDR range '{ip_address}' rejected from {client_ip}.")
-                if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-                    return JSONResponse(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        content={"error": "Too many knock attempts."},
-                        headers={"Access-Control-Allow-Origin": allowed_origin},
-                    )
-                return JSONResponse(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    content={"error": "CIDR range too broad. Maximum 65536 addresses allowed."},
-                    headers={"Access-Control-Allow-Origin": allowed_origin},
-                )
-
-            ip_to_whitelist = ip_address
-
-    max_ttl = api_key_record.max_ttl
-    requested_ttl = body.ttl if body else None
-
-    effective_ttl = max_ttl
-
-    if requested_ttl is not None:
-        # Comprehensive TTL validation
-        if not isinstance(requested_ttl, int):
-            logging.warning(
-                f"Invalid TTL type '{type(requested_ttl).__name__}' specified by {client_ip}."
+    requested_ttl = body.ttl if body is not None else None
+    ip_address = body.ip_address if body is not None else None
+    if ip_address is not None:
+        if not api_key_record.allow_remote_whitelist:
+            logging.warning(f"API key used by {client_ip} lacks remote whitelist permission.")
+            return _knock_failure(
+                settings,
+                rate_limit_actor,
+                allowed_origin,
+                status.HTTP_403_FORBIDDEN,
+                "API key lacks remote whitelist permission.",
             )
-            if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-                return JSONResponse(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    content={"error": "Too many knock attempts."},
-                    headers={"Access-Control-Allow-Origin": allowed_origin},
-                )
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "Invalid TTL specified. Must be a positive integer."},
-                headers={"Access-Control-Allow-Origin": allowed_origin},
+        if not core.is_safe_cidr_range(ip_address):
+            logging.warning(f"Unsafe CIDR range '{ip_address}' rejected from {client_ip}.")
+            return _knock_failure(
+                settings,
+                rate_limit_actor,
+                allowed_origin,
+                status.HTTP_400_BAD_REQUEST,
+                "CIDR range too broad. Maximum 65536 addresses allowed.",
             )
+        ip_to_whitelist = ip_address
 
-        # Check for edge cases: 0, negative, and excessively large values
-        if requested_ttl <= 0:
-            logging.warning(
-                f"Invalid TTL '{requested_ttl}' (must be positive) specified by {client_ip}."
-            )
-            if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-                return JSONResponse(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    content={"error": "Too many knock attempts."},
-                    headers={"Access-Control-Allow-Origin": allowed_origin},
-                )
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "Invalid TTL specified. Must be a positive integer."},
-                headers={"Access-Control-Allow-Origin": allowed_origin},
-            )
+    if requested_ttl is not None and requested_ttl > MAX_TTL:
+        logging.warning(
+            "TTL %d exceeds maximum allowed (%d) from %s.", requested_ttl, MAX_TTL, client_ip
+        )
+        return _knock_failure(
+            settings,
+            rate_limit_actor,
+            allowed_origin,
+            status.HTTP_400_BAD_REQUEST,
+            f"TTL too large. Maximum allowed is {MAX_TTL} seconds (10 years).",
+        )
 
-        # Prevent extremely large TTL values (max 10 years = 315360000 seconds)
-        if requested_ttl > MAX_TTL:
-            logging.warning(
-                f"TTL {requested_ttl} exceeds maximum allowed ({MAX_TTL}) from {client_ip}."
-            )
-            if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-                return JSONResponse(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    content={"error": "Too many knock attempts."},
-                    headers={"Access-Control-Allow-Origin": allowed_origin},
-                )
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "error": f"TTL too large. Maximum allowed is {MAX_TTL} seconds (10 years)."
-                },
-                headers={"Access-Control-Allow-Origin": allowed_origin},
-            )
-
-        effective_ttl = min(requested_ttl, max_ttl)
+    effective_ttl = min(requested_ttl or MAX_TTL, api_key_record.max_ttl, MAX_TTL)
 
     expiry_time = int(time.time()) + effective_ttl
 
@@ -668,35 +463,35 @@ async def knock(
         )
     except firewalld.MutationQueueUnavailable:
         core.release_knock_attempt(settings, rate_limit_actor, "success", success_reservation)
-        return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={"error": "Firewall mutation capacity is unavailable."},
-            headers={"Access-Control-Allow-Origin": allowed_origin},
+        return _knock_failure(
+            settings,
+            rate_limit_actor,
+            allowed_origin,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Firewall mutation capacity is unavailable.",
         )
     except Exception:
         core.release_knock_attempt(settings, rate_limit_actor, "success", success_reservation)
         logging.exception(
             "Failed to whitelist %s. Request from %s rejected.", ip_to_whitelist, client_ip
         )
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content=error_content,
-            headers={"Access-Control-Allow-Origin": allowed_origin},
+        return _knock_failure(
+            settings,
+            rate_limit_actor,
+            allowed_origin,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_content["error"],
         )
 
     if not whitelisted:
         core.release_knock_attempt(settings, rate_limit_actor, "success", success_reservation)
-        if not core.record_knock_attempt(settings, rate_limit_actor, "failure"):
-            return JSONResponse(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                content={"error": "Too many knock attempts."},
-                headers={"Access-Control-Allow-Origin": allowed_origin},
-            )
         logging.error(f"Failed to whitelist {ip_to_whitelist}. Request from {client_ip} rejected.")
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content=error_content,
-            headers={"Access-Control-Allow-Origin": allowed_origin},
+        return _knock_failure(
+            settings,
+            rate_limit_actor,
+            allowed_origin,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_content["error"],
         )
 
     # Log with limited information; avoid logging API key names at INFO level.
@@ -722,71 +517,23 @@ async def knock(
     )
 
 
-@app.get(
+@router.get(
     "/health",
     response_model=HealthResponse,
     tags=["System"],
-    summary="Health Check",
-    description="Verify that the Knocker service is running and operational.",
+    summary="Liveness Check",
+    description="Verify that the Knocker process and initialized runtime are alive.",
     status_code=status.HTTP_200_OK,
 )
-async def health_check(settings: dict = Depends(get_settings)):
-    """
-    Health check endpoint with dependency verification.
-    Validates that critical configuration and dependencies are available.
-    """
+async def health_check(settings: SettingsLike = Depends(get_settings)):
+    """Return quickly without probing external services or firewalld."""
     try:
         runtime_state = core.ensure_runtime_state(settings)
         if not runtime_state.api_keys.records:
-            logging.error("Health check failed: No API keys configured")
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={"status": "unhealthy", "error": "No API keys configured"},
             )
-
-        whitelist_path = runtime_state.whitelist.storage_path
-        if whitelist_path.exists() and not os.access(whitelist_path, os.R_OK | os.W_OK):
-            logging.error("Health check failed: Whitelist storage is not readable and writable")
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={"status": "unhealthy", "error": "Whitelist storage not accessible"},
-            )
-
-        if not os.access(whitelist_path.parent, os.R_OK | os.W_OK | os.X_OK):
-            logging.error("Health check failed: Whitelist storage directory is not accessible")
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={"status": "unhealthy", "error": "Whitelist storage not accessible"},
-            )
-
-        try:
-            whitelist_path.parent.stat()
-            if whitelist_path.exists():
-                whitelist_path.stat()
-        except OSError as exc:
-            logging.error(f"Health check failed: Whitelist storage stat failed: {exc}")
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={"status": "unhealthy", "error": "Whitelist storage not accessible"},
-            )
-
-        firewalld_enabled = bool((settings.get("firewalld") or {}).get("enabled", False))
-        firewalld_integration = firewalld.get_firewalld_integration()
-        if firewalld_enabled and (
-            firewalld_integration is None or not firewalld_integration.is_enabled()
-        ):
-            return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={"status": "unhealthy", "error": "Firewalld protection not ready"},
-            )
-        if firewalld_enabled and firewalld_integration:
-            ready = await asyncio.to_thread(firewalld_integration.verify_protection)
-            if not ready:
-                return JSONResponse(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    content={"status": "unhealthy", "error": "Firewalld protection not ready"},
-                )
-
         return HealthResponse(status="ok")
     except Exception as e:
         logging.error(f"Health check failed with unexpected error: {e}")
@@ -796,7 +543,86 @@ async def health_check(settings: dict = Depends(get_settings)):
         )
 
 
-@app.get(
+async def _full_readiness_check(settings: SettingsLike) -> Optional[JSONResponse]:
+    """Run the dependency checks reserved for the readiness endpoint."""
+    runtime_state = core.ensure_runtime_state(settings)
+    if not runtime_state.api_keys.records:
+        logging.error("Readiness check failed: No API keys configured")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "error": "No API keys configured"},
+        )
+
+    whitelist_path = runtime_state.whitelist.storage_path
+    if whitelist_path.exists() and not os.access(whitelist_path, os.R_OK | os.W_OK):
+        logging.error("Readiness check failed: Whitelist storage is not readable and writable")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "error": "Whitelist storage not accessible"},
+        )
+
+    if not os.access(whitelist_path.parent, os.R_OK | os.W_OK | os.X_OK):
+        logging.error("Readiness check failed: Whitelist storage directory is not accessible")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "error": "Whitelist storage not accessible"},
+        )
+
+    try:
+        whitelist_path.parent.stat()
+        if whitelist_path.exists():
+            whitelist_path.stat()
+    except OSError as exc:
+        logging.error(f"Readiness check failed: Whitelist storage stat failed: {exc}")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "error": "Whitelist storage not accessible"},
+        )
+
+    firewalld_enabled = config.validate_settings(settings).firewalld.enabled
+    firewalld_integration = firewalld.get_firewalld_integration()
+    if firewalld_enabled and (
+        firewalld_integration is None or not firewalld_integration.is_enabled()
+    ):
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "error": "Firewalld protection not ready"},
+        )
+    if firewalld_enabled and firewalld_integration:
+        ready = await asyncio.to_thread(firewalld_integration.verify_protection)
+        if not ready:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "unhealthy", "error": "Firewalld protection not ready"},
+            )
+
+    return None
+
+
+@router.get(
+    "/ready",
+    response_model=HealthResponse,
+    tags=["System"],
+    summary="Readiness Check",
+    description="Verify storage and enabled firewalld protection are ready.",
+    status_code=status.HTTP_200_OK,
+)
+async def readiness_check(settings: SettingsLike = Depends(get_settings)):
+    """Run the full read-only readiness check."""
+    try:
+        failure = await _full_readiness_check(settings)
+        if failure is not None:
+            return failure
+        return HealthResponse(status="ok")
+    except Exception as e:
+        logging.error(f"Readiness check failed with unexpected error: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "error": "Internal error"},
+        )
+
+
+@router.get(
     "/verify",
     responses={
         200: {"description": "IP is authorized - access granted"},
@@ -823,7 +649,7 @@ async def verify(
     request_context: Tuple[Optional[str], bool, Optional[str], str] = Depends(
         get_request_context_dependency
     ),
-    settings: dict = Depends(get_settings),
+    settings: SettingsLike = Depends(get_settings),
 ):
     client_ip, forwarded_headers_trusted, request_host, request_path = request_context
     runtime_state = core.ensure_runtime_state(settings)
@@ -842,3 +668,61 @@ async def verify(
         return Response(status_code=status.HTTP_401_UNAUTHORIZED)
 
     return Response(status_code=status.HTTP_200_OK)
+
+
+class KnockerFastAPI(FastAPI):
+    """FastAPI app with the knock request schema exported without binding a body."""
+
+    @override
+    def openapi(self) -> dict[str, Any]:
+        if self.openapi_schema is None:
+            self.openapi_schema = get_openapi(
+                title=self.title,
+                version=self.version,
+                description=self.description,
+                routes=self.routes,
+                tags=self.openapi_tags,
+            )
+            schemas = self.openapi_schema.setdefault("components", {}).setdefault("schemas", {})
+            schemas.setdefault("KnockRequest", KnockRequest.model_json_schema())
+            operation = self.openapi_schema.get("paths", {}).get("/knock", {}).get("post")
+            if isinstance(operation, dict):
+                operation["requestBody"] = {
+                    "required": False,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/KnockRequest"}
+                        }
+                    },
+                }
+        return self.openapi_schema
+
+
+def _build_app(docs_enabled: bool, settings: Optional[Settings] = None) -> KnockerFastAPI:
+    app = KnockerFastAPI(
+        lifespan=lifespan,
+        title="Knocker API",
+        description=APP_DESCRIPTION,
+        version=__version__,
+        openapi_tags=OPENAPI_TAGS,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
+    )
+    app.include_router(router)
+    app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    if settings is not None:
+        app.dependency_overrides[get_settings] = lambda: settings
+    return app
+
+
+def create_app(settings: SettingsLike | None = None) -> KnockerFastAPI:
+    """Create an app whose documentation routes are fixed by validated settings."""
+    resolved = get_settings() if settings is None else config.validate_settings(settings)
+    return _build_app(resolved.documentation.enabled, resolved)
+
+
+# Tests and library users can import a route-complete app without loading the
+# mandatory deployment configuration. Production uses create_app as a Uvicorn
+# factory so its documentation setting is applied before routes are registered.
+app = _build_app(docs_enabled=True)

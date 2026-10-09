@@ -4,7 +4,7 @@ This document outlines the key architectural and design decisions made during th
 
 ### 1. Technology Stack
 
-*   **Language**: Python 3.11
+*   **Language**: Python 3.13+
     *   **Reasoning**: Python was chosen for its rapid development capabilities, extensive libraries, and strong community support. It is more than capable of handling the performance requirements of this service.
 
 *   **Web Framework**: FastAPI
@@ -45,11 +45,26 @@ This document outlines the key architectural and design decisions made during th
     *   **Reasoning**: For a self-contained, single-node service typical of a homelab, a simple JSON file is a robust and sufficient solution for storing the whitelist. It requires no external dependencies (like Redis or a database), simplifying deployment. The service is designed to be stateless, with all state managed in this file, which is persisted via a Docker volume.
 
 *   **Whitelist Runtime Caching**:
-    *   **Reasoning**: Authorization checks use an in-memory whitelist index and only reload the JSON file when the file version changes. This avoids parsing the whitelist on every auth check while still picking up external updates.
+    *   **Reasoning**: The v2 runtime uses an in-memory whitelist index as the single-writer authority. Mutations and explicit reloads update the index, so authorization checks do not stat or parse the JSON file on the `/verify` hot path.
+
+*   **Liveness and Readiness**:
+    *   **Reasoning**: `/health` is a cheap liveness probe and never runs firewalld commands. `/ready` retains the full read-only storage and firewalld checks, while startup still performs setup, restoration, and verification before serving traffic.
+
+*   **Version and Binding Sources**:
+    *   **Reasoning**: `pyproject.toml` is the single project/API version source and `src.version` exposes it to FastAPI/OpenAPI. The container owns the fixed `0.0.0.0:8000` bind, so unused `server.host` and `server.port` YAML keys are not advertised.
 
 *   **API Key Validation Order**:
     *   **Reasoning**: API key configuration is validated before the rest of the runtime state is constructed so malformed key settings surface as configuration errors instead of looking like rejected credentials.
 
+*   **Typed Configuration Ownership**:
+    *   **Reasoning**: `config.Settings` is the single owner of YAML validation. Runtime services receive its typed nested settings, while mapping inputs are converted at the boundary for compatibility. Firewalld no longer repeats validation in its integration class, and runtime state is constructed once per validated settings object.
+
+*   **One Runtime Whitelist Interface**:
+    *   **Reasoning**: `RuntimeState.whitelist` owns the in-memory index and persistence mutations. The old standalone load/save/add/cleanup API was removed so authorization and mutation code cannot silently bypass the runtime index.
+
+*   **Declarative Documentation Routes**:
+    *   **Reasoning**: `create_app(settings)` selects FastAPI's documentation routes when the app is constructed. OpenAPI export is an explicit startup operation and never mutates a shared router, so disabling and re-enabling documentation cannot leave routes from a previous configuration cycle behind.
+
 ### 7. Import Compatibility
 
-The FastAPI entrypoint (`main.py`) now supports both relative (`from . import core`) and absolute (`import core`) imports. This guards against import errors when the service runs as a package (for example `uvicorn src.main:app`) and when local tooling executes the test suite from the repository root via `uv run pytest`. When running inside Docker the runtime now avoids trying to import `src.core` explicitly, ensuring the health checks succeed regardless of the deployment layout.
+The FastAPI entrypoint (`main.py`) now supports both relative (`from . import core`) and absolute (`import core`) imports. This guards against import errors when the service runs as a package (for example `uvicorn src.main:create_app --factory`) and when local tooling executes the test suite from the repository root via `uv run pytest`. When running inside Docker the runtime now avoids trying to import `src.core` explicitly, ensuring the health checks succeed regardless of the deployment layout.

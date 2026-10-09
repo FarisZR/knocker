@@ -1,6 +1,14 @@
 import pytest
+from typing import Any, cast
+from fastapi import status
 from fastapi.testclient import TestClient
-from src.main import app, get_client_ip_dependency, get_settings
+from src.main import (
+    MAX_KNOCK_BODY_BYTES,
+    _read_knock_body,
+    app,
+    get_client_ip_dependency,
+    get_settings,
+)
 
 # --- Test Fixtures ---
 
@@ -91,6 +99,44 @@ def test_knock_fail_invalid_api_key():
         "/knock", headers={"X-Api-Key": "INVALID_KEY", "X-Forwarded-For": "1.2.3.4"}
     )
     assert response.status_code == 401
+
+
+def test_knock_authenticates_before_reading_body(monkeypatch):
+    """An invalid key must not enter the request-body parser."""
+    body_read = False
+
+    async def fail_if_called(_request):
+        nonlocal body_read
+        body_read = True
+        pytest.fail("request body was read before authentication")
+
+    monkeypatch.setattr("src.main._read_knock_body", fail_if_called)
+    response = client.post(
+        "/knock",
+        headers={"X-Api-Key": "INVALID_KEY", "X-Forwarded-For": "1.2.3.4"},
+        content=b'{"ttl": 1}',
+    )
+
+    assert response.status_code == 401
+    assert body_read is False
+
+
+def test_knock_streamed_body_limit_is_enforced():
+    """The streamed body limit applies even without a trusted Content-Length."""
+
+    class ChunkedRequest:
+        headers = {"content-type": "application/json"}
+
+        async def stream(self):
+            yield b'{"ttl": 1}'
+            yield b"x" * MAX_KNOCK_BODY_BYTES
+
+    import asyncio
+
+    body, error = asyncio.run(_read_knock_body(cast(Any, ChunkedRequest())))
+
+    assert body is None
+    assert error == (status.HTTP_413_CONTENT_TOO_LARGE, "Request body too large.")
 
 
 def test_knock_unresolved_client_ip_is_rate_limited(mock_settings):
@@ -196,6 +242,27 @@ def test_knock_firewalld_exception_returns_json_error(monkeypatch):
         "error": "Internal server error: whitelist persistence or firewall configuration failed."
     }
     assert response.headers["Access-Control-Allow-Origin"] == "*"
+
+
+def test_knock_firewalld_exception_counts_as_failure(monkeypatch, mock_settings):
+    """Infrastructure failures use the same failure limiter as policy errors."""
+    mock_settings["security"]["knock_rate_limit"] = {
+        "window_seconds": 60,
+        "successful_requests": 20,
+        "failed_requests": 1,
+    }
+
+    def fake_add(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("src.main.core.add_ip_to_whitelist_with_firewalld", fake_add)
+
+    headers = {"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"}
+    first = client.post("/knock", headers=headers)
+    second = client.post("/knock", headers=headers)
+
+    assert first.status_code == 500
+    assert second.status_code == 429
 
 
 def test_knock_success_rate_limit_is_atomic(monkeypatch, mock_settings):

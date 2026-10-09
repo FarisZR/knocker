@@ -224,9 +224,8 @@ class TestWhitelistSizeLimits:
             assert response.status_code == 200
 
         # Check that whitelist doesn't exceed the limit
-        whitelist = core.load_whitelist(
-            {"whitelist": {"storage_path": "./test_secure_whitelist.json"}}
-        )
+        settings = app.dependency_overrides[get_settings]()
+        whitelist = core.ensure_runtime_state(settings).whitelist.active_snapshot()
         assert len(whitelist) <= max_entries
 
 

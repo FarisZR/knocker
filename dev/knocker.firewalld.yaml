@@ -1,13 +1,11 @@
 # knocker configuration with firewalld integration enabled for testing
 
 server:
-  host: "0.0.0.0"
-  port: 8000
   trusted_proxies:
     # Trust the default Docker IPv4 and IPv6 subnets.
     # Adjust these to match your specific Docker network configuration if you've customized it.
-    - "172.29.238.0/24"
-    - "fd00:dead:c0de::/64"
+    - "172.16.0.0/12"
+    - "fc00::/7"
 
 logging:
   level: DEBUG
@@ -39,7 +37,7 @@ whitelist:
 # Firewalld integration for advanced firewall control
 firewalld:
   enabled: true  # Enable for testing
-  zone_name: "knocker"  # Name of the firewalld zone to create
+  zone_name: "knocker-local"  # Test zone; never reuse a deployment's zone.
   zone_priority: -100  # Zone priority (negative numbers = higher priority)
   default_action: "drop"  # Default action for blocked traffic: "drop" or "reject"
   monitored_ports:
@@ -51,11 +49,14 @@ firewalld:
       protocol: tcp
     - port: 22
       protocol: tcp
+    - port: 9001
+      protocol: udp
   monitored_ips:
     # IP ranges that the firewalld zone will apply to
     # MUST include network mask (e.g., /32 for single IPv4 host, /128 for single IPv6 host)
-    - "192.168.178.77/32"  # Single host with proper CIDR notation
-    # - "::/0"
+    # Documentation addresses: the host tests must not select real clients.
+    - "192.0.2.23/32"
+    - "2001:db8::23/128"
 
 api_keys:
   - name: "admin-key-for-remote-whitelisting"

@@ -7,6 +7,10 @@ Knocker provides advanced firewall integration through firewalld, allowing for d
 Minimum supported Firewalld version: 2.0.0+
 Knocker performs a quick compatibility check on startup using `firewall-cmd --version` and will fail fast with an error if the installed Firewalld is older than 2.0.0. If firewalld integration is disabled in the configuration, this check is skipped.
 
+The typed `config.Settings` model validates the complete firewalld section before
+the integration is constructed. The integration consumes those validated values
+and does not maintain a second configuration-validation path.
+
 The firewalld integration works by:
 
 1. **Creating a dedicated firewalld zone** with configurable priority (default: high priority)
@@ -311,9 +315,14 @@ journalctl -u firewalld -f
 
 ### Health Checks
 
-The `/health` endpoint can be used to verify the service is running, but it doesn't specifically check firewalld status. Consider adding monitoring for:
+The `/health` endpoint is a cheap liveness probe and does not run
+`firewall-cmd`. Use `/ready` for read-only storage and firewalld readiness; it
+repeats the protection verification without changing firewall state. Startup
+still performs zone setup, whitelist restoration, and full verification before
+serving requests. Consider monitoring:
 
 - Firewalld daemon status
+- Knocker `/ready` readiness endpoint
 - Knocker zone existence
 - Rule count consistency
 
@@ -329,13 +338,32 @@ uv run pytest tests/test_firewalld.py -v
 
 ### Integration Tests
 
-Test with real firewalld daemon:
+Test with a real FirewallD daemon in a disposable Docker network namespace:
 
 ```bash
-# Start test environment
-cd dev/
-./firewalld_integration_test.sh
+bash dev/integration_tests.sh firewalld
 ```
+
+No host FirewallD, systemd, or D-Bus access is required. The daemon and private
+system bus run alongside the production Knocker image inside the test container.
+Only that container receives `NET_ADMIN`. Actual clients in separate namespaces
+verify protected TCP and UDP ports over IPv4 and IPv6, including TTL replacement,
+expiry, source isolation, forwarded-header handling, remote/CIDR grants, readiness,
+and daemon failures. The suite runs in CI on every pull request.
+
+The recovery case removes every exact timed rule, verifies blocked packets,
+reloads FirewallD, and restarts Knocker while retaining the whitelist volume.
+It verifies recovered access and the original persisted expiry timestamps.
+Exit cleanup destroys the test containers, network, and volume; it never calls
+host `firewall-cmd` or `systemctl`.
+
+The original `bash dev/firewalld_integration_test.sh` is also a required host
+D-Bus/FirewallD check. It uses a unique test zone and verifies every IPv4/IPv6
+TCP/UDP rule, expiry/replacement, persistence/recovery and readiness. Run it on
+a development host with FirewallD active. GitHub Actions runs this same script on
+every PR using a dedicated disposable Linux runner; it is required alongside the
+isolated packet tests. `bash dev/test.sh linux` runs the complete suite locally.
+See [TESTING.md](TESTING.md).
 
 ### Manual Testing
 

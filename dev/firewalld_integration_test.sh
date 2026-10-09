@@ -1,288 +1,188 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Linux deployment checks: Knocker talks to the HOST FirewallD over D-Bus.
+# CI requires this suite alongside the isolated real-packet firewall tests.
+set -euo pipefail
+cd "$(dirname "$0")"
 
-# Firewalld Integration Test Script
-# Tests the firewalld integration feature with a real firewalld daemon
+for tool in docker firewall-cmd systemctl curl uv; do
+    command -v "$tool" >/dev/null || { echo "Host tests require $tool" >&2; exit 1; }
+done
+systemctl is-active --quiet firewalld || { echo 'Host FirewallD must be running' >&2; exit 1; }
+if [ "$(id -u)" -eq 0 ]; then
+    host_firewall=(firewall-cmd)
+else
+    host_firewall=(sudo -n firewall-cmd)
+fi
+"${host_firewall[@]}" --state
 
-set -e
-# Ensure script runs from its own directory (dev/)
-cd "$(dirname "$0")" || exit 1
-
-# --- Helper Functions ---
-info() {
-    echo "[INFO] $1"
-}
-
-success() {
-    echo "✅ $1"
-}
-
-fail() {
-    echo "❌ $1"
-    exit 1
-}
-
-# --- Configuration ---
-BASE_URL="http://localhost:18080"
-KNOCK_URL="$BASE_URL/knock"
-
-# Test IP
-TEST_IP="192.168.178.23"
-
-# API Key (from knocker.firewalld.yaml)
-VALID_ADMIN_KEY="dev-only-admin-9c2f4a6d0d4b8f17e6a1c5b9d3f7a2e8"
-
-# --- Test Functions ---
-
-check_prerequisites() {
-    info "Checking prerequisites..."
-    
-    # Check if docker compose is available
-    if ! docker compose version &> /dev/null; then
-        fail "docker compose v2 is required but not installed"
-    fi
-    
-    # Check if firewalld is available on the host system
-    if ! systemctl is-active --quiet firewalld 2>/dev/null; then
-        fail "Firewalld is not running on host system"
-    fi
-    
-    success "Prerequisites check passed"
-}
-
-start_test_environment() {
-    info "Starting test environment with firewalld integration..."
-    
-    # Start the services
-    docker compose -f docker-compose.yml down -v --remove-orphans || true
-    docker compose -f docker-compose.yml up -d --build
-    
-    # Wait for services to be ready
-    info "Waiting for services to start..."
-    retry_count=0
-    max_retries=60
-    retry_interval=2
-
-    until curl --output /dev/null --silent --fail "$BASE_URL/health"; do
-        if [ ${retry_count} -ge ${max_retries} ]; then
-            fail "Services did not become healthy in time."
-        fi
-        printf '.'
-        retry_count=$((retry_count+1))
-        sleep ${retry_interval}
-    done
-    echo # Newline after dots
-    
-    success "Test environment started"
-}
-
-test_firewalld_daemon_access() {
-    info "Testing firewalld daemon access from container..."
-    
-    # Test if the container can access firewalld
-    if docker compose exec -T knocker firewall-cmd --state &>/dev/null; then
-        success "Container can access firewalld daemon"
-    else
-        fail "Container cannot access firewalld daemon. Check dbus mount and permissions."
-    fi
-}
-
-test_knocker_zone_creation() {
-    info "Testing knocker zone creation..."
-    
-    # Check if the knocker zone was created
-    if docker compose exec -T knocker firewall-cmd --list-all-zones | grep -q "knocker"; then
-        success "Knocker firewalld zone exists"
-    else
-        fail "Knocker firewalld zone was not created"
-    fi
-    
-    # Check zone properties (verify default DROP rules exist for monitored ports)
-    # We no longer rely on the zone target; instead ensure monitored ports have DROP rules
-    zone_info=$(docker compose exec -T knocker firewall-cmd --zone=knocker --list-all)
-    
-    # Monitored ports (must match dev/knocker.firewalld.yaml)
-    for p in 80 443 22; do
-        # Check rich-rule lines that reference the port and contain 'drop' (order-insensitive)
-        if docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules 2>/dev/null | grep -F "port=\"$p\"" | grep -q "drop"; then
-            success "Knocker zone has DROP rule for port $p"
-        else
-            fail "Knocker zone missing DROP rule for port $p"
-        fi
-    done
-}
-
-test_zone_target_configuration() {
-    info "Testing zone_target configuration..."
-    
-    # The default test config (dev/knocker.firewalld.yaml) does not specify zone_target,
-    # so we verify that the zone was created successfully without a zone_target set.
-    # This tests the default behavior (zone_target not specified = None = no --set-target command).
-    
-    # Get zone target - if not set, firewalld typically shows "default" or nothing
-    zone_target=$(docker compose exec -T knocker firewall-cmd --permanent --zone=knocker --get-target 2>/dev/null || echo "")
-    
-    # Verify the zone was created successfully (regardless of target setting)
-    if docker compose exec -T knocker firewall-cmd --zone=knocker --list-all &>/dev/null; then
-        info "Zone target is: ${zone_target:-not configured in knocker (using firewalld default)}"
-        success "Zone created successfully without zone_target (default behavior)"
-    else
-        fail "Zone was not created properly"
-    fi
-    
-    # Note: Testing with an explicit zone_target would require a separate test configuration.
-    # The unit tests (tests/test_firewalld.py) comprehensively test all zone_target values
-    # including validation, setup with zone_target, and setup without zone_target.
-    # This integration test verifies the default case (zone_target not specified).
-}
-
-test_successful_knock_creates_rules() {
-    info "Testing that successful knock creates firewalld rules..."
-    
-    # Perform a knock
-    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $TEST_IP" $KNOCK_URL)
-    
-    if ! echo "$response" | grep -q "whitelisted_entry"; then
-        fail "Knock request failed. Response: $response"
-    fi
-    
-    # Check if rich rules were created for the IP
-    if docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
-        success "Firewalld rich rules created for $TEST_IP"
-    else
-        fail "No firewalld rich rules found for $TEST_IP after successful knock"
-    fi
-}
-
-test_rule_expiration() {
-    info "Testing rule expiration (this will take a moment)..."
-    
-    # Perform a knock with short TTL (5 seconds)
-    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $TEST_IP" -H "Content-Type: application/json" -d '{"ttl": 5}' $KNOCK_URL)
-
-    if ! echo "$response" | grep -q "whitelisted_entry"; then
-        fail "Knock with TTL failed. Response: $response"
-    fi
-    
-    # Verify rules exist
-    if docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
-        success "Rules created with TTL"
-    else
-        fail "Rules not found after knock with TTL"
-    fi
-    
-    # Wait for expiration (15 seconds to be safe)
-    info "Waiting 15 seconds for rule expiration..."
-    sleep 15
-    
-    # Check if rules are gone
-    if ! docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
-        success "Rules expired correctly after TTL"
-    else
-        fail "Rules did not expire correctly after TTL"
-    fi
-}
-
-test_ttl_replacement_on_existing_rule() {
-    info "Testing TTL replacement when an existing rule is present..."
-
-    # Add an existing long-TTL rule for port 80 to simulate a collision
-    docker compose exec -T knocker firewall-cmd --zone=knocker --add-rich-rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"80\" accept" --timeout=120
-    info "Pre-existing long-TTL rule added for $TEST_IP:80 (simulated)"
-
-    # Perform a knock with short TTL (5 seconds)
-    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $TEST_IP" -H "Content-Type: application/json" -d '{"ttl": 5}' $KNOCK_URL)
-
-    if ! echo "$response" | grep -q "whitelisted_entry"; then
-        fail "Knock with TTL failed. Response: $response"
-    fi
-
-    # Allow the service a moment to interact with firewalld
-    sleep 2
-
-    # Verify that rules for the IP exist (should have been replaced or updated)
-    rules=$(docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules)
-    if echo "$rules" | grep -q "$TEST_IP"; then
-        success "Rules exist after replacement knock for $TEST_IP"
-    else
-        fail "No rules found for $TEST_IP after replacement knock"
-    fi
-
-    # Cleanup: remove the simulated pre-existing rule if present
-    docker compose exec -T knocker firewall-cmd --zone=knocker --remove-rich-rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"80\" accept" &>/dev/null || true
-}
-
-test_startup_rule_recovery() {
-    info "Testing startup rule recovery..."
-    
-    # First, add a rule with long TTL
-    response=$(curl -s -X POST -H "X-Api-Key: $VALID_ADMIN_KEY" -H "X-Forwarded-For: $TEST_IP" -H "Content-Type: application/json" -d '{"ttl": 3600}' $KNOCK_URL)
-    
-    if ! echo "$response" | grep -q "whitelisted_entry"; then
-        fail "Initial knock for recovery test failed"
-    fi
-    
-    # Manually remove the firewalld rule (simulate rule loss)
-    docker compose exec -T knocker firewall-cmd --zone=knocker --remove-rich-rule="rule family=\"ipv4\" source address=\"$TEST_IP\" port protocol=\"tcp\" port=\"80\" accept" &>/dev/null
-    
-    # Restart the knocker container
-    info "Restarting knocker container to test rule recovery..."
-    docker compose restart knocker
-    
-    # Wait for restart
-    sleep 10
-    
-    # Check if the rule was restored
-    if docker compose exec -T knocker firewall-cmd --zone=knocker --list-rich-rules | grep -q "$TEST_IP"; then
-        success "Rules recovered after container restart"
-    else
-        fail "Rule recovery test did not restore $TEST_IP"
-    fi
-}
-
-test_firewalld_error_handling() {
-    info "Testing firewalld error handling..."
-    
-    # Temporarily break firewalld access and see if knocker handles it gracefully
-    # This is a simplified test - in practice, we'd need more complex setup
-    
-    # For now, just verify that invalid requests are handled
-    response=$(curl -s -X POST -H "X-Api-Key: invalid_key" -H "X-Forwarded-For: $TEST_IP" $KNOCK_URL)
-    
-    if echo "$response" | grep -q "Invalid or missing API key"; then
-        success "Error handling works for invalid requests"
-    else
-        fail "Error handling may not be working correctly"
-    fi
-}
+export COMPOSE_PROJECT_NAME="knocker-host-test-$$-$RANDOM"
+compose=(docker compose --project-name "$COMPOSE_PROJECT_NAME" -f docker-compose.yml)
+zone="knocker-$RANDOM"
+zone_owned=false
+test_ipv4="192.0.2.$((RANDOM % 200 + 2))"
+test_ipv6="2001:db8::$(printf '%x' "$((RANDOM + 1))")"
+ports=(tcp:80 tcp:443 tcp:22 udp:9001)
+admin_key=dev-only-admin-9c2f4a6d0d4b8f17e6a1c5b9d3f7a2e8
+workdir="$(mktemp -d "$PWD/.host-firewalld.XXXXXX")"
+export KNOCKER_HOST_TEST_CONFIG="$workdir/knocker.yaml"
+response_file="$workdir/response.json"
 
 cleanup() {
-    info "Cleaning up test environment..."
-    docker compose -f docker-compose.yml down -v --remove-orphans || true
-    success "Cleanup completed"
+    result=$?
+    trap - EXIT
+    if [ "$result" -ne 0 ]; then "${compose[@]}" logs --no-color || true; fi
+    # Stop requests before removing our zone. Never stop/restart host FirewallD
+    # or remove a pre-existing zone, even if cleanup fails.
+    "${compose[@]}" down --volumes --remove-orphans || result=1
+    if "$zone_owned"; then
+        if zones=$("${host_firewall[@]}" --permanent --get-zones); then
+            if printf '%s\n' "$zones" | tr ' ' '\n' | grep -qx "$zone"; then
+                "${host_firewall[@]}" --permanent "--delete-zone=$zone" || result=1
+                "${host_firewall[@]}" --reload || result=1
+            fi
+        else
+            echo "Could not inspect host FirewallD; verify cleanup of $zone" >&2
+            result=1
+        fi
+    fi
+    if [ -z "${KNOCKER_TEST_IMAGE:-}" ] && docker image inspect "${COMPOSE_PROJECT_NAME}-knocker" >/dev/null 2>&1; then
+        docker image rm "${COMPOSE_PROJECT_NAME}-knocker" || result=1
+    fi
+    rm -f -- "$KNOCKER_HOST_TEST_CONFIG" "$response_file" "$workdir/before.json" "$workdir/after.json"
+    rmdir "$workdir" || result=1
+    exit "$result"
 }
-
-# --- Main Execution ---
-main() {
-    info "Starting Firewalld Integration Tests..."
-    
-    check_prerequisites
-    start_test_environment
-    
-    test_firewalld_daemon_access
-    test_knocker_zone_creation
-    test_zone_target_configuration
-    test_successful_knock_creates_rules
-    test_rule_expiration
-    test_startup_rule_recovery
-    test_ttl_replacement_on_existing_rule
-    test_firewalld_error_handling
-    
-    success "All firewalld integration tests passed!"
-    
-    cleanup
-}
-
-# Handle script interruption
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-main "$@"
+# Refuse to adopt a zone that another process already owns.
+if "${host_firewall[@]}" --permanent --get-zones | tr ' ' '\n' | grep -qx "$zone"; then
+    echo "Test zone already exists: $zone" >&2
+    exit 1
+fi
+zone_owned=true
+uv run python - "$KNOCKER_HOST_TEST_CONFIG" "$zone" "$test_ipv4" "$test_ipv6" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+path, zone, ipv4, ipv6 = sys.argv[1:]
+config = yaml.safe_load(Path('knocker.firewalld.yaml').read_text())
+config['firewalld']['zone_name'] = zone
+config['firewalld']['monitored_ips'] = [ipv4 + '/32', ipv6 + '/128']
+Path(path).write_text(yaml.safe_dump(config))
+PY
+
+firewall() {
+    "${compose[@]}" exec -T knocker firewall-cmd "--zone=$zone" "$@"
+}
+ready_status() {
+    "${compose[@]}" exec -T knocker curl --noproxy '*' --silent --show-error \
+        --max-time 15 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8000/ready
+}
+wait_ready() {
+    deadline=$((SECONDS + 60))
+    until [ "$(ready_status 2>/dev/null || true)" = 200 ]; do
+        [ "$SECONDS" -lt "$deadline" ] || { echo 'Knocker did not become ready' >&2; return 1; }
+        sleep 1
+    done
+}
+knock() {
+    expected="$1"; ip="$2"; ttl="$3"; key="${4:-$admin_key}"
+    status=$(curl --noproxy '*' --silent --show-error --max-time 15 \
+        --output "$response_file" --write-out '%{http_code}' \
+        -H "X-Api-Key: $key" -H 'X-Forwarded-For: 192.0.2.254' \
+        -H 'Content-Type: application/json' \
+        -d "{\"ip_address\":\"$ip\",\"ttl\":$ttl}" http://127.0.0.1:18080/knock)
+    [ "$status" = "$expected" ] || { cat "$response_file" >&2; return 1; }
+    if [ "$expected" = 200 ]; then
+        uv run python - "$response_file" "$ip" "$ttl" <<'PY'
+import json, sys
+from pathlib import Path
+body = json.loads(Path(sys.argv[1]).read_text())
+assert body['whitelisted_entry'] == sys.argv[2], body
+assert body['expires_in_seconds'] == int(sys.argv[3]), body
+PY
+    fi
+}
+rule() {
+    ip="$1"; pair="$2"
+    family=ipv4; [[ "$ip" != *:* ]] || family=ipv6
+    printf 'rule family="%s" source address="%s" port protocol="%s" port="%s" accept priority="1000"' \
+        "$family" "$ip" "${pair%:*}" "${pair#*:}"
+}
+assert_rules() {
+    expected="$1"; ip="$2"
+    for pair in "${ports[@]}"; do
+        actual=$(firewall "--query-rich-rule=$(rule "$ip" "$pair")" || true)
+        [ "$actual" = "$expected" ] || { echo "Missing expected $expected rule: $ip $pair" >&2; return 1; }
+    done
+}
+wait_expiry() {
+    ip="$1"; deadline=$((SECONDS + 20))
+    while firewall --list-rich-rules | grep -Fq "source address=\"$ip\""; do
+        [ "$SECONDS" -lt "$deadline" ] || { echo "Rules did not expire: $ip" >&2; return 1; }
+        sleep 1
+    done
+    assert_rules no "$ip"
+}
+
+if [ -z "${KNOCKER_TEST_IMAGE:-}" ]; then "${compose[@]}" build knocker; fi
+"${compose[@]}" up -d --no-build
+wait_ready
+[ "$("${compose[@]}" exec -T knocker firewall-cmd --state)" = running ]
+[ "$(firewall --permanent --get-priority)" = -100 ]
+[ "$(firewall --permanent --get-target)" = default ]
+for source in "$test_ipv4/32" "$test_ipv6/128"; do
+    [ "$(firewall "--query-source=$source")" = yes ]
+done
+for family in ipv4 ipv6; do
+    for pair in "${ports[@]}"; do
+        default_rule="rule family=\"$family\" port port=\"${pair#*:}\" protocol=\"${pair%:*}\" drop priority=\"9999\""
+        [ "$(firewall "--query-rich-rule=$default_rule")" = yes ]
+    done
+done
+echo 'PASS: host D-Bus, zone priority/target/sources, every default TCP/UDP rule'
+
+for ip in "$test_ipv4" "$test_ipv6"; do
+    knock 200 "$ip" 8
+    assert_rules yes "$ip"
+    wait_expiry "$ip"
+done
+echo 'PASS: exact IPv4/IPv6 timed rules and real expiry'
+
+knock 200 "$test_ipv4" 120
+knock 200 "$test_ipv4" 6
+assert_rules yes "$test_ipv4"
+wait_expiry "$test_ipv4"
+echo 'PASS: shorter TTL replaces the original long grant'
+
+for ip in "$test_ipv4" "$test_ipv6"; do
+    knock 200 "$ip" 120
+    assert_rules yes "$ip"
+    for pair in "${ports[@]}"; do firewall "--remove-rich-rule=$(rule "$ip" "$pair")"; done
+    assert_rules no "$ip"
+done
+"${compose[@]}" exec -T knocker cat /data/whitelist.json > "$workdir/before.json"
+"${host_firewall[@]}" --reload
+"${compose[@]}" restart knocker
+wait_ready
+for ip in "$test_ipv4" "$test_ipv6"; do assert_rules yes "$ip"; done
+"${compose[@]}" exec -T knocker cat /data/whitelist.json > "$workdir/after.json"
+cmp "$workdir/before.json" "$workdir/after.json"
+echo 'PASS: all eight timed rules recover without extending persisted expiry'
+
+knock 401 "$test_ipv4" 60 invalid
+knock 403 "$test_ipv4" 60 dev-only-phone-4b7e1a9d2c6f8e3a5d0b7c1f9a4e6d2b
+"${compose[@]}" exec -T knocker cat /data/whitelist.json > "$workdir/after.json"
+cmp "$workdir/before.json" "$workdir/after.json"
+echo 'PASS: rejected API keys and remote permission failures do not mutate persistence'
+
+default_rule='rule family="ipv4" port port="80" protocol="tcp" drop priority="9999"'
+firewall "--remove-rich-rule=$default_rule"
+[ "$(ready_status)" = 503 ]
+"${compose[@]}" exec -T knocker curl --noproxy '*' --fail --silent http://127.0.0.1:8000/health >/dev/null
+firewall "--add-rich-rule=$default_rule"
+[ "$(ready_status)" = 200 ]
+echo 'PASS: readiness detects lost protection; liveness remains available'

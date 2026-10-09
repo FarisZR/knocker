@@ -1,13 +1,10 @@
 # knocker configuration for CI testing (firewalld disabled)
 
 server:
-  host: "0.0.0.0"
-  port: 8000
   trusted_proxies:
-    # Trust the default Docker IPv4 and IPv6 subnets.
-    # Adjust these to match your specific Docker network configuration if you've customized it.
-    - "172.29.238.0/24"
-    - "fd00:dead:c0de::/64"
+    # Test-only: this network is internal and has no published host ports.
+    - "172.16.0.0/12"
+    - "fc00::/7"
 
 cors:
   allowed_origin: "*"  # SECURITY: Set to your web app's origin (e.g., "https://your-web-app.com") in production instead of "*"
@@ -38,7 +35,7 @@ whitelist:
 
 # Firewalld integration disabled for CI testing
 firewalld:
-  enabled: false  # Disabled for CI - no firewalld daemon available
+  enabled: false  # The separate firewall stack runs the real daemon in CI.
 
 api_keys:
   - name: "admin-key-for-remote-whitelisting"

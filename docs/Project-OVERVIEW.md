@@ -22,11 +22,11 @@ This is ideal for homelab environments where you want to expose services to the 
 
 This project uses GitHub Actions for continuous integration and deployment.
 
-*   **CI (`tests.yml`)**: On every pull request to `main`, this workflow runs the full Python test suite and then performs a live integration test with Docker Compose to ensure the Caddy and Knocker services work together correctly.
+*   **CI (`tests.yml`)**: Every pull request runs Python checks and two independent Docker Compose integration jobs: Caddy authentication and real FirewallD packet filtering over IPv4/IPv6 and TCP/UDP. See [TESTING.md](TESTING.md).
 *   **Docker Publish (`docker-publish.yml`)**: Validates pull requests with read-only permissions and publishes signed multi-arch Docker images only from non-PR events. The Dockerfile copies `uv` from an official digest-pinned image.
     - On push to `main` → `ghcr.io/fariszr/knocker:main` (rolling development)
     - On version tags (v1.2.3) → Multiple tags including `:latest`, `:v1.2.3`, `:1.2.3`, `:1.2`, `:1` (stable releases)
-*   **Release Workflow (`release.yml`)**: On version tags, automatically creates GitHub releases with changelogs and installation instructions
+*   **Release Workflow (`release.yml`)**: On version tags, automatically creates GitHub releases with changelogs and installation instructions. Workflow-file changes are included in the normal CI path.
 
 ## Deployment
 
@@ -234,9 +234,14 @@ To run the tests locally:
     ```
 
 ### Integration Tests
-There's a dev environment under [dev](./dev/), with bash scripts for integrations tests with caddy and a separate one with firewalld.
-The standard test stacks are `dev/docker-compose.yml` and `dev/docker-compose.ci.yml`; both expose Caddy on `http://localhost:18080` and `https://localhost:18443`.
-The CI runs the caddy tests, but firewalld needs a privileged runner, which is why it needs to be run locally and isn't a part of the CI.
+Run `bash dev/test.sh linux` for the complete suite matching GitHub Actions, or
+`bash dev/test.sh` for Python checks and both isolated integration suites only.
+`dev/docker-compose.firewalld-ci.yml` runs container-local FirewallD and D-Bus;
+`dev/docker-compose.ci.yml` runs Caddy authentication tests. Both run on every PR
+without host ports or host D-Bus. The original host FirewallD Bash suite under
+`dev/docker-compose.yml` and `dev/firewalld_integration_test.sh` also runs on every
+PR, on its own disposable Linux runner. The required gate needs every suite to pass.
+See [TESTING.md](TESTING.md) for individual commands and requirements.
 
 ## Docs
 
@@ -248,6 +253,6 @@ documentation:
   openapi_output_path: "openapi.json"
 ```
 
-When documentation is disabled (default), Knocker removes these endpoints and deletes any previously generated schema file to prevent stale artifacts.
+The production container starts `src.main:create_app` as a Uvicorn factory, so these routes are selected declaratively for each app instance before requests are served. When documentation is disabled (default), the routes are not registered and any previously generated schema file is deleted during the explicit startup export step to prevent stale artifacts.
 
 For a formal API specification and a summary of the architectural choices, please see the [documentation](./docs/).
