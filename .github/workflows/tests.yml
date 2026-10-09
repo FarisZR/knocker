@@ -2,30 +2,22 @@ name: Run Tests
 
 on:
   pull_request:
-    branches: [ "main" ]
-    paths:
-      - pyproject.toml
-      - uv.lock
-      - Dockerfile
-      - .github/workflows/**
-      - src/**
-      - dev/**
-      - tests/**
   push:
     branches: [ "main" ]
-    paths:
-      - pyproject.toml
-      - uv.lock
-      - Dockerfile
-      - .github/workflows/**
-      - src/**
-      - dev/**
-      - tests/**
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  python:
+    name: Python checks
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
     - name: Checkout repository
@@ -58,17 +50,81 @@ jobs:
     - name: Run unit tests
       run: uv run pytest
 
+  integration:
+    name: Integration (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [caddy, firewalld]
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-    - name: Run docker compose stack
-      run: docker compose -f dev/docker-compose.ci.yml up -d --build
+    - name: Build production image with cache
+      uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
+      with:
+        context: .
+        load: true
+        tags: knocker-integration:${{ matrix.mode }}
+        cache-from: type=gha,scope=integration-${{ matrix.mode }}
+        cache-to: type=gha,mode=max,scope=integration-${{ matrix.mode }}
 
-    - name: Wait for services to be healthy
-      run: sleep 10 # Simple wait for services to start
+    - name: Run isolated integration suite
+      env:
+        TEST_MODE: ${{ matrix.mode }}
+        KNOCKER_TEST_IMAGE: knocker-integration:${{ matrix.mode }}
+      run: bash dev/integration_tests.sh "$TEST_MODE"
 
-    - name: Make integration test script executable
-      run: chmod +x dev/local_integration_tests.sh
+  host-firewalld:
+    name: Host FirewallD checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - name: Run integration tests
-      run: ./dev/local_integration_tests.sh
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version-file: 'pyproject.toml'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+    - name: Prepare the disposable runner's host FirewallD
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y firewalld
+        sudo systemctl start firewalld
+        sudo systemctl restart docker
+
+    - name: Run the existing host integration suite
+      run: bash dev/firewalld_integration_test.sh
+
+  # Keep the original check name for existing branch-protection rules. It can
+  # only go green when Python, BOTH isolated modes and the Linux host suite pass.
+  test:
+    needs: [python, integration, host-firewalld]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+    - name: Require every suite to pass
+      env:
+        PYTHON_RESULT: ${{ needs.python.result }}
+        INTEGRATION_RESULT: ${{ needs.integration.result }}
+        HOST_FIREWALLD_RESULT: ${{ needs['host-firewalld'].result }}
+      run: |
+        printf 'Python: %s; isolated integrations: %s; host FirewallD: %s\n' "$PYTHON_RESULT" "$INTEGRATION_RESULT" "$HOST_FIREWALLD_RESULT"
+        test "$PYTHON_RESULT" = success
+        test "$INTEGRATION_RESULT" = success
+        test "$HOST_FIREWALLD_RESULT" = success
