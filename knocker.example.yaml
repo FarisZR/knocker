@@ -2,18 +2,42 @@
 
 server:
   trusted_proxies:
-    # Trust the IPv4 and IPv6 subnets of the caddy_net docker network
-    # Adjust these to match your specific Docker network configuration.
-    - "172.16.238.0/24"
-    - "fd00:dead:beef::/64"
+    # ONLY the reverse proxy's own addresses belong in this list -- never a whole subnet.
+    #
+    # Knocker only honors X-Forwarded-For when the direct TCP peer is listed here,
+    # so every peer inside a trusted range becomes an identity authority: any other
+    # container on that network (a compromised backend, or an SSRF bug inside one)
+    # could claim any client IP via `X-Forwarded-For`, knock under someone else's
+    # address, or whitelist arbitrary IPs with a regular key that lacks
+    # `allow_remote_whitelist`.
+    #
+    # Docker does not hand out stable container IPs by default, so pin the proxy to
+    # fixed addresses (`ipv4_address` / `ipv6_address` under `caddy_net`, see the
+    # commented-out caddy service in docker-compose.yml) and list exactly those.
+    - "172.16.238.2/32"       # Caddy's static IPv4 on caddy_net
+    - "fd00:dead:beef::2/128" # Caddy's static IPv6 on caddy_net
 
 cors:
   allowed_origin: "https://knocker.fariszr.com"  # SECURITY: Set to your Knocker web webapp's origin if you are hosting your own.
 
 security:
-    # Keep this empty unless you intentionally want an address permanently
-    # authorized. A reverse-proxy network would authorize every client behind it.
-  always_allowed_ips: []
+  always_allowed_ips:
+    # These addresses are authorized by /verify permanently -- no knock required.
+    #
+    # Keep this to the reverse proxy's own address(es) plus loopback if something
+    # on the same host queries knocker directly. NEVER put a whole subnet here:
+    # every container inside that range would then pass /verify unconditionally,
+    # with no whitelist entry and no knock at all.
+    #
+    # Entries are matched against Knocker's *resolved* client IP, so traffic that
+    # arrives through a correctly configured trusted proxy is still checked by its
+    # real (forwarded) address. If you remove an address from trusted_proxies,
+    # remove it from here too -- otherwise all traffic from that peer would be
+    # accepted under its own address instead of being verified per client.
+    - "172.16.238.2/32"       # The reverse proxy (Caddy)
+    - "fd00:dead:beef::2/128"
+    - "127.0.0.1"             # Loopback (optional; drop if unused)
+    - "::1"
     # Request paths that start with any of these values will bypass
     # the IP whitelist check entirely.
     # Prefer host-scoped exclusions below; a global exclusion affects every host.
@@ -30,6 +54,11 @@ security:
     window_seconds: 60
     successful_requests: 20
     failed_requests: 30
+    # Maximum number of distinct client IPs tracked at once. The actor identity
+    # is client-claimable via X-Forwarded-For behind a trusted proxy, so this
+    # cap bounds the rate limiter's memory; least-recently created actors are
+    # dropped (losing their throttle history) when the cap is hit.
+    max_tracked_actors: 100000
 
 whitelist:
   # The path where the whitelist file will be stored.

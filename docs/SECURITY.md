@@ -19,9 +19,14 @@ continue to use their direct address and cannot influence forwarded headers.
 ```yaml
 server:
   trusted_proxies:
-    - "172.29.238.0/24"  # Docker network
-    - "127.0.0.1"        # Localhost
+    - "172.16.238.2/32"       # The reverse proxy's pinned IPv4 (single host)
+    - "fd00:dead:beef::2/128" # The reverse proxy's pinned IPv6 (single host)
+    - "127.0.0.1"             # Localhost, only if something local calls knocker directly
 ```
+
+Assign those addresses to the proxy container with `ipv4_address` /
+`ipv6_address` on the shared Docker network so they are stable; do not
+substitute the network's subnet (`172.16.238.0/24`, `fd00:dead:beef::/64`).
 
 ### 2. CIDR Range Abuse Prevention (High)
 
@@ -54,6 +59,30 @@ limits. All failed responses use the same CORS and failure-rate-limit path.
 
 **Example**: `/api/status/../../../etc/passwd` is normalized to `/etc/passwd` and properly rejected.
 
+#### Fail-closed guard for ambiguous request paths
+
+Normalization decodes percent-escapes once and folds only literal `.`/`..`
+segments. Backends behind the proxy may normalize further: strip `;` path
+parameters (Tomcat, Jetty, Spring), double-decode `%252e%252e`, translate `\`
+separators, truncate at a NUL byte, or read overlong UTF-8 as `.`. Such request
+targets stay under an excluded prefix in Knocker's view while the backend routes
+them onto a protected path.
+
+`PathExclusions.matches()` therefore refuses the unauthenticated exclusion
+shortcut for any request path that still contains one of `%` (residual
+double-encoding), `;` (path parameters), `\` (separator translation), a NUL byte,
+or U+FFFD (invalid UTF-8) after one decoding pass. This covers both global and
+host-scoped exclusions, because `/verify` resolves exclusions through
+`matches()`. Configured prefixes are normalized once when settings load and are
+never rejected by this guard.
+
+Refusing the shortcut fails closed: the request falls through to the normal IP
+whitelist check, so legitimate clients can still knock and whitelisted IPs keep
+access. The tradeoff is that rare legitimate URLs on public paths using `;`
+matrix parameters or encoded percents (`%25`) now require a whitelisted IP
+instead of matching an exclusion. Leading `//` authority-form targets are a
+separate concern and are deliberately not handled here.
+
 ### 5. Race Condition Prevention (Medium)
 
 **Issue**: Concurrent access to the whitelist file could cause data corruption or inconsistent state.
@@ -79,6 +108,12 @@ authorization on the in-memory index while preserving locked, atomic persistence
 **Issue**: No limits on whitelist size could allow attackers to consume excessive disk space.
 
 **Fix**: Configurable limits on whitelist entries with automatic cleanup of oldest entries.
+
+Capacity enforcement now fails loudly instead of silently discarding grants:
+
+- When the whitelist already holds `security.max_whitelist_entries` entries, a knock for a brand-new entry is rejected with `503 Service Unavailable` (`"Whitelist is at capacity. Try again later."`). Knocker never returns success for an entry it could not persist, and any firewalld rule installed for that entry is rolled back on a best-effort basis. A failed rollback is logged at ERROR level, and the rule may remain active until its TTL expires.
+- Refreshing (re-knocking) an entry that is already in the whitelist keeps working at capacity, so existing clients do not lose access while the store is full.
+- Background compaction still evicts the entries that expire soonest when the store exceeds the limit; if that eviction drops entries that had not expired yet, a WARNING naming the count and a few examples is logged.
 
 **Configuration**:
 ```yaml
@@ -113,11 +148,38 @@ cors:
   allowed_origin: "https://your-trusted-domain.com"
 ```
 
+### 10. Bounded Rate Limiter Memory (Low)
+
+**Issue**: The knock rate limiter kept one bucket per resolved client IP with no
+limit on distinct actors. A peer inside `trusted_proxies` controls the
+`X-Forwarded-For` chain, so each invented-but-well-formed address allocated
+persistent limiter state that outlived the window, allowing sustained floods to
+grow process memory without bound.
+
+**Fix**: Two bounds.
+- Forwarded entries longer than 64 characters are rejected outright (fail
+  closed), so implausibly long identity strings never reach actor state or logs.
+- `max_tracked_actors` caps how many distinct actors are retained. When a new
+  actor needs a slot at the cap, the least recently created actor and all of
+  that actor's outcome buckets are evicted.
+
+**Tradeoff**: Eviction fails open for the affected actors - they lose their
+throttle history and get fresh windows. An exhausted rate limiter must not
+become a memory-exhaustion primitive against Knocker itself.
+
+**Configuration**:
+```yaml
+security:
+  knock_rate_limit:
+    max_tracked_actors: 100000  # Default limit on tracked client IPs
+```
+
 ## Security Best Practices
 
 ### 1. Network Configuration
 
-- **Always configure trusted_proxies**: Only include the actual reverse proxy IPs/networks
+- **Keep the trust scope minimal — just the proxy**: `trusted_proxies` must contain only the reverse proxy's own address(es) as single hosts (`/32` for IPv4, `/128` for IPv6). Threat note: every container inside a trusted range can forge client identity. Since Knocker derives the client IP from headers sent by a trusted peer, a compromised backend container or an SSRF bug in one could claim any `X-Forwarded-For`, impersonate an already-whitelisted address to pass `/verify`, and use `/knock` with a regular key (no `allow_remote_whitelist`) to whitelist arbitrary IPs. Never trust the proxy network's subnet.
+- **Pin the proxy's addresses**: Docker does not assign stable container IPs by default; set `ipv4_address` / `ipv6_address` for the proxy on the shared network so its `/32` / `/128` entries stay valid across restarts (see the commented-out `caddy` service in `docker-compose.yml`)
 - **Leave proxy-header resolution to Knocker**: Run Uvicorn with `--no-proxy-headers` so Knocker can resolve the direct peer from `request.client.host` before consulting `server.trusted_proxies`
 - **Reject malformed forwarded chains**: If a trusted proxy sends an invalid `X-Forwarded-For` chain, Knocker now treats the client IP as unresolved instead of falling back to the proxy IP
 - **Use Docker networks**: Isolate knocker service on a private Docker network
@@ -136,7 +198,7 @@ cors:
 
 - **Restrict file permissions**: Ensure knocker.yaml is only readable by the service user
 - **Environment variables**: Store the config path in `KNOCKER_CONFIG_PATH`
-- **Always-allowed IPs**: Minimize the always-allowed IP list to only essential systems
+- **Always-allowed IPs**: Minimize the always-allowed IP list to only essential systems as single hosts (`/32` / `/128`, e.g. the proxy itself and loopback)
 - **Proxy networks are not allowlists**: Keep `always_allowed_ips` empty unless every address in the range is meant to bypass verification.
 - **Use host-scoped exclusions**: Do not globally exclude `/knock`; put the dedicated knock hostname on a direct proxy route and protect other hosts with `forward_auth`.
 
@@ -173,6 +235,7 @@ The project includes comprehensive security tests in `tests/test_security_fixes.
 - Trusted proxy validation
 - CIDR range limits
 - Path traversal prevention
+- Ambiguous request paths refusing the exclusion shortcut
 - Information disclosure protection
 - Size limits and DoS prevention
 - Rate limiting

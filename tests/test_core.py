@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 import time
 import ipaddress
@@ -193,6 +195,82 @@ def test_rate_limiter_prunes_stale_actor_buckets():
     assert ("success", "actor-a") not in limiter._events
 
 
+def test_rate_limiter_evicts_oldest_bucket_when_actor_cap_is_reached():
+    """A new actor stays servable once the tracked-actor bound is exhausted."""
+    limiter = core.SlidingWindowRateLimiter(
+        window_seconds=60, successful_requests=1, failed_requests=1, max_tracked_actors=2
+    )
+
+    assert limiter.reserve("actor-a", "success", now=10) is not None
+    assert limiter.reserve("actor-b", "success", now=10) is not None
+
+    assert limiter.reserve("actor-c", "success", now=10) is not None
+
+    assert len(limiter._events) == 2
+    assert ("success", "actor-a") not in limiter._events
+    assert ("success", "actor-b") in limiter._events
+    assert ("success", "actor-c") in limiter._events
+
+
+def test_rate_limiter_actor_cap_keeps_existing_actor_tracking():
+    """An exhausted actor neither evicts itself nor frees capacity on retry."""
+    limiter = core.SlidingWindowRateLimiter(
+        window_seconds=60, successful_requests=1, failed_requests=1, max_tracked_actors=1
+    )
+
+    assert limiter.reserve("actor-a", "success", now=10) is not None
+    assert limiter.reserve("actor-a", "success", now=10) is None
+
+    assert list(limiter._events) == [("success", "actor-a")]
+
+
+def test_rate_limiter_actor_cap_tracks_distinct_actors_and_all_outcomes():
+    limiter = core.SlidingWindowRateLimiter(
+        window_seconds=60, successful_requests=1, failed_requests=1, max_tracked_actors=1
+    )
+
+    assert limiter.reserve("actor-a", "success", now=10) is not None
+    assert limiter.reserve("actor-a", "failure", now=10) is not None
+    assert set(limiter._events) == {("success", "actor-a"), ("failure", "actor-a")}
+
+    assert limiter.reserve("actor-a", "success", now=10) is None
+    assert limiter.reserve("actor-a", "failure", now=10) is None
+
+    assert limiter.reserve("actor-b", "success", now=10) is not None
+    assert ("success", "actor-a") not in limiter._events
+    assert ("failure", "actor-a") not in limiter._events
+    assert ("success", "actor-b") in limiter._events
+
+
+def test_rate_limiter_reads_max_tracked_actors_from_config():
+    settings = config.validate_settings(
+        {
+            "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+            "security": {"knock_rate_limit": {"max_tracked_actors": 5}},
+        }
+    )
+    limiter = core.SlidingWindowRateLimiter.from_config(settings.security.knock_rate_limit)
+
+    assert limiter.max_tracked_actors == 5
+
+
+def test_knock_rate_limit_default_max_tracked_actors():
+    settings = config.validate_settings({"api_keys": [{"key": "test-key", "max_ttl": 3600}]})
+
+    assert settings.security.knock_rate_limit.max_tracked_actors == 100000
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_knock_rate_limit_max_tracked_actors_must_be_positive(value):
+    with pytest.raises(ValueError, match="max_tracked_actors must be positive"):
+        config.validate_settings(
+            {
+                "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+                "security": {"knock_rate_limit": {"max_tracked_actors": value}},
+            }
+        )
+
+
 def test_whitelist_store_mutations_refresh_in_memory_index(tmp_path):
     whitelist_path = tmp_path / "whitelist.json"
     store = core.WhitelistStore(storage_path=whitelist_path, max_entries=10)
@@ -238,6 +316,90 @@ def test_whitelist_store_compaction_preserves_entries_added_by_other_processes(t
     assert store.compact_expired(now=now) is False
     assert core._read_whitelist_file(whitelist_path) == {"198.51.100.20": now + 60}
     assert store.active_snapshot() == {"198.51.100.20": now + 60}
+
+
+def test_whitelist_store_rejects_new_entry_at_capacity(tmp_path):
+    """A store at capacity refuses a brand-new entry instead of silently dropping it."""
+    whitelist_path = tmp_path / "whitelist.json"
+    now = int(time.time())
+    store = core.WhitelistStore(storage_path=whitelist_path, max_entries=2)
+
+    long_expiry = now + 3600
+    store.add("203.0.113.10", long_expiry)
+    store.add("203.0.113.11", long_expiry)
+
+    with pytest.raises(core.WhitelistCapacityExceededError):
+        store.add("203.0.113.12", now + 60)  # Would rank below the eviction floor
+
+    snapshot = store.active_snapshot()
+    assert snapshot == {"203.0.113.10": long_expiry, "203.0.113.11": long_expiry}
+    assert core._read_whitelist_file(whitelist_path) == snapshot
+    assert store.contains(ipaddress.ip_address("203.0.113.12"), now=now) is False
+
+
+def test_whitelist_store_refresh_at_capacity_updates_existing_entry(tmp_path):
+    """Re-knocking an entry that is already stored keeps working at capacity."""
+    whitelist_path = tmp_path / "whitelist.json"
+    now = int(time.time())
+    store = core.WhitelistStore(storage_path=whitelist_path, max_entries=2)
+    long_expiry = now + 3600
+
+    store.add("203.0.113.10", long_expiry)
+    store.add("203.0.113.11", long_expiry)
+
+    refreshed_expiry = now + 60
+    store.add("203.0.113.10", refreshed_expiry)
+
+    assert len(store.active_snapshot()) == 2
+    assert store.active_snapshot()["203.0.113.10"] == refreshed_expiry
+    assert core._read_whitelist_file(whitelist_path)["203.0.113.10"] == refreshed_expiry
+
+
+def test_add_with_firewalld_rolls_back_rules_on_capacity_error(tmp_path):
+    """Capacity rejections still roll back pre-installed firewalld rules."""
+    from unittest.mock import Mock, patch
+
+    integration = Mock()
+    integration.is_enabled.return_value = True
+    integration.add_whitelist_rule.return_value = True
+    integration.remove_whitelist_rule.return_value = True
+
+    settings = {
+        "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+        "security": {"max_whitelist_entries": 1},
+        "whitelist": {"storage_path": str(tmp_path / "whitelist.json")},
+    }
+    state = core.ensure_runtime_state(settings)
+    now = int(time.time())
+
+    assert core.add_ip_to_whitelist_with_firewalld("198.51.100.10", now + 3600, settings) is True
+
+    with patch("src.firewalld.get_firewalld_integration", return_value=integration):
+        with pytest.raises(core.WhitelistCapacityExceededError):
+            core.add_ip_to_whitelist_with_firewalld("198.51.100.20", now + 300, settings)
+
+    integration.add_whitelist_rule.assert_called_once_with("198.51.100.20", now + 300)
+    integration.remove_whitelist_rule.assert_called_once_with("198.51.100.20")
+    assert state.whitelist.active_snapshot() == {"198.51.100.10": now + 3600}
+
+
+def test_compaction_evicting_live_entries_logs_warning(tmp_path, caplog):
+    """Compaction warns when capacity forces live entries out before they expire."""
+    whitelist_path = tmp_path / "whitelist.json"
+    now = int(time.time())
+    live_entries = {f"203.0.113.{index}": now + 3600 - index for index in range(4)}
+    core._write_whitelist_file(whitelist_path, {**live_entries, "192.0.2.99": now - 30})
+    store = core.WhitelistStore(storage_path=whitelist_path, max_entries=2)
+
+    caplog.set_level(logging.WARNING)
+    assert store.compact_expired(now=now) is True
+
+    warning = next(record for record in caplog.records if record.levelno == logging.WARNING)
+    message = warning.getMessage()
+    assert "capacity limit (2)" in message
+    assert "dropped 2 active entries" in message
+    assert "203.0.113.2" in message
+    assert "192.0.2.99" not in message
 
 
 @pytest.mark.parametrize(
@@ -286,12 +448,24 @@ def test_ensure_runtime_state_is_initialized_once(tmp_path):
         "not-an-ip",
         ",1.2.3.4",
         ",".join(["1.2.3.4"] * 21),
+        # A 750-character IPv6 scope ID parses fine, so the identity has to be
+        # bounded by length before it reaches actor state.
+        f"fe80::1%{'a' * 750}",
     ],
 )
 def test_resolve_client_ip_rejects_malformed_forwarded_chain_from_trusted_proxy(forwarded_for):
     trusted_proxies = core.ParsedNetworkSet.from_entries(["127.0.0.1"], "trusted_proxies")
 
     assert core.resolve_client_ip("127.0.0.1", forwarded_for, trusted_proxies) == (None, True)
+
+
+def test_resolve_client_ip_allows_realistic_scoped_ipv6_entry():
+    trusted_proxies = core.ParsedNetworkSet.from_entries(["127.0.0.1"], "trusted_proxies")
+
+    assert core.resolve_client_ip("127.0.0.1", "fe80::1%eth0", trusted_proxies) == (
+        "fe80::1%eth0",
+        True,
+    )
 
 
 def test_resolve_client_ip_rejects_chain_with_only_trusted_hops():
