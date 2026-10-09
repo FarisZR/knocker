@@ -35,6 +35,8 @@ services:
     volumes:
       - ./firewalld:/test:ro
     command: ["python", "-c", "import time; time.sleep(86400)"]
+    healthcheck:
+      disable: true
 
   stranger:
     image: ${KNOCKER_TEST_IMAGE:-${COMPOSE_PROJECT_NAME}-knocker}
@@ -43,6 +45,8 @@ services:
     volumes:
       - ./firewalld:/test:ro
     command: ["python", "-c", "import time; time.sleep(86400)"]
+    healthcheck:
+      disable: true
 
 networks:
   test_net:

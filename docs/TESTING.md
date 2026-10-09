@@ -61,6 +61,8 @@ The suite checks the actual host daemon, default zone target/priority/sources,
 every IPv4/IPv6 TCP/UDP rule, expiry and shorter TTL replacement, recovery of all
 eight timed rules with unchanged persistence, rejected keys/remote permissions,
 and readiness when protection is missing.
+The host test client disables its container AppArmor profile to reach the host
+system bus; the isolated CI stack retains Docker's default confinement.
 
 Each run creates a unique zone and uses documentation-only source addresses.
 Cleanup removes only that run's zone, containers and volume, and never stops the
