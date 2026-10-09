@@ -48,6 +48,13 @@ _runtime_state_lock = threading.Lock()
 _RUNTIME_STATE_KEY = "_knocker_runtime_state"
 
 
+class WhitelistCapacityExceededError(RuntimeError):
+    """Raised when a new whitelist entry cannot be kept within the configured capacity."""
+
+
+_EVICTED_ENTRY_EXAMPLES = 5
+
+
 def get_whitelist_storage_path(settings: SettingsLike) -> Path:
     if isinstance(settings, Settings):
         return Path(settings.whitelist.storage_path)
@@ -253,6 +260,34 @@ def _limit_whitelist_entries(whitelist: Dict[str, int], max_entries: int) -> Dic
     return dict(sorted_items[-max_entries:])
 
 
+def _log_live_entry_evictions(
+    before: Dict[str, int],
+    after: Dict[str, int],
+    *,
+    max_entries: int,
+    now: int,
+    logger: logging.Logger,
+) -> None:
+    """Warn when capacity enforcement drops entries that have not expired yet."""
+    live_dropped = sorted(
+        (entry for entry in before if entry not in after and before[entry] > now),
+        key=lambda entry: before[entry],
+    )
+    if not live_dropped:
+        return
+
+    examples = ", ".join(live_dropped[:_EVICTED_ENTRY_EXAMPLES])
+    remaining = len(live_dropped) - _EVICTED_ENTRY_EXAMPLES
+    suffix = f" (+{remaining} more)" if remaining > 0 else ""
+    logger.warning(
+        "Whitelist capacity limit (%d) dropped %d active entries before expiry: %s%s",
+        max_entries,
+        len(live_dropped),
+        examples,
+        suffix,
+    )
+
+
 def _read_whitelist_file(whitelist_path: Path) -> Dict[str, int]:
     whitelist_path = validate_whitelist_storage_path(whitelist_path)
     if not whitelist_path.exists():
@@ -354,25 +389,50 @@ class WhitelistStore:
                 normalized, _ = _normalize_serialized_whitelist(
                     persisted, drop_expired=True, now=now
                 )
+                # Fail loudly instead of silently discarding a grant that was
+                # already reported (and advertised to firewalld) as successful.
+                if (
+                    self.max_entries > 0
+                    and canonical not in normalized
+                    and len(normalized) >= self.max_entries
+                ):
+                    raise WhitelistCapacityExceededError(
+                        f"Whitelist is at capacity ({self.max_entries} entries); "
+                        f"cannot add new entry {canonical}"
+                    )
                 normalized[canonical] = expiry_time
-                normalized = _limit_whitelist_entries(normalized, self.max_entries)
-                _write_whitelist_file(self.storage_path, normalized)
-                self._index = DynamicWhitelistIndex.from_serialized(normalized)
+                limited = _limit_whitelist_entries(normalized, self.max_entries)
+                _log_live_entry_evictions(
+                    normalized,
+                    limited,
+                    max_entries=self.max_entries,
+                    now=now,
+                    logger=self.logger,
+                )
+                _write_whitelist_file(self.storage_path, limited)
+                self._index = DynamicWhitelistIndex.from_serialized(limited)
                 self._pending_compaction = False
 
     def replace(self, whitelist: Dict[str, Any]) -> Dict[str, int]:
         now = int(time.time())
         normalized, _ = _normalize_serialized_whitelist(whitelist, drop_expired=False, now=now)
-        normalized = _limit_whitelist_entries(normalized, self.max_entries)
+        limited = _limit_whitelist_entries(normalized, self.max_entries)
+        _log_live_entry_evictions(
+            normalized,
+            limited,
+            max_entries=self.max_entries,
+            now=now,
+            logger=self.logger,
+        )
         with self._lock:
             with _interprocess_whitelist_lock(self.storage_path):
-                _write_whitelist_file(self.storage_path, normalized)
+                _write_whitelist_file(self.storage_path, limited)
                 active, changed = _normalize_serialized_whitelist(
-                    normalized, drop_expired=True, now=now
+                    limited, drop_expired=True, now=now
                 )
                 self._index = DynamicWhitelistIndex.from_serialized(active)
                 self._pending_compaction = changed
-        return normalized
+        return limited
 
     def compact_expired(self, now: Optional[int] = None) -> bool:
         cutoff = int(time.time()) if now is None else now
@@ -390,6 +450,13 @@ class WhitelistStore:
                     persisted, drop_expired=True, now=cutoff
                 )
                 compacted = _limit_whitelist_entries(active, self.max_entries)
+                _log_live_entry_evictions(
+                    active,
+                    compacted,
+                    max_entries=self.max_entries,
+                    now=cutoff,
+                    logger=self.logger,
+                )
                 wrote = changed or compacted != persisted
                 if wrote:
                     _write_whitelist_file(self.storage_path, compacted)
@@ -965,6 +1032,30 @@ def can_record_knock_attempt(settings: SettingsLike, actor: str, outcome: str) -
     return runtime_state.rate_limiter.can_allow(actor, outcome, int(time.time()))
 
 
+def _describe_monitored_ports(firewalld_integration: Any) -> str:
+    """Best-effort monitored-ports context for rollback logs; never raises.
+
+    FirewalldIntegration.monitored_ports entries are plain dicts
+    (``{"port": 443, "protocol": "tcp"}``); attribute-style entries are also
+    accepted for test doubles. Log context must never break the rollback
+    path that reports it.
+    """
+    monitored_ports = getattr(firewalld_integration, "monitored_ports", None)
+    if not isinstance(monitored_ports, list):
+        return ""
+    labels: list[str] = []
+    for entry in monitored_ports:
+        if isinstance(entry, dict):
+            port = entry.get("port")
+            protocol = entry.get("protocol", "tcp")
+        else:
+            port = getattr(entry, "port", None)
+            protocol = getattr(entry, "protocol", None)
+        if port is not None and protocol is not None:
+            labels.append(f"{port}/{protocol}")
+    return f" on monitored ports {', '.join(labels)}" if labels else ""
+
+
 def add_ip_to_whitelist_with_firewalld(
     ip_or_cidr: str, expiry_time: int, settings: SettingsLike
 ) -> bool:
@@ -985,17 +1076,33 @@ def add_ip_to_whitelist_with_firewalld(
     except Exception as exc:
         if firewalld_integration and firewalld_integration.is_enabled():
             try:
-                firewalld_integration.remove_whitelist_rule(ip_or_cidr)
+                rollback_succeeded = firewalld_integration.remove_whitelist_rule(ip_or_cidr)
+            except Exception as rollback_error:
+                rollback_failure = f"remove_whitelist_rule raised: {rollback_error}"
+            else:
+                rollback_failure = (
+                    "remove_whitelist_rule returned False" if not rollback_succeeded else None
+                )
+
+            ports_context = _describe_monitored_ports(firewalld_integration)
+
+            if rollback_failure:
+                logging.error(
+                    "Failed to rollback firewalld rules for whitelist entry %s%s; "
+                    "the firewall rule may remain active until TTL expiry (orphan window): %s",
+                    ip_or_cidr,
+                    ports_context,
+                    rollback_failure,
+                )
+            else:
                 logging.error(
                     "Rolled back firewalld rules for %s due to whitelist persistence failure: %s",
                     ip_or_cidr,
                     exc,
                 )
-            except Exception as rollback_error:
-                logging.error(
-                    "Failed to rollback firewalld rules for %s: %s",
-                    ip_or_cidr,
-                    rollback_error,
-                )
+        if isinstance(exc, WhitelistCapacityExceededError):
+            # Capacity is a policy outcome, not an internal failure: surface it
+            # so the caller can answer 503 instead of reporting 500/200.
+            raise
         logging.error("Failed to persist whitelist entry for %s: %s", ip_or_cidr, exc)
         return False

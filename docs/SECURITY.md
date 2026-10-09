@@ -104,6 +104,12 @@ authorization on the in-memory index while preserving locked, atomic persistence
 
 **Fix**: Configurable limits on whitelist entries with automatic cleanup of oldest entries.
 
+Capacity enforcement now fails loudly instead of silently discarding grants:
+
+- When the whitelist already holds `security.max_whitelist_entries` entries, a knock for a brand-new entry is rejected with `503 Service Unavailable` (`"Whitelist is at capacity. Try again later."`). Knocker never returns success for an entry it could not persist, and any firewalld rule installed for that entry is rolled back on a best-effort basis. A failed rollback is logged at ERROR level, and the rule may remain active until its TTL expires.
+- Refreshing (re-knocking) an entry that is already in the whitelist keeps working at capacity, so existing clients do not lose access while the store is full.
+- Background compaction still evicts the entries that expire soonest when the store exceeds the limit; if that eviction drops entries that had not expired yet, a WARNING naming the count and a few examples is logged.
+
 **Configuration**:
 ```yaml
 security:

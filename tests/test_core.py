@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 import time
 import ipaddress
@@ -314,6 +316,90 @@ def test_whitelist_store_compaction_preserves_entries_added_by_other_processes(t
     assert store.compact_expired(now=now) is False
     assert core._read_whitelist_file(whitelist_path) == {"198.51.100.20": now + 60}
     assert store.active_snapshot() == {"198.51.100.20": now + 60}
+
+
+def test_whitelist_store_rejects_new_entry_at_capacity(tmp_path):
+    """A store at capacity refuses a brand-new entry instead of silently dropping it."""
+    whitelist_path = tmp_path / "whitelist.json"
+    now = int(time.time())
+    store = core.WhitelistStore(storage_path=whitelist_path, max_entries=2)
+
+    long_expiry = now + 3600
+    store.add("203.0.113.10", long_expiry)
+    store.add("203.0.113.11", long_expiry)
+
+    with pytest.raises(core.WhitelistCapacityExceededError):
+        store.add("203.0.113.12", now + 60)  # Would rank below the eviction floor
+
+    snapshot = store.active_snapshot()
+    assert snapshot == {"203.0.113.10": long_expiry, "203.0.113.11": long_expiry}
+    assert core._read_whitelist_file(whitelist_path) == snapshot
+    assert store.contains(ipaddress.ip_address("203.0.113.12"), now=now) is False
+
+
+def test_whitelist_store_refresh_at_capacity_updates_existing_entry(tmp_path):
+    """Re-knocking an entry that is already stored keeps working at capacity."""
+    whitelist_path = tmp_path / "whitelist.json"
+    now = int(time.time())
+    store = core.WhitelistStore(storage_path=whitelist_path, max_entries=2)
+    long_expiry = now + 3600
+
+    store.add("203.0.113.10", long_expiry)
+    store.add("203.0.113.11", long_expiry)
+
+    refreshed_expiry = now + 60
+    store.add("203.0.113.10", refreshed_expiry)
+
+    assert len(store.active_snapshot()) == 2
+    assert store.active_snapshot()["203.0.113.10"] == refreshed_expiry
+    assert core._read_whitelist_file(whitelist_path)["203.0.113.10"] == refreshed_expiry
+
+
+def test_add_with_firewalld_rolls_back_rules_on_capacity_error(tmp_path):
+    """Capacity rejections still roll back pre-installed firewalld rules."""
+    from unittest.mock import Mock, patch
+
+    integration = Mock()
+    integration.is_enabled.return_value = True
+    integration.add_whitelist_rule.return_value = True
+    integration.remove_whitelist_rule.return_value = True
+
+    settings = {
+        "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+        "security": {"max_whitelist_entries": 1},
+        "whitelist": {"storage_path": str(tmp_path / "whitelist.json")},
+    }
+    state = core.ensure_runtime_state(settings)
+    now = int(time.time())
+
+    assert core.add_ip_to_whitelist_with_firewalld("198.51.100.10", now + 3600, settings) is True
+
+    with patch("src.firewalld.get_firewalld_integration", return_value=integration):
+        with pytest.raises(core.WhitelistCapacityExceededError):
+            core.add_ip_to_whitelist_with_firewalld("198.51.100.20", now + 300, settings)
+
+    integration.add_whitelist_rule.assert_called_once_with("198.51.100.20", now + 300)
+    integration.remove_whitelist_rule.assert_called_once_with("198.51.100.20")
+    assert state.whitelist.active_snapshot() == {"198.51.100.10": now + 3600}
+
+
+def test_compaction_evicting_live_entries_logs_warning(tmp_path, caplog):
+    """Compaction warns when capacity forces live entries out before they expire."""
+    whitelist_path = tmp_path / "whitelist.json"
+    now = int(time.time())
+    live_entries = {f"203.0.113.{index}": now + 3600 - index for index in range(4)}
+    core._write_whitelist_file(whitelist_path, {**live_entries, "192.0.2.99": now - 30})
+    store = core.WhitelistStore(storage_path=whitelist_path, max_entries=2)
+
+    caplog.set_level(logging.WARNING)
+    assert store.compact_expired(now=now) is True
+
+    warning = next(record for record in caplog.records if record.levelno == logging.WARNING)
+    message = warning.getMessage()
+    assert "capacity limit (2)" in message
+    assert "dropped 2 active entries" in message
+    assert "203.0.113.2" in message
+    assert "192.0.2.99" not in message
 
 
 @pytest.mark.parametrize(

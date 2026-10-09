@@ -337,12 +337,11 @@ class TestWhitelistSizeLimits:
     """Test that whitelist size limits prevent DoS."""
 
     def test_whitelist_size_limit_enforced(self):
-        """Whitelist should be limited to prevent unlimited growth."""
-        # Add entries up to the limit
+        """Knocks past the whitelist capacity fail closed instead of being dropped."""
         max_entries = 100  # From our test config
 
-        # Add entries beyond the limit
-        for i in range(max_entries + 10):
+        # Fill the whitelist up to the limit
+        for i in range(max_entries):
             forwarded_ip = f"10.1.{i // 250}.{(i % 250) + 1}"
             response = client.post(
                 "/knock",
@@ -355,10 +354,28 @@ class TestWhitelistSizeLimits:
             )
             assert response.status_code == 200
 
-        # Check that whitelist doesn't exceed the limit
         settings = app.dependency_overrides[get_settings]()
         whitelist = core.ensure_runtime_state(settings).whitelist.active_snapshot()
         assert len(whitelist) <= max_entries
+
+        # A brand-new entry cannot be admitted at capacity, and Knocker must not
+        # report success for a grant it never stored.
+        rejected_ip = "10.9.9.9"
+        headers = {
+            "X-Api-Key": "ADMIN_KEY",
+            "X-Forwarded-For": rejected_ip,
+            "x-knocker-test-direct-ip": "127.0.0.200",
+        }
+        response = client.post(
+            "/knock", headers=headers, json={"ip_address": rejected_ip, "ttl": 3600}
+        )
+
+        assert response.status_code == 503
+        assert response.json() == {"error": "Whitelist is at capacity. Try again later."}
+        assert response.headers["Access-Control-Allow-Origin"] == "https://trusted.example.com"
+        whitelist = core.ensure_runtime_state(settings).whitelist.active_snapshot()
+        assert len(whitelist) <= max_entries
+        assert rejected_ip not in whitelist
 
 
 class TestCORSPolicy:
