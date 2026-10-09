@@ -338,28 +338,32 @@ uv run pytest tests/test_firewalld.py -v
 
 ### Integration Tests
 
-Test with real firewalld daemon:
+Test with a real FirewallD daemon in a disposable Docker network namespace:
 
 ```bash
-# Start test environment
-cd dev/
-./firewalld_integration_test.sh
+bash dev/integration_tests.sh firewalld
 ```
 
-The integration script treats the `knocker` zone as test-owned. Its exit cleanup
-removes the permanent zone, reloads firewalld, and removes firewalld's zone
-backup file. If the daemon is stopped, cleanup removes the zone from the
-offline configuration instead. If an active daemon cannot complete the normal
-delete/reload path, cleanup temporarily stops it, performs the offline cleanup,
-and restores the daemon to its original active state. This prevents the test's
-DROP rules from surviving the test run and affecting the host firewall.
+No host FirewallD, systemd, or D-Bus access is required. The daemon and private
+system bus run alongside the production Knocker image inside the test container.
+Only that container receives `NET_ADMIN`. Actual clients in separate namespaces
+verify protected TCP and UDP ports over IPv4 and IPv6, including TTL replacement,
+expiry, source isolation, forwarded-header handling, remote/CIDR grants, readiness,
+and daemon failures. The suite runs in CI on every pull request.
 
-The startup-recovery case creates timed allow rules for ports 80, 443, and 22,
-verifies each exact rule, removes all three rules, and then restarts Knocker.
-Removing all timed runtime rules before the restart simulates complete runtime
-rule loss while preserving the persisted whitelist that Knocker must restore.
-It also avoids relying on Firewalld timeout cleanup during the reload performed
-by startup on releases that do not handle active timeout entries reliably.
+The recovery case removes every exact timed rule, verifies blocked packets,
+reloads FirewallD, and restarts Knocker while retaining the whitelist volume.
+It verifies recovered access and the original persisted expiry timestamps.
+Exit cleanup destroys the test containers, network, and volume; it never calls
+host `firewall-cmd` or `systemctl`.
+
+The original `bash dev/firewalld_integration_test.sh` is also a required host
+D-Bus/FirewallD check. It uses a unique test zone and verifies every IPv4/IPv6
+TCP/UDP rule, expiry/replacement, persistence/recovery and readiness. Run it on
+a development host with FirewallD active. GitHub Actions runs this same script on
+every PR using a dedicated disposable Linux runner; it is required alongside the
+isolated packet tests. `bash dev/test.sh linux` runs the complete suite locally.
+See [TESTING.md](TESTING.md).
 
 ### Manual Testing
 
