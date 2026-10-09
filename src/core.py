@@ -39,8 +39,20 @@ except ImportError:  # pragma: no cover - fallback for direct module execution
 IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
 
+# Forwarded entries become per-actor identities, so they are length-bounded
+# before they can reach rate-limiter state or logs. 64 characters covers every
+# real IPv6 literal (including a scope ID) with wide margin.
+MAX_FORWARDED_ENTRY_LENGTH = 64
+
 _runtime_state_lock = threading.Lock()
 _RUNTIME_STATE_KEY = "_knocker_runtime_state"
+
+
+class WhitelistCapacityExceededError(RuntimeError):
+    """Raised when a new whitelist entry cannot be kept within the configured capacity."""
+
+
+_EVICTED_ENTRY_EXAMPLES = 5
 
 
 def get_whitelist_storage_path(settings: SettingsLike) -> Path:
@@ -248,6 +260,34 @@ def _limit_whitelist_entries(whitelist: Dict[str, int], max_entries: int) -> Dic
     return dict(sorted_items[-max_entries:])
 
 
+def _log_live_entry_evictions(
+    before: Dict[str, int],
+    after: Dict[str, int],
+    *,
+    max_entries: int,
+    now: int,
+    logger: logging.Logger,
+) -> None:
+    """Warn when capacity enforcement drops entries that have not expired yet."""
+    live_dropped = sorted(
+        (entry for entry in before if entry not in after and before[entry] > now),
+        key=lambda entry: before[entry],
+    )
+    if not live_dropped:
+        return
+
+    examples = ", ".join(live_dropped[:_EVICTED_ENTRY_EXAMPLES])
+    remaining = len(live_dropped) - _EVICTED_ENTRY_EXAMPLES
+    suffix = f" (+{remaining} more)" if remaining > 0 else ""
+    logger.warning(
+        "Whitelist capacity limit (%d) dropped %d active entries before expiry: %s%s",
+        max_entries,
+        len(live_dropped),
+        examples,
+        suffix,
+    )
+
+
 def _read_whitelist_file(whitelist_path: Path) -> Dict[str, int]:
     whitelist_path = validate_whitelist_storage_path(whitelist_path)
     if not whitelist_path.exists():
@@ -349,25 +389,50 @@ class WhitelistStore:
                 normalized, _ = _normalize_serialized_whitelist(
                     persisted, drop_expired=True, now=now
                 )
+                # Fail loudly instead of silently discarding a grant that was
+                # already reported (and advertised to firewalld) as successful.
+                if (
+                    self.max_entries > 0
+                    and canonical not in normalized
+                    and len(normalized) >= self.max_entries
+                ):
+                    raise WhitelistCapacityExceededError(
+                        f"Whitelist is at capacity ({self.max_entries} entries); "
+                        f"cannot add new entry {canonical}"
+                    )
                 normalized[canonical] = expiry_time
-                normalized = _limit_whitelist_entries(normalized, self.max_entries)
-                _write_whitelist_file(self.storage_path, normalized)
-                self._index = DynamicWhitelistIndex.from_serialized(normalized)
+                limited = _limit_whitelist_entries(normalized, self.max_entries)
+                _log_live_entry_evictions(
+                    normalized,
+                    limited,
+                    max_entries=self.max_entries,
+                    now=now,
+                    logger=self.logger,
+                )
+                _write_whitelist_file(self.storage_path, limited)
+                self._index = DynamicWhitelistIndex.from_serialized(limited)
                 self._pending_compaction = False
 
     def replace(self, whitelist: Dict[str, Any]) -> Dict[str, int]:
         now = int(time.time())
         normalized, _ = _normalize_serialized_whitelist(whitelist, drop_expired=False, now=now)
-        normalized = _limit_whitelist_entries(normalized, self.max_entries)
+        limited = _limit_whitelist_entries(normalized, self.max_entries)
+        _log_live_entry_evictions(
+            normalized,
+            limited,
+            max_entries=self.max_entries,
+            now=now,
+            logger=self.logger,
+        )
         with self._lock:
             with _interprocess_whitelist_lock(self.storage_path):
-                _write_whitelist_file(self.storage_path, normalized)
+                _write_whitelist_file(self.storage_path, limited)
                 active, changed = _normalize_serialized_whitelist(
-                    normalized, drop_expired=True, now=now
+                    limited, drop_expired=True, now=now
                 )
                 self._index = DynamicWhitelistIndex.from_serialized(active)
                 self._pending_compaction = changed
-        return normalized
+        return limited
 
     def compact_expired(self, now: Optional[int] = None) -> bool:
         cutoff = int(time.time()) if now is None else now
@@ -385,6 +450,13 @@ class WhitelistStore:
                     persisted, drop_expired=True, now=cutoff
                 )
                 compacted = _limit_whitelist_entries(active, self.max_entries)
+                _log_live_entry_evictions(
+                    active,
+                    compacted,
+                    max_entries=self.max_entries,
+                    now=cutoff,
+                    logger=self.logger,
+                )
                 wrote = changed or compacted != persisted
                 if wrote:
                     _write_whitelist_file(self.storage_path, compacted)
@@ -429,6 +501,30 @@ def normalize_path(path: str) -> str:
 # and path separators ("/", "\"), and strips control characters, so a decorated
 # value would otherwise be trimmed into a hostname no routing layer used.
 _UNSAFE_HOST_CHARACTERS = ("@", "?", "#", "/", "\\")
+
+
+_AMBIGUOUS_PATH_MARKERS: Tuple[str, ...] = ("%", ";", "\\", "\x00", "�")
+
+
+def _is_ambiguous_request_path(path: str) -> bool:
+    """Detect request paths a backend may normalize differently than Knocker.
+
+    Knocker decodes percent-escapes once and folds only literal ``.``/``..``
+    segments. Backends that strip path parameters (``;``), double-decode escapes,
+    translate separators, truncate at NUL, or map invalid UTF-8 to ``.`` can turn
+    such a path into one outside an excluded prefix, so the unauthenticated
+    exclusion shortcut must not be offered for them.
+    """
+    if not path:
+        return False
+
+    if "://" in path:
+        raw_path = urlsplit(path).path or "/"
+    else:
+        raw_path = path.split("#", 1)[0].split("?", 1)[0]
+
+    decoded_path = unquote(raw_path)
+    return any(marker in decoded_path for marker in _AMBIGUOUS_PATH_MARKERS)
 
 
 def normalize_host(host: Optional[str]) -> Optional[str]:
@@ -480,6 +576,13 @@ class PathExclusions:
         return cls(global_paths=global_paths, host_paths=host_paths)
 
     def matches(self, host: Optional[str], path: str) -> bool:
+        # Fail closed for request paths that stay ambiguous after one decode:
+        # a re-normalizing backend could resolve them outside the excluded
+        # prefix. The request then falls through to the IP whitelist check.
+        # Configured prefixes are normalized in from_config and never reach this.
+        if _is_ambiguous_request_path(path):
+            return False
+
         normalized_host = normalize_host(host)
         normalized_path = normalize_path(path)
 
@@ -558,7 +661,12 @@ def resolve_client_ip(
         return None, True
 
     raw_entries = [entry.strip() for entry in forwarded_for.split(",")]
-    if not raw_entries or any(not entry for entry in raw_entries) or len(raw_entries) > 20:
+    if (
+        not raw_entries
+        or any(not entry for entry in raw_entries)
+        or len(raw_entries) > 20
+        or any(len(entry) > MAX_FORWARDED_ENTRY_LENGTH for entry in raw_entries)
+    ):
         return None, True
     entries = raw_entries
 
@@ -656,9 +764,11 @@ class SlidingWindowRateLimiter:
     window_seconds: int
     successful_requests: int
     failed_requests: int
+    max_tracked_actors: int = 100_000
     _events: Dict[Tuple[str, str], Deque[Tuple[int, int]]] = field(
         default_factory=lambda: defaultdict(deque)
     )
+    _actor_order: Dict[str, None] = field(default_factory=dict)
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _token_counter: int = field(default=0, init=False)
     _last_global_prune: int = field(default=0, init=False)
@@ -669,11 +779,45 @@ class SlidingWindowRateLimiter:
             window_seconds=config.window_seconds,
             successful_requests=config.successful_requests,
             failed_requests=config.failed_requests,
+            max_tracked_actors=config.max_tracked_actors,
         )
 
     def _prune_bucket(self, bucket: Deque[Tuple[int, int]], cutoff: int) -> None:
         while bucket and bucket[0][0] <= cutoff:
             bucket.popleft()
+
+    def _remove_bucket(self, bucket_key: Tuple[str, str]) -> None:
+        self._events.pop(bucket_key, None)
+        actor = bucket_key[1]
+        if not any(key[1] == actor for key in self._events):
+            self._actor_order.pop(actor, None)
+
+    def _enforce_actor_cap(self, incoming_actor: str) -> None:
+        """Bound how many distinct actors the limiter tracks.
+
+        Actor identity is resolved client IP, which a trusted proxy derives
+        from client-claimable headers (X-Forwarded-For). Without a bound, a
+        flood of invented identities allocates an unbounded number of buckets.
+        Evicting oldest-inserted actors fails open for those actors - they
+        simply lose all their throttle history - because an exhausted rate limiter
+        must never become a memory-exhaustion primitive against this process.
+        """
+        if incoming_actor in self._actor_order:
+            return
+
+        # Plain dict iteration order is insertion order, so next(iter(...))
+        # yields the least recently seen remaining actor. Remove all outcome
+        # buckets for that actor before admitting the incoming actor.
+        while len(self._actor_order) >= self.max_tracked_actors:
+            oldest_actor = next(iter(self._actor_order), None)
+            if oldest_actor is None or oldest_actor == incoming_actor:
+                break
+            self._actor_order.pop(oldest_actor, None)
+            for bucket_key in tuple(self._events):
+                if bucket_key[1] == oldest_actor:
+                    self._events.pop(bucket_key, None)
+
+        self._actor_order[incoming_actor] = None
 
     def _prune_all_buckets(self, cutoff: int, now: int) -> None:
         if self._last_global_prune and now - self._last_global_prune < self.window_seconds:
@@ -686,7 +830,7 @@ class SlidingWindowRateLimiter:
                 empty_keys.append(bucket_key)
 
         for bucket_key in empty_keys:
-            self._events.pop(bucket_key, None)
+            self._remove_bucket(bucket_key)
 
         self._last_global_prune = now
 
@@ -702,11 +846,12 @@ class SlidingWindowRateLimiter:
         bucket_key = (outcome, actor)
         with self._lock:
             self._prune_all_buckets(cutoff, timestamp)
+            self._enforce_actor_cap(actor)
             bucket = self._events[bucket_key]
             self._prune_bucket(bucket, cutoff)
             if len(bucket) >= limit:
                 if not bucket:
-                    self._events.pop(bucket_key, None)
+                    self._remove_bucket(bucket_key)
                 return None
             self._token_counter += 1
             reservation = (timestamp, self._token_counter)
@@ -727,7 +872,7 @@ class SlidingWindowRateLimiter:
             except ValueError:
                 return
             if not bucket:
-                self._events.pop(bucket_key, None)
+                self._remove_bucket(bucket_key)
 
     def allow(self, actor: str, outcome: str, now: Optional[int] = None) -> bool:
         reservation = self.reserve(actor, outcome, now)
@@ -748,7 +893,7 @@ class SlidingWindowRateLimiter:
             bucket = self._events[bucket_key]
             self._prune_bucket(bucket, cutoff)
             if not bucket:
-                self._events.pop(bucket_key, None)
+                self._remove_bucket(bucket_key)
             return len(bucket) < limit
 
 
@@ -915,6 +1060,30 @@ def can_record_knock_attempt(settings: SettingsLike, actor: str, outcome: str) -
     return runtime_state.rate_limiter.can_allow(actor, outcome, int(time.time()))
 
 
+def _describe_monitored_ports(firewalld_integration: Any) -> str:
+    """Best-effort monitored-ports context for rollback logs; never raises.
+
+    FirewalldIntegration.monitored_ports entries are plain dicts
+    (``{"port": 443, "protocol": "tcp"}``); attribute-style entries are also
+    accepted for test doubles. Log context must never break the rollback
+    path that reports it.
+    """
+    monitored_ports = getattr(firewalld_integration, "monitored_ports", None)
+    if not isinstance(monitored_ports, list):
+        return ""
+    labels: list[str] = []
+    for entry in monitored_ports:
+        if isinstance(entry, dict):
+            port = entry.get("port")
+            protocol = entry.get("protocol", "tcp")
+        else:
+            port = getattr(entry, "port", None)
+            protocol = getattr(entry, "protocol", None)
+        if port is not None and protocol is not None:
+            labels.append(f"{port}/{protocol}")
+    return f" on monitored ports {', '.join(labels)}" if labels else ""
+
+
 def add_ip_to_whitelist_with_firewalld(
     ip_or_cidr: str, expiry_time: int, settings: SettingsLike
 ) -> bool:
@@ -935,17 +1104,33 @@ def add_ip_to_whitelist_with_firewalld(
     except Exception as exc:
         if firewalld_integration and firewalld_integration.is_enabled():
             try:
-                firewalld_integration.remove_whitelist_rule(ip_or_cidr)
+                rollback_succeeded = firewalld_integration.remove_whitelist_rule(ip_or_cidr)
+            except Exception as rollback_error:
+                rollback_failure = f"remove_whitelist_rule raised: {rollback_error}"
+            else:
+                rollback_failure = (
+                    "remove_whitelist_rule returned False" if not rollback_succeeded else None
+                )
+
+            ports_context = _describe_monitored_ports(firewalld_integration)
+
+            if rollback_failure:
+                logging.error(
+                    "Failed to rollback firewalld rules for whitelist entry %s%s; "
+                    "the firewall rule may remain active until TTL expiry (orphan window): %s",
+                    ip_or_cidr,
+                    ports_context,
+                    rollback_failure,
+                )
+            else:
                 logging.error(
                     "Rolled back firewalld rules for %s due to whitelist persistence failure: %s",
                     ip_or_cidr,
                     exc,
                 )
-            except Exception as rollback_error:
-                logging.error(
-                    "Failed to rollback firewalld rules for %s: %s",
-                    ip_or_cidr,
-                    rollback_error,
-                )
+        if isinstance(exc, WhitelistCapacityExceededError):
+            # Capacity is a policy outcome, not an internal failure: surface it
+            # so the caller can answer 503 instead of reporting 500/200.
+            raise
         logging.error("Failed to persist whitelist entry for %s: %s", ip_or_cidr, exc)
         return False

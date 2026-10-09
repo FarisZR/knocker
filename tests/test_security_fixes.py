@@ -6,6 +6,7 @@ import pytest
 import logging
 from fastapi.testclient import TestClient
 from src.main import app, get_settings
+from src.config import SecuritySettings, validate_settings
 from src import core
 
 
@@ -170,6 +171,137 @@ class TestPathTraversalPrevention:
             assert response.status_code == expected_status, f"Failed for path: {path}"
 
 
+class TestAmbiguousPathExclusionGuard:
+    """Request paths a backend may re-normalize must not use the exclusion shortcut."""
+
+    # Families that survive knocker's single-decode normalization while staying
+    # under the excluded prefix, yet resolve onto /admin on re-normalizing stacks.
+    ambiguous_request_paths = [
+        "/api/status/..;/admin",  # ;path-parameters stripped by Tomcat/Jetty/Spring
+        "/api/status/%252e%252e/admin",  # double-encoded dot segments
+        "/api/status/%252f..%252fadmin",  # double-encoded separators
+        "/api/status/..%5C..%5Cadmin",  # backslash separator translation
+        "/api/status/..%00/admin",  # NUL truncation on legacy stacks
+        "/api/status/%c0%ae%c0%ae/admin",  # overlong UTF-8 decoding to "."
+    ]
+
+    def test_exclusion_refused_for_ambiguous_paths(self, secure_settings):
+        """Ambiguous request paths never match an exclusion for a non-whitelisted IP."""
+        for path in self.ambiguous_request_paths:
+            assert core.is_path_excluded(path, secure_settings) is False, (
+                f"Exclusion should be refused for: {path}"
+            )
+
+    def test_ambiguous_path_prefix_match_returns_false(self):
+        """PathExclusions.matches() refuses ambiguous request paths outright."""
+        security_settings = SecuritySettings.model_validate({"excluded_paths": ["/public"]})
+        exclusions = core.PathExclusions.from_config(security_settings)
+
+        for path in ("/public/..;/admin", "/public/%252e%252e/admin"):
+            assert exclusions.matches(None, path) is False
+
+        # Host-scoped exclusions inherit the same guard.
+        scoped = SecuritySettings.model_validate(
+            {"excluded_paths_by_host": {"files.example.com": ["/share"]}}
+        )
+        scoped_exclusions = core.PathExclusions.from_config(scoped)
+        assert scoped_exclusions.matches("files.example.com", "/share/..;/admin") is False
+
+    def test_ambiguous_paths_still_fall_through_to_whitelist(self):
+        """Fail closed only drops the shortcut; a whitelisted IP is still allowed."""
+        response = client.get(
+            "/verify",
+            headers={"X-Forwarded-For": "8.8.8.8", "X-Forwarded-Uri": "/api/status/..;/admin"},
+        )
+        assert response.status_code == 401
+
+        client.post(
+            "/knock",
+            headers={"X-Api-Key": "USER_KEY", "X-Forwarded-For": "8.8.8.8"},
+        )
+
+        response = client.get(
+            "/verify",
+            headers={"X-Forwarded-For": "8.8.8.8", "X-Forwarded-Uri": "/api/status/..;/admin"},
+        )
+        assert response.status_code == 200
+
+    @pytest.mark.parametrize("path", ambiguous_request_paths)
+    def test_verify_rejects_ambiguous_paths_for_non_whitelisted_ip(self, path):
+        """/verify must not treat an ambiguous request path as excluded."""
+        response = client.get(
+            "/verify", headers={"X-Forwarded-For": "8.8.8.8", "X-Forwarded-Uri": path}
+        )
+        assert response.status_code == 401, f"Expected 401 for path: {path}"
+
+    def test_single_decode_traversals_still_rejected(self):
+        """Already-neutralized single-decode traversals stay rejected (no regression)."""
+        still_blocked = [
+            "/api/status/../secret",
+            "/api/status/%2e%2e/secret",
+        ]
+        for path in still_blocked:
+            response = client.get(
+                "/verify", headers={"X-Forwarded-For": "8.8.8.8", "X-Forwarded-Uri": path}
+            )
+            assert response.status_code == 401, f"Expected 401 for path: {path}"
+
+    def test_plain_excluded_path_still_allowed(self):
+        """A benign subpath under an excluded prefix stays unauthenticated."""
+        response = client.get(
+            "/verify", headers={"X-Forwarded-For": "8.8.8.8", "X-Forwarded-Uri": "/api/status/foo"}
+        )
+        assert response.status_code == 200
+
+    def test_legitimate_single_encoded_paths_not_flagged(self):
+        """Ordinary percent-encoding decodes fully once and keeps its exclusion."""
+        legitimate_paths = [
+            "/api/status/hello%20world",
+            "/api/status/h%C3%A4llo",
+            "/api/status/report%2Epdf",
+        ]
+        for path in legitimate_paths:
+            response = client.get(
+                "/verify", headers={"X-Forwarded-For": "8.8.8.8", "X-Forwarded-Uri": path}
+            )
+            assert response.status_code == 200, f"Expected 200 for path: {path}"
+
+    def test_query_strings_do_not_trigger_the_guard(self, secure_settings):
+        """Query strings are stripped before the ambiguity check."""
+        request_path = "/api/status/list?filter=a%3Bb&next=%2Fprivate"
+        assert core.is_path_excluded(request_path, secure_settings) is True
+
+    def test_config_prefixes_with_marker_characters_still_load(self):
+        """Configured prefixes are pre-normalized and never fail because of markers."""
+        validated_security = SecuritySettings.model_validate(
+            {
+                "excluded_paths": ["/files;a=b", "/down%25load"],
+                "excluded_paths_by_host": {"files.example.com": ["/downloads%252e"]},
+            }
+        )
+
+        exclusions = core.PathExclusions.from_config(validated_security)
+
+        assert exclusions.global_paths == ("/files;a=b", "/down%load")
+        assert exclusions.host_paths["files.example.com"] == ("/downloads%2e",)
+
+    def test_full_config_with_marker_prefixes_still_validates(self, secure_settings):
+        """Settings validation accepts configurations using such marker characters."""
+        config_dict = {
+            **secure_settings,
+            "security": {
+                **secure_settings["security"],
+                "excluded_paths": ["/api/status", "/files;a=b"],
+                "excluded_paths_by_host": {"files.example.com": ["/share%20me"]},
+            },
+        }
+
+        security_settings = validate_settings(config_dict).security
+
+        assert security_settings.excluded_paths == ["/api/status", "/files;a=b"]
+        assert security_settings.excluded_paths_by_host == {"files.example.com": ["/share%20me"]}
+
+
 class TestInformationDisclosurePrevention:
     """Test that information disclosure has been reduced."""
 
@@ -205,12 +337,11 @@ class TestWhitelistSizeLimits:
     """Test that whitelist size limits prevent DoS."""
 
     def test_whitelist_size_limit_enforced(self):
-        """Whitelist should be limited to prevent unlimited growth."""
-        # Add entries up to the limit
+        """Knocks past the whitelist capacity fail closed instead of being dropped."""
         max_entries = 100  # From our test config
 
-        # Add entries beyond the limit
-        for i in range(max_entries + 10):
+        # Fill the whitelist up to the limit
+        for i in range(max_entries):
             forwarded_ip = f"10.1.{i // 250}.{(i % 250) + 1}"
             response = client.post(
                 "/knock",
@@ -223,10 +354,28 @@ class TestWhitelistSizeLimits:
             )
             assert response.status_code == 200
 
-        # Check that whitelist doesn't exceed the limit
         settings = app.dependency_overrides[get_settings]()
         whitelist = core.ensure_runtime_state(settings).whitelist.active_snapshot()
         assert len(whitelist) <= max_entries
+
+        # A brand-new entry cannot be admitted at capacity, and Knocker must not
+        # report success for a grant it never stored.
+        rejected_ip = "10.9.9.9"
+        headers = {
+            "X-Api-Key": "ADMIN_KEY",
+            "X-Forwarded-For": rejected_ip,
+            "x-knocker-test-direct-ip": "127.0.0.200",
+        }
+        response = client.post(
+            "/knock", headers=headers, json={"ip_address": rejected_ip, "ttl": 3600}
+        )
+
+        assert response.status_code == 503
+        assert response.json() == {"error": "Whitelist is at capacity. Try again later."}
+        assert response.headers["Access-Control-Allow-Origin"] == "https://trusted.example.com"
+        whitelist = core.ensure_runtime_state(settings).whitelist.active_snapshot()
+        assert len(whitelist) <= max_entries
+        assert rejected_ip not in whitelist
 
 
 class TestCORSPolicy:

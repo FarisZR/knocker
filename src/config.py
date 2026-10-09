@@ -102,6 +102,7 @@ class KnockRateLimitSettings(BaseModel):
     window_seconds: StrictInt = 60
     successful_requests: StrictInt = 20
     failed_requests: StrictInt = 30
+    max_tracked_actors: StrictInt = 100_000
 
     @model_validator(mode="after")
     def validate_limits(self) -> "KnockRateLimitSettings":
@@ -109,6 +110,8 @@ class KnockRateLimitSettings(BaseModel):
             raise ValueError("security.knock_rate_limit.window_seconds must be positive")
         if self.successful_requests < 0 or self.failed_requests < 0:
             raise ValueError("security.knock_rate_limit limits must be zero or greater")
+        if self.max_tracked_actors <= 0:
+            raise ValueError("security.knock_rate_limit.max_tracked_actors must be positive")
         return self
 
 
