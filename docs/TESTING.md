@@ -56,7 +56,7 @@ bash dev/firewalld_integration_test.sh
 ```
 
 It uses `dev/docker-compose.yml` and the host system D-Bus socket. It requires a
-running host FirewallD daemon, uv, and root or passwordless sudo for zone cleanup.
+running host FirewallD 2.0+ daemon, uv, and root or passwordless sudo for zone cleanup.
 The suite checks the actual host daemon, default zone target/priority/sources,
 every IPv4/IPv6 TCP/UDP rule, expiry and shorter TTL replacement, recovery of all
 eight timed rules with unchanged persistence, rejected keys/remote permissions,
