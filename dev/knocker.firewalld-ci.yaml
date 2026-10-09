@@ -1,0 +1,29 @@
+# Test-only keys, usable only on the isolated internal Docker network.
+server:
+  trusted_proxies: []  # Test the actual peer, including spoofed forwarded headers.
+logging:
+  level: DEBUG
+whitelist:
+  storage_path: /data/whitelist.json
+firewalld:
+  enabled: true
+  zone_name: knocker
+  zone_priority: -100
+  # Allow the knock API and unmonitored control port; protected ports have DROP rules.
+  zone_target: ACCEPT
+  default_action: drop
+  monitored_ports:
+    - {port: 9000, protocol: tcp}
+    - {port: 9001, protocol: udp}
+  monitored_ips:
+    - 0.0.0.0/0
+    - ::/0
+api_keys:
+  - name: admin
+    key: dev-only-admin-9c2f4a6d0d4b8f17e6a1c5b9d3f7a2e8
+    max_ttl: 3600
+    allow_remote_whitelist: true
+  - name: personal
+    key: dev-only-phone-4b7e1a9d2c6f8e3a5d0b7c1f9a4e6d2b
+    max_ttl: 3600
+    allow_remote_whitelist: false
