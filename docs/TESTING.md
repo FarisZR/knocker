@@ -12,6 +12,9 @@ disposable GitHub-hosted Linux runner and invokes `dev/firewalld_integration_tes
 directly. Host D-Bus access and the default zone-target case are required checks,
 alongside the real packet tests. There is no emulation or VM boot step in the workflow.
 
+After dependency updates, run `uv sync --locked --all-groups` before the Python
+checks so validation uses the committed dependency and tool versions.
+
 For environments without a host FirewallD daemon, run the portable subset:
 
 ```bash
