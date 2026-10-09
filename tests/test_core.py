@@ -489,6 +489,101 @@ def test_settings_accepts_empty_host_exclusions_as_yaml_null(tmp_path):
     assert settings.security.excluded_paths_by_host == {}
 
 
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("jellyfin.example.com", "jellyfin.example.com"),
+        ("Jellyfin.Example.Com", "jellyfin.example.com"),
+        ("jellyfin.example.com:443", "jellyfin.example.com"),
+        ("[2001:db8::1]:8443", "2001:db8::1"),
+        ("*", "*"),
+        (" jellyfin.example.com ", "jellyfin.example.com"),
+    ],
+)
+def test_normalize_host_accepts_bare_authorities(host, expected):
+    assert core.normalize_host(host) == expected
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "public.example.com,app.example.com",
+        ",",
+        "user@public.example.com",
+        "public.example.com?x=1",
+        "public.example.com#fragment",
+        "public.example.com/public",
+        "public.example.com\\shared",
+        "public.example.com\tindent",
+        "public.example.com\nnewline",
+        "public.example.com\0nul",
+        "\x0bhost",
+        "\x0chost",
+        "\x01host",
+        "\x7fhost",
+    ],
+)
+def test_normalize_host_rejects_ambiguous_host_values(host):
+    """Ambiguous and control-character authorities must not normalize into a hostname."""
+    assert core.normalize_host(host) is None
+
+
+def test_resolve_request_host_uses_trusted_forwarded_host():
+    assert (
+        core.resolve_request_host("internal.example.com", "jellyfin.example.com", True)
+        == "jellyfin.example.com"
+    )
+
+
+def test_resolve_request_host_rejects_forwarded_host_chain_from_trusted_proxy():
+    """A comma-separated X-Forwarded-Host value has no single routing decision."""
+    assert (
+        core.resolve_request_host(
+            "internal.example.com", "public.example.com,app.example.com", True
+        )
+        is None
+    )
+
+
+def test_resolve_request_host_rejects_decorated_forwarded_host():
+    assert (
+        core.resolve_request_host("internal.example.com", "user@public.example.com", True) is None
+    )
+
+
+def test_resolve_request_host_without_trusted_forwarded_metadata():
+    trusted_missing = core.resolve_request_host("internal.example.com", None, True)
+    assert trusted_missing is None
+    untrusted = core.resolve_request_host("internal.example.com:8000", "public.example.com", False)
+    assert untrusted == "internal.example.com"
+
+
+@pytest.mark.parametrize(
+    "host_key",
+    [
+        "public.example.com,app.example.com",
+        "user@public.example.com",
+        "public.example.com?x=1",
+        "public.example.com#fragment",
+        "public.example.com/public",
+        "\x0bpublic.example.com",
+        "\x0cpublic.example.com",
+        "\x01public.example.com",
+        "\x7fpublic.example.com",
+    ],
+)
+def test_excluded_paths_by_host_rejects_ambiguous_configuration_keys(host_key, tmp_path):
+    """Invalid host keys must fail runtime-state construction."""
+    with pytest.raises(ValueError, match="Invalid excluded_paths_by_host host"):
+        core.ensure_runtime_state(
+            {
+                "api_keys": [{"key": "test-key", "max_ttl": 3600}],
+                "security": {"excluded_paths_by_host": {host_key: ["/public"]}},
+                "whitelist": {"storage_path": str(tmp_path / "whitelist.json")},
+            }
+        )
+
+
 def test_disabled_firewalld_still_validates_shared_mutation_capacity():
     with pytest.raises(ValueError, match="mutation_queue_capacity must be a positive integer"):
         config.validate_settings(

@@ -201,6 +201,7 @@ security:
 - **Always-allowed IPs**: Minimize the always-allowed IP list to only essential systems as single hosts (`/32` / `/128`, e.g. the proxy itself and loopback)
 - **Proxy networks are not allowlists**: Keep `always_allowed_ips` empty unless every address in the range is meant to bypass verification.
 - **Use host-scoped exclusions**: Do not globally exclude `/knock`; put the dedicated knock hostname on a direct proxy route and protect other hosts with `forward_auth`.
+- **Host-scoped exclusions only accept one bare authority**: Knocker derives the exclusion host from `X-Forwarded-Host` sent by a trusted proxy, so a comma-separated chain (which no single routing decision produced) or a decorated value (`user@host`, `host?query`, `host#fragment`, embedded `/`, `\`, C0 control character or DEL) is rejected instead of trimmed to its leftmost host. Such requests get no host-scoped exclusions and fall back to the global exclusions plus the normal IP whitelist verdict, and configuration keys of that shape are rejected during runtime-state construction.
 
 ### 4. Monitoring and Logging
 
