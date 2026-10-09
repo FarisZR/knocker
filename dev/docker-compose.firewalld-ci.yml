@@ -1,0 +1,53 @@
+# Real FirewallD and D-Bus live inside knocker's disposable network namespace.
+# No host ports, host network, host D-Bus socket, or privileged container.
+services:
+  knocker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ${KNOCKER_TEST_IMAGE:-${COMPOSE_PROJECT_NAME}-knocker}
+    user: "0:0"
+    init: true
+    environment:
+      PYTHONPATH: /app
+    cap_add:
+      - NET_ADMIN
+    networks: [test_net]
+    volumes:
+      - ./knocker.firewalld-ci.yaml:/app/knocker.yaml:ro
+      - ./firewalld:/test:ro
+      - knocker_data:/data
+    tmpfs:
+      - /run
+      - /tmp
+    command: ["bash", "/test/start.sh"]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8000/health"]
+      interval: 2s
+      timeout: 5s
+      start_period: 10s
+      retries: 30
+
+  client:
+    image: ${KNOCKER_TEST_IMAGE:-${COMPOSE_PROJECT_NAME}-knocker}
+    cap_drop: [ALL]
+    networks: [test_net]
+    volumes:
+      - ./firewalld:/test:ro
+    command: ["python", "-c", "import time; time.sleep(86400)"]
+
+  stranger:
+    image: ${KNOCKER_TEST_IMAGE:-${COMPOSE_PROJECT_NAME}-knocker}
+    cap_drop: [ALL]
+    networks: [test_net]
+    volumes:
+      - ./firewalld:/test:ro
+    command: ["python", "-c", "import time; time.sleep(86400)"]
+
+networks:
+  test_net:
+    internal: true
+    enable_ipv6: true
+
+volumes:
+  knocker_data:

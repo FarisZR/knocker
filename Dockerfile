@@ -14,8 +14,7 @@ ENV UV_PYTHON_DOWNLOADS=0
 ENV KNOCKER_CONFIG_PATH=/app/knocker.yaml
 
 # Install system packages before running the uv installer, which requires curl.
-RUN --mount=type=secret,id=proxy_ca \
-    apt-get update && \
+RUN apt-get update && \
     apt-get install -y --no-install-recommends curl firewalld && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -23,9 +22,7 @@ RUN --mount=type=secret,id=proxy_ca \
 # Install the official uv release artifact for each supported architecture.
 # Checksums are pinned from the uv 0.11.31 release, preserving arm/v7 support
 # without executing the remote installer script.
-RUN --mount=type=secret,id=proxy_ca \
-    set -eux; \
-    if [ -f /run/secrets/proxy_ca ]; then export CURL_CA_BUNDLE=/run/secrets/proxy_ca; fi; \
+RUN set -eux; \
     case "${TARGETARCH}/${TARGETVARIANT}" in \
       "amd64/") uv_target="x86_64-unknown-linux-gnu"; uv_sha256="8cc1cd82d434ec565376f98bd938d4b715b5791a80ff2d3aa78821cf85091b4b" ;; \
       "arm64/") uv_target="aarch64-unknown-linux-gnu"; uv_sha256="d74f23949fd07be4970f293d06ca99d87cd2a78a341c3d7b7fc0df7bc2d8a145" ;; \
@@ -49,19 +46,13 @@ RUN groupadd --gid 1001 appuser && \
     useradd --create-home --uid 1001 --gid 1001 appuser
 
 COPY pyproject.toml uv.lock ./
-RUN --mount=type=secret,id=proxy_ca \
-    if [ -f /run/secrets/proxy_ca ]; then \
-      export SSL_CERT_FILE=/run/secrets/proxy_ca UV_NATIVE_TLS=true; \
-    fi; \
-    uv sync --locked --no-dev
+RUN uv sync --locked --no-dev
 
 # Copy the rest of the application code
 COPY src ./src
 
 # Create and change ownership of the data directory to the appuser
-RUN chmod -R a+rX /app/src && \
-    chmod a+r /app/pyproject.toml /app/uv.lock && \
-    mkdir -p /data && chown appuser:appuser /data
+RUN mkdir -p /data && chown appuser:appuser /data
 
 # Switch to the non-root user for running the application
 USER appuser

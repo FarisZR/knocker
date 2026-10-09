@@ -121,4 +121,4 @@ openapi.json
 test_openapi.json
 
 # Docker
-dev/.integration-ca.*
+dev/.host-firewalld.*

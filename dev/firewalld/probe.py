@@ -3,17 +3,26 @@
 import json
 import socket
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 PAYLOAD = b"knocker-firewall-e2e"
 
 
 def probe(request):
+    """Send fresh traffic; only a timeout counts as a firewall drop."""
     host = request["host"]
-    time_scale = request.get("time_scale", 1)
+    if request["kind"] == "access":
+        # Independent fresh sockets share one Docker exec and wait concurrently.
+        requests = [
+            {"host": host, "kind": kind, "port": port}
+            for kind, port in (("tcp", 9002), ("tcp", 9000), ("udp", 9001))
+        ]
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            return list(pool.map(probe, requests))
     if request["kind"] == "http":
         import http.client
 
-        conn = http.client.HTTPConnection(host, 8000, timeout=20 * time_scale)
+        conn = http.client.HTTPConnection(host, 8000, timeout=20)
         try:
             body = json.dumps(request.get("body", {}))
             conn.request(
@@ -29,13 +38,10 @@ def probe(request):
 
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     kind = socket.SOCK_STREAM if request["kind"] == "tcp" else socket.SOCK_DGRAM
-    # Resolve the interface scope into the IPv6 sockaddr's fourth field.
-    # Passing a scoped string directly to socket.connect loses that scope.
-    endpoint = socket.getaddrinfo(host, request["port"], family, kind)[0][4]
     with socket.socket(family, kind) as sock:
-        sock.settimeout(0.8 * time_scale)
+        sock.settimeout(0.8)
         try:
-            sock.connect(endpoint)
+            sock.connect((host, request["port"]))
             if kind == socket.SOCK_DGRAM:
                 sock.send(PAYLOAD)
             result = sock.recv(1024)

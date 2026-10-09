@@ -11,14 +11,13 @@ case "$mode" in
         exit
         ;;
     caddy) compose_file=docker-compose.ci.yml ;;
-    firewalld) compose_file=docker-compose.yml ;;
+    firewalld) compose_file=docker-compose.firewalld-ci.yml ;;
     *) echo "Usage: $0 [all|caddy|firewalld]" >&2; exit 2 ;;
 esac
 
 # Override any caller's project name so cleanup cannot remove a development stack.
 export COMPOSE_PROJECT_NAME="knocker-test-${mode}-$$-${RANDOM}"
 compose=(docker compose --project-name "$COMPOSE_PROJECT_NAME" -f "$compose_file")
-ca_file=""
 
 cleanup() {
     result=$?
@@ -32,13 +31,10 @@ cleanup() {
     if ! "${compose[@]}" down --volumes --remove-orphans; then
         [ "$result" -ne 0 ] || result=1
     fi
-    if docker image inspect "${COMPOSE_PROJECT_NAME}-knocker" >/dev/null 2>&1; then
+    if [ -z "${KNOCKER_TEST_IMAGE:-}" ] && docker image inspect "${COMPOSE_PROJECT_NAME}-knocker" >/dev/null 2>&1; then
         if ! docker image rm "${COMPOSE_PROJECT_NAME}-knocker"; then
             [ "$result" -ne 0 ] || result=1
         fi
-    fi
-    if [ -n "$ca_file" ]; then
-        rm -f -- "$ca_file"
     fi
     exit "$result"
 }
@@ -46,16 +42,10 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Bake restricts file reads outside its working directory. Stage the CA bundle
-# under dev/ (excluded from Git and the build context), without granting access
-# to arbitrary host files. Compose sends it only as a BuildKit secret.
-ca_source="${CODEX_PROXY_CERT:-/etc/ssl/certs/ca-certificates.crt}"
-ca_file="$(mktemp "$PWD/.integration-ca.XXXXXX")"
-cp -- "$ca_source" "$ca_file"
-export CODEX_PROXY_CERT="$ca_file"
-
-"${compose[@]}" build knocker
-"${compose[@]}" up -d --wait --wait-timeout 180
+if [ -z "${KNOCKER_TEST_IMAGE:-}" ]; then
+    "${compose[@]}" build knocker
+fi
+"${compose[@]}" up -d --no-build --wait --wait-timeout 90
 if [ "$mode" = caddy ]; then
     "${compose[@]}" run --rm --no-deps tests
 else

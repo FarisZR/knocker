@@ -1,112 +1,93 @@
-# Running the full suite
+# Testing
 
 ```bash
 bash dev/test.sh
 ```
 
-This runs the locked Python tests, Ruff lint/format checks, ty, and both live
-integration suites. Requirements: uv, Python 3.13+, Linux Docker with endpoint
-sysctl support (Docker 27+), Compose v2.27+ (`driver_opts` and `up --wait`),
-Buildx/BuildKit for build secrets, and a kernel supporting IPv6 and namespaced nftables.
-Docker Desktop's Linux VM can provide these capabilities.
-The host does not need FirewallD, systemd, or a D-Bus socket. A rootless or locked
-down Docker installation that forbids namespaced `NET_ADMIN` cannot run the live
-firewall suite; it must run on a Docker runner that provides that capability.
-The runner fails rather than silently skipping firewall tests.
+This runs Python tests, Ruff lint/format checks, ty, and the two required live
+integration suites. GitHub Actions runs Python checks and both integration modes
+in parallel on every PR. There is no emulation or VM boot step in the workflow.
 
-Some sandboxes expose only part of the Linux nftables API. A successful Docker
-build or `NET_ADMIN` grant does not prove the kernel can run FirewallD: for
-example, missing nftables rejection support prevents the daemon from starting.
-Use a disposable Linux VM in that case. Run the same checkout and commands
-inside the VM, with Docker managing only the VM's firewall. QEMU user networking
-can provide the VM's management connection without host TAP devices or firewall
-changes. This is a kernel compatibility fallback, not a mocked firewall mode.
+Requirements: uv, Python 3.13+, Linux Docker 27+ with a kernel supporting
+namespaced nftables and IPv6, and Docker Compose v2. Docker Desktop provides a
+Linux daemon too. The isolated suites do not require host FirewallD or systemd.
+Unsupported firewall/kernel capabilities fail the suite rather than skip it.
 
-Individual commands:
+## Required integration suites
 
 ```bash
-uv run pytest                            # fast tests; no firewall privileges
-bash dev/local_integration_tests.sh       # real Caddy authentication
-bash dev/firewalld_integration_test.sh    # real FirewallD packet filtering
-bash dev/integration_tests.sh all         # both integration suites
+bash dev/integration_tests.sh caddy       # real Caddy authentication
+bash dev/integration_tests.sh firewalld   # real FirewallD and packet filtering
+bash dev/integration_tests.sh all         # both modes
 ```
 
-The wrappers work from any working directory. Each starts the required services,
-waits for readiness, and cleans up on success, failure, or a handled signal.
-Failures print Compose logs and, for FirewallD, the container's zone state.
-Container health checks stay cheap; the firewall controller explicitly asserts
-full readiness before packet tests and after recovery. Firewall scenarios use one
-ordered fixture and stop at the first failure.
+`dev/local_integration_tests.sh` is the Caddy wrapper. Both isolated stacks have
+unique Compose project names and disposable data volumes; they wait for readiness
+and remove their own containers, networks, volumes and built image on success or
+failure. Failures print service logs and the container-local firewall state.
 
-For a slow emulated VM, extend health checks and scale the firewall test TTLs
-and probe deadlines together:
+`dev/docker-compose.ci.yml` runs Caddy and its HTTP client on an internal bridge.
+`dev/docker-compose.firewalld-ci.yml` runs the production Knocker image, a private
+system D-Bus daemon, FirewallD, protected echo services and two unprivileged clients
+on an internal Docker dual-stack bridge. IPv4 and IPv6 addresses are allocated by
+Docker. Test listeners bind their assigned container addresses, with a loopback
+API listener for health checks. Only the firewall server receives `NET_ADMIN`.
+Neither CI stack publishes host ports, uses host networking or mounts host D-Bus
+or the Docker socket. The controller verifies the isolation before sending traffic.
 
-```bash
-KNOCKER_TEST_HEALTH_TIMEOUT=60s KNOCKER_E2E_TIME_SCALE=4 \
-  bash dev/firewalld_integration_test.sh
-```
-
-The assertions remain the same; scaling prevents grants expiring while the slow
-machine is still executing the corresponding knock and packet probes.
-
-## Firewall isolation
-
-`dev/docker-compose.yml` runs the production image with a private system D-Bus
-daemon, FirewallD, Knocker, protected echo services, and an unmonitored control
-service. FirewallD programs nftables in that container's network namespace.
-Separate unprivileged `client` and `stranger` containers originate real packets.
-Their fresh sockets avoid reusing established connections when checking expiry.
-
-Only the server receives `NET_ADMIN`. No container uses `privileged`, host
-networking, a host D-Bus socket, the Docker socket, or published host ports.
-The E2E controller verifies these properties and that server/client namespaces
-differ from one another and the controller. The network is internal; Docker
-allocates a distinct IPv4 subnet per run. IPv6 uses real link-local addresses on
-the private bridge, enabled with container-local and endpoint sysctls. This avoids requiring
-IPv6 NAT or legacy IPv6 firewall modules on the Docker daemon host. Scoped
-addresses are used only for client connections; Knocker receives the actual
-IPv6 peer address. The controller refreshes server addresses after restarts,
-since Docker can regenerate a MAC and link-local address. Unique project names keep concurrent
-runs and cleanup separate. Configuration, rules, and whitelist files disappear
-with the project's containers and volume. Docker's ordinary bridge management
-still runs on its daemon host; test FirewallD never manages the host rules.
-
-Both integration stacks use disposable named data volumes and test-only API keys.
-The Caddy stack trusts its internal proxy network; firewall tests trust no proxy
-and use actual socket peers. Never use these configurations for a deployment.
-
-## Coverage
-
-| Layer | What it proves |
+| Suite | Coverage |
 | --- | --- |
-| Python tests | Configuration, rule construction, application behavior, error paths, rollback, concurrency, and persistence |
-| Caddy integration | Unauthorized/authorized access, public paths, forwarded client addresses, remote grants, key permissions, and TTL validation/capping |
-| FirewallD integration | Actual TCP/UDP blocking before a knock, authorized traffic, other clients remaining blocked, IPv4/IPv6 expiry, shorter TTL replacement, remote/CIDR grants, reload/restart recovery without extending TTL, readiness checks, and no persisted grant after daemon failure |
+| Python | Configuration, rule construction, application behavior, rollback, concurrency and persistence |
+| Caddy | Unauthorized/authorized access, public paths, forwarded addresses, remote grants, key permissions and TTL validation/capping |
+| Isolated FirewallD | TCP/UDP blocking and authorization, IPv4/IPv6 expiry, source isolation, spoofed forwarded headers, remote/CIDR grants, shorter TTL replacement, reload/restart recovery, readiness and daemon failure |
 
-The protected listeners use TCP 9000 and UDP 9001; TCP 9002 is an unmonitored
-control that must remain reachable. A blocked result must be a socket timeout,
-not connection refusal or an unreachable service. Successful probes require the
-expected echo payload, so rule listings alone cannot make the suite pass.
-This exercises filtering in the server's INPUT path, with link-local IPv6 peers.
-Host Docker DNAT/FORWARD
-behavior, external routing, and distribution-specific host policies need separate
-deployment validation; this suite does not claim to cover every deployment topology.
+TCP 9000 and UDP 9001 are protected. TCP 9002 is an unmonitored control that must
+remain reachable. Negative probes require socket timeouts; successful probes
+require the echo payload. All probes use fresh connections. Control/TCP/UDP probes
+run concurrently within one client invocation, avoiding repeated Docker execs and
+serial timeout waits. Expiry checks poll the actual daemon with bounded deadlines.
 
-## CI and builds
+## Additional host FirewallD checks
 
-`.github/workflows/tests.yml` runs on every pull request, pushes to `main`, and
-manual dispatches. Python checks and the Caddy/FirewallD matrix jobs run
-independently, with `fail-fast: false` so both integration results are reported.
-No privileged or dedicated host FirewallD runner is required.
-The original `test` check now aggregates Python and both integration jobs, and
-fails if any dependency fails, is cancelled, or is skipped. Existing branch
-protection requiring `test` therefore covers both modes without a settings change.
+The original host integration entry point remains:
 
-On environments with an HTTPS interception proxy, Compose mounts
-`CODEX_PROXY_CERT` as the optional BuildKit `proxy_ca` secret, falling back to the
-host CA bundle. The Dockerfile uses that certificate for curl and uv downloads
-with TLS verification enabled. The mount exists only during the build and is
-not stored in the image. The runner stages a temporary copy under `dev/` so Bake
-can read it within its default filesystem permissions; Git and the Docker build
-context ignore that copy, and exit cleanup removes it. Preserve Docker's
-configured proxy settings.
+```bash
+bash dev/firewalld_integration_test.sh
+```
+
+It uses `dev/docker-compose.yml` and the host system D-Bus socket. It requires a
+running host FirewallD daemon, uv, and root or passwordless sudo for zone cleanup.
+The suite checks the actual host daemon, default zone target/priority/sources,
+every IPv4/IPv6 TCP/UDP rule, expiry and shorter TTL replacement, recovery of all
+eight timed rules with unchanged persistence, rejected keys/remote permissions,
+and readiness when protection is missing.
+
+Each run creates a unique zone and uses documentation-only source addresses.
+Cleanup removes only that run's zone, containers and volume, and never stops the
+host daemon. The suite performs real FirewallD reloads; use a dedicated development
+host. This supplements the CI packet tests with host D-Bus and host policy checks;
+external routing and Docker DNAT/FORWARD topology still need deployment validation.
+
+The **Run Tests** workflow also offers a manual `run_host_firewalld` checkbox to
+run this suite on a disposable GitHub-hosted runner. It adds no work to PR runs.
+
+## Runtime and builds
+
+The required `test` check aggregates Python and both isolated integration jobs.
+Any failed, cancelled or skipped required suite fails the gate. Each integration
+job has an eight-minute limit, Python has five minutes and the gate has one minute.
+Older runs of the same PR are cancelled when a new commit arrives.
+
+GitHub Actions builds and loads the production image from the PR checkout with
+BuildKit caching. Each mode has its own cache scope. No host CA bundle, custom
+certificate path or environment-specific build configuration is required.
+
+To reuse an image during local development:
+
+```bash
+docker build -t knocker-dev .
+KNOCKER_TEST_IMAGE=knocker-dev bash dev/integration_tests.sh all
+```
+
+The runner preserves caller-provided images. CI always builds the current checkout
+before supplying an image, so a stale local image cannot make PR checks pass.

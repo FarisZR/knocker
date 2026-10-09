@@ -1,74 +1,53 @@
-# Real FirewallD and D-Bus live inside knocker's disposable network namespace.
-# No host ports, host network, host D-Bus socket, or privileged container.
 services:
+  caddy:
+    image: caddy:2.7.6
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18080:80"
+      - "127.0.0.1:18443:443"
+      - "127.0.0.1:18443:443/udp" # For HTTP/3
+    networks:
+      - caddy_net
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--watch"]
+    depends_on:
+      - knocker
+
   knocker:
     build:
       context: ..
       dockerfile: Dockerfile
-      secrets:
-        - proxy_ca
-    image: ${COMPOSE_PROJECT_NAME}-knocker
-    user: "0:0"
-    init: true
+    image: ${KNOCKER_TEST_IMAGE:-${COMPOSE_PROJECT_NAME:-knocker-dev}-knocker}
+    restart: unless-stopped
+    networks:
+      - caddy_net
+    ports:
+      - "127.0.0.1:8000:8000"
     environment:
-      PYTHONPATH: /app
-    cap_add:
-      - NET_ADMIN
-    networks: &client_networks
-      test_net:
-        driver_opts:
-          com.docker.network.endpoint.sysctls: net.ipv6.conf.IFNAME.disable_ipv6=0
-    sysctls: &ipv6_sysctls
-      net.ipv6.conf.all.disable_ipv6: "0"
-      net.ipv6.conf.default.disable_ipv6: "0"
+      - KNOCKER_CONFIG_PATH=/app/knocker.yaml
     volumes:
-      - ./knocker.firewalld.yaml:/app/knocker.yaml:ro
-      - ./firewalld:/test:ro
+      - ${KNOCKER_HOST_TEST_CONFIG:-./knocker.firewalld.yaml}:/app/knocker.yaml:ro
       - knocker_data:/data
-    tmpfs:
-      - /run
-      - /tmp
-    command: ["bash", "/test/start.sh"]
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8000/health"]
-      interval: 2s
-      timeout: ${KNOCKER_TEST_HEALTH_TIMEOUT:-15s}
-      start_period: 30s
-      retries: 30
-
-  client:
-    image: ${COMPOSE_PROJECT_NAME}-knocker
-    cap_drop: [ALL]
-    networks: *client_networks
-    sysctls: *ipv6_sysctls
-    volumes:
-      - ./firewalld:/test:ro
-    command: ["python", "-c", "import time; time.sleep(86400)"]
-    healthcheck: &client_health
-      test: ["CMD", "grep", "-q", "eth0", "/proc/net/if_inet6"]
-      interval: 2s
-      timeout: 5s
-      retries: 30
-
-  stranger:
-    image: ${COMPOSE_PROJECT_NAME}-knocker
-    cap_drop: [ALL]
-    networks: *client_networks
-    sysctls: *ipv6_sysctls
-    volumes:
-      - ./firewalld:/test:ro
-    command: ["python", "-c", "import time; time.sleep(86400)"]
-    healthcheck: *client_health
+      # Mount system dbus for firewalld integration
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+    # NOTE: Container runs as root when firewalld integration is enabled
+    # This is required for dbus system access. Ensure firewalld.enabled is set
+    # appropriately in your knocker.yaml configuration.
+    user: "0:0"  # Run as root for firewalld/dbus access
+    # FirewallD on the host owns NET_ADMIN; this client only talks to D-Bus.
+    # The command is in the Dockerfile, but we could override it here if needed.
+    # The application will look for 'knocker.yaml' in its root directory.
 
 networks:
-  test_net:
-    internal: true
-    # Docker allocates IPv4 per project. IPv6 uses container-local link addresses,
-    # avoiding any dependency on the daemon host's IPv6 NAT/firewall backend.
+  caddy_net:
+    # Enable IPv6 for this network
+    enable_ipv6: true
+    driver: bridge
 
 volumes:
+  caddy_data:
+  caddy_config:
   knocker_data:
-
-secrets:
-  proxy_ca:
-    file: ${CODEX_PROXY_CERT:-/etc/ssl/certs/ca-certificates.crt}

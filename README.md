@@ -307,10 +307,12 @@ FirewallD installation. FirewallD and D-Bus run inside a disposable container wi
 `NET_ADMIN`; separate clients verify actual TCP/UDP traffic over IPv4 and IPv6.
 Neither stack mounts host D-Bus, uses host networking, or publishes host ports.
 
-Run either suite independently with `bash dev/local_integration_tests.sh` or
-`bash dev/firewalld_integration_test.sh`. Each command builds its image, waits for
-readiness, reports failures, and removes its containers, network, volume, and image
-tag. See [the testing guide](docs/TESTING.md) for the isolation boundary and coverage.
+Run either CI suite with `bash dev/integration_tests.sh caddy` or
+`bash dev/integration_tests.sh firewalld`. The existing host FirewallD checks
+remain available through `bash dev/firewalld_integration_test.sh`. The isolated
+runner builds its image, waits for readiness, reports failures, and removes its
+containers, network, volume, and image tag. See [the testing guide](docs/TESTING.md)
+for the isolation boundary and coverage.
 
 ## Docs
 

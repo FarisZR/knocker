@@ -8,10 +8,12 @@ import socket
 
 import uvicorn
 
+from addresses import addresses
+
 
 if __name__ == "__main__":
     sockets = []
-    for family, address in ((socket.AF_INET, "0.0.0.0"), (socket.AF_INET6, "::")):
+    for family, address in [(socket.AF_INET, "127.0.0.1"), *addresses()]:
         listener = socket.socket(family, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if family == socket.AF_INET6:

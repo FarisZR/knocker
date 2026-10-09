@@ -235,9 +235,10 @@ To run the tests locally:
 
 ### Integration Tests
 Run `bash dev/test.sh` for Python checks and both isolated integration suites.
-`dev/docker-compose.yml` runs container-local FirewallD and D-Bus;
-`dev/docker-compose.ci.yml` runs Caddy authentication tests. Neither publishes
-host ports or mounts host D-Bus. Both run in CI on every pull request.
+`dev/docker-compose.firewalld-ci.yml` runs container-local FirewallD and D-Bus;
+`dev/docker-compose.ci.yml` runs Caddy authentication tests. Both run on every PR
+without host ports or host D-Bus. The additional host FirewallD suite remains
+under `dev/docker-compose.yml` and `dev/firewalld_integration_test.sh`.
 See [TESTING.md](TESTING.md) for individual commands and requirements.
 
 ## Docs

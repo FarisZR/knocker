@@ -5,15 +5,24 @@ on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      run_host_firewalld:
+        description: Also run the optional host FirewallD deployment checks
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   python:
     name: Python checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     steps:
     - name: Checkout repository
@@ -49,7 +58,7 @@ jobs:
   integration:
     name: Integration (${{ matrix.mode }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
     strategy:
       fail-fast: false
       matrix:
@@ -63,10 +72,49 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226 # v3.0.0
 
+    - name: Build production image with cache
+      uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
+      with:
+        context: .
+        load: true
+        tags: knocker-integration:${{ matrix.mode }}
+        cache-from: type=gha,scope=integration-${{ matrix.mode }}
+        cache-to: type=gha,mode=max,scope=integration-${{ matrix.mode }}
+
     - name: Run isolated integration suite
       env:
         TEST_MODE: ${{ matrix.mode }}
+        KNOCKER_TEST_IMAGE: knocker-integration:${{ matrix.mode }}
       run: bash dev/integration_tests.sh "$TEST_MODE"
+
+  host-firewalld:
+    name: Optional host FirewallD checks
+    if: github.event_name == 'workflow_dispatch' && inputs.run_host_firewalld
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version-file: 'pyproject.toml'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+    - name: Prepare the disposable runner's host FirewallD
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y firewalld
+        sudo systemctl start firewalld
+        sudo systemctl restart docker
+
+    - name: Run the existing host integration suite
+      run: bash dev/firewalld_integration_test.sh
 
   # Keep the original check name for existing branch-protection rules. It can
   # only go green when Python and BOTH live integration matrix jobs succeed.
@@ -74,7 +122,7 @@ jobs:
     needs: [python, integration]
     if: ${{ always() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 1
     steps:
     - name: Require every suite to pass
       env:

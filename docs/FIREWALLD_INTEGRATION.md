@@ -341,7 +341,7 @@ uv run pytest tests/test_firewalld.py -v
 Test with a real FirewallD daemon in a disposable Docker network namespace:
 
 ```bash
-bash dev/firewalld_integration_test.sh
+bash dev/integration_tests.sh firewalld
 ```
 
 No host FirewallD, systemd, or D-Bus access is required. The daemon and private
@@ -355,7 +355,13 @@ The recovery case removes every exact timed rule, verifies blocked packets,
 reloads FirewallD, and restarts Knocker while retaining the whitelist volume.
 It verifies recovered access and the original persisted expiry timestamps.
 Exit cleanup destroys the test containers, network, and volume; it never calls
-host `firewall-cmd` or `systemctl`. See [TESTING.md](TESTING.md).
+host `firewall-cmd` or `systemctl`.
+
+The original `bash dev/firewalld_integration_test.sh` remains an additional host
+D-Bus/FirewallD check. It uses a unique test zone and verifies every IPv4/IPv6
+TCP/UDP rule, expiry/replacement, persistence/recovery and readiness. Run it on
+a development host with FirewallD active, or select `run_host_firewalld` in the
+manual GitHub Actions workflow. See [TESTING.md](TESTING.md).
 
 ### Manual Testing
 
