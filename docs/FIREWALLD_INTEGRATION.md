@@ -357,11 +357,13 @@ It verifies recovered access and the original persisted expiry timestamps.
 Exit cleanup destroys the test containers, network, and volume; it never calls
 host `firewall-cmd` or `systemctl`.
 
-The original `bash dev/firewalld_integration_test.sh` remains an additional host
+The original `bash dev/firewalld_integration_test.sh` is also a required host
 D-Bus/FirewallD check. It uses a unique test zone and verifies every IPv4/IPv6
 TCP/UDP rule, expiry/replacement, persistence/recovery and readiness. Run it on
-a development host with FirewallD active, or select `run_host_firewalld` in the
-manual GitHub Actions workflow. See [TESTING.md](TESTING.md).
+a development host with FirewallD active. GitHub Actions runs this same script on
+every PR using a dedicated disposable Linux runner; it is required alongside the
+isolated packet tests. `bash dev/test.sh linux` runs the complete suite locally.
+See [TESTING.md](TESTING.md).
 
 ### Manual Testing
 

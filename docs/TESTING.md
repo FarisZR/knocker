@@ -1,17 +1,30 @@
 # Testing
 
 ```bash
-bash dev/test.sh
+bash dev/test.sh linux
 ```
 
-This runs Python tests, Ruff lint/format checks, ty, and the two required live
-integration suites. GitHub Actions runs Python checks and both integration modes
-in parallel on every PR. There is no emulation or VM boot step in the workflow.
+This runs the complete Linux suite: Python tests, Ruff lint/format checks, ty,
+Caddy, isolated FirewallD packet tests, and the original host FirewallD Bash suite.
+GitHub Actions runs these same checks in parallel on every PR, push to `main`,
+and manual workflow run. The host job installs and starts FirewallD on its own
+disposable GitHub-hosted Linux runner and invokes `dev/firewalld_integration_test.sh`
+directly. Host D-Bus access and the default zone-target case are required checks,
+alongside the real packet tests. There is no emulation or VM boot step in the workflow.
+
+For environments without a host FirewallD daemon, run the portable subset:
+
+```bash
+bash dev/test.sh                 # Python and both isolated integration modes
+bash dev/test.sh isolated        # the same portable subset, explicitly
+```
 
 Requirements: uv, Python 3.13+, Linux Docker 27+ with a kernel supporting
 namespaced nftables and IPv6, and Docker Compose v2.20.2+. Docker Desktop provides a
 Linux daemon too. The isolated suites do not require host FirewallD or systemd.
 Unsupported firewall/kernel capabilities fail the suite rather than skip it.
+The full `linux` mode additionally requires the host prerequisites described below;
+it fails if the host suite cannot run, rather than falling back to the subset.
 
 ## Required integration suites
 
@@ -40,6 +53,7 @@ or the Docker socket. The controller verifies the isolation before sending traff
 | Python | Configuration, rule construction, application behavior, rollback, concurrency and persistence |
 | Caddy | Unauthorized/authorized access, public paths, forwarded addresses, remote grants, key permissions and TTL validation/capping |
 | Isolated FirewallD | TCP/UDP blocking and authorization, IPv4/IPv6 expiry, source isolation, spoofed forwarded headers, remote/CIDR grants, shorter TTL replacement, reload/restart recovery, readiness and daemon failure |
+| Host FirewallD | Original Linux Bash suite: host D-Bus/permissions, zone creation and default target, priority/sources, all monitored rules, grants/expiry/replacement, recovery, rejected keys/permissions and readiness |
 
 TCP 9000 and UDP 9001 are protected. TCP 9002 is an unmonitored control that must
 remain reachable. Negative probes require socket timeouts; successful probes
@@ -47,7 +61,7 @@ require the echo payload. All probes use fresh connections. Control/TCP/UDP prob
 run concurrently within one client invocation, avoiding repeated Docker execs and
 serial timeout waits. Expiry checks poll the actual daemon with bounded deadlines.
 
-## Additional host FirewallD checks
+## Required host FirewallD checks
 
 The original host integration entry point remains:
 
@@ -72,12 +86,14 @@ host daemon. The suite performs real FirewallD reloads; use a dedicated developm
 host. This supplements the CI packet tests with host D-Bus and host policy checks;
 external routing and Docker DNAT/FORWARD topology still need deployment validation.
 
-The **Run Tests** workflow also offers a manual `run_host_firewalld` checkbox to
-run this suite on a disposable GitHub-hosted runner. It adds no work to PR runs.
+The **Run Tests** workflow runs this exact Bash suite on every PR. It has its own
+runner and runs alongside the isolated suites, so host checks do not add a serial
+wait after the packet tests. No checkbox or manual invocation is needed in CI.
 
 ## Runtime and builds
 
-The required `test` check aggregates Python and both isolated integration jobs.
+The required `test` check aggregates Python, both isolated integration jobs, and
+the complete host FirewallD job.
 Any failed, cancelled or skipped required suite fails the gate. Each integration
 job has an eight-minute limit, Python has five minutes and the gate has one minute.
 Older runs of the same PR are cancelled when a new commit arrives.

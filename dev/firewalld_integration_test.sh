@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Additional deployment check: Knocker talks to the HOST FirewallD over D-Bus.
-# CI's required packet tests use integration_tests.sh firewalld instead.
+# Linux deployment checks: Knocker talks to the HOST FirewallD over D-Bus.
+# CI requires this suite alongside the isolated real-packet firewall tests.
 set -euo pipefail
 cd "$(dirname "$0")"
 

@@ -9,7 +9,7 @@ This file provides guidance to agents when working with code in this repository.
 - **Astral Toolchain**: This project uses `uv` for environment and dependency management, `ruff` for linting and formatting, and `ty` for type checking.
 - **Whitelist Persistence**: The IP whitelist is stored in a simple JSON file (`/data/whitelist.json` inside the container), not a database. The path is configured in `knocker.yaml`.
 - **API Key Permissions**: API keys have two important properties: `allow_remote_whitelist` (boolean) and `max_ttl` (integer). A key with `allow_remote_whitelist: false` can only whitelist its own source IP. `max_ttl` defines the maximum duration in seconds an IP can be whitelisted for with that key.
-- **Development/Test Stacks**: `dev/docker-compose.yml` and `dev/firewalld_integration_test.sh` retain the additional host FirewallD checks. The required CI stacks are `dev/docker-compose.firewalld-ci.yml` (isolated FirewallD) and `dev/docker-compose.ci.yml` (Caddy); neither mounts host D-Bus or publishes host ports. Run `bash dev/test.sh` for Python checks and both isolated suites. The host suite can also be verified with the manual workflow input `run_host_firewalld`.
+- **Development/Test Stacks**: Every PR requires Python checks, Caddy (`dev/docker-compose.ci.yml`), isolated FirewallD (`dev/docker-compose.firewalld-ci.yml`), and the original Linux host FirewallD suite (`dev/docker-compose.yml` and `dev/firewalld_integration_test.sh`). The isolated stacks never mount host D-Bus or publish host ports. Run `bash dev/test.sh linux` on a dedicated host with FirewallD 2.0+ for the full CI-equivalent suite, or `bash dev/test.sh` for the portable isolated subset.
 
 ## Workflow
 

@@ -5,11 +5,6 @@ on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
-    inputs:
-      run_host_firewalld:
-        description: Also run the optional host FirewallD deployment checks
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -88,8 +83,7 @@ jobs:
       run: bash dev/integration_tests.sh "$TEST_MODE"
 
   host-firewalld:
-    name: Optional host FirewallD checks
-    if: github.event_name == 'workflow_dispatch' && inputs.run_host_firewalld
+    name: Host FirewallD checks
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -117,9 +111,9 @@ jobs:
       run: bash dev/firewalld_integration_test.sh
 
   # Keep the original check name for existing branch-protection rules. It can
-  # only go green when Python and BOTH live integration matrix jobs succeed.
+  # only go green when Python, BOTH isolated modes and the Linux host suite pass.
   test:
-    needs: [python, integration]
+    needs: [python, integration, host-firewalld]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 1
@@ -128,7 +122,9 @@ jobs:
       env:
         PYTHON_RESULT: ${{ needs.python.result }}
         INTEGRATION_RESULT: ${{ needs.integration.result }}
+        HOST_FIREWALLD_RESULT: ${{ needs['host-firewalld'].result }}
       run: |
-        printf 'Python: %s; integrations: %s\n' "$PYTHON_RESULT" "$INTEGRATION_RESULT"
+        printf 'Python: %s; isolated integrations: %s; host FirewallD: %s\n' "$PYTHON_RESULT" "$INTEGRATION_RESULT" "$HOST_FIREWALLD_RESULT"
         test "$PYTHON_RESULT" = success
         test "$INTEGRATION_RESULT" = success
+        test "$HOST_FIREWALLD_RESULT" = success

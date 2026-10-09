@@ -37,8 +37,8 @@ services:
     # This is required for dbus system access. Ensure firewalld.enabled is set
     # appropriately in your knocker.yaml configuration.
     user: "0:0"  # Run as root for firewalld/dbus access
-    # The manual host test needs access to the host system bus. Docker's
-    # default AppArmor profile blocks that IPC on Ubuntu; CI's isolated stack
+    # The Linux host test needs access to the host system bus. Docker's
+    # default AppArmor profile blocks that IPC on Ubuntu; the isolated stack
     # retains its default confinement and never mounts this socket.
     security_opt:
       - apparmor=unconfined
