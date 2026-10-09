@@ -4,13 +4,16 @@ Tests timing attack resistance, edge case handling, and input validation.
 """
 
 import pytest
+import asyncio
 import inspect
 import logging
+import threading
 from unittest.mock import Mock
 from pathlib import Path
 from fastapi.testclient import TestClient
 from src.main import app, get_settings
 from src import core
+from src.main import _full_readiness_check, reset_firewalld_readiness_cache
 
 
 def _minimal_valid_config_yaml() -> str:
@@ -91,6 +94,27 @@ def cleanup_whitelist(test_settings):
     yield
     if os.path.exists(path):
         os.remove(path)
+
+
+class _FakeMonotonicClock:
+    """Controllable stand-in for the time module used by the readiness cache."""
+
+    def __init__(self, start: float = 1000.0):
+        self.now = start
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+@pytest.fixture(autouse=True)
+def isolate_firewalld_ready_cache():
+    """Keep the cached readiness verdict isolated between tests."""
+    reset_firewalld_readiness_cache()
+    yield
+    reset_firewalld_readiness_cache()
 
 
 client = TestClient(app)
@@ -297,6 +321,137 @@ class TestHealthCheckDependencies:
 
         assert response.status_code == 503
         integration.verify_protection.assert_called_once_with()
+
+    def test_readiness_caches_successful_verification_within_ttl(self, test_settings, monkeypatch):
+        """Repeated readiness polls inside the TTL must reuse one verification run."""
+        test_settings["firewalld"] = {"enabled": True}
+        app.dependency_overrides[get_settings] = lambda: test_settings
+        clock = _FakeMonotonicClock()
+        monkeypatch.setattr("src.main.time", clock)
+        integration = Mock()
+        integration.is_enabled.return_value = True
+        integration.verify_protection.return_value = True
+        monkeypatch.setattr("src.main.firewalld.get_firewalld_integration", lambda: integration)
+
+        for _ in range(5):
+            assert client.get("/ready").status_code == 200
+            clock.advance(1.0)
+
+        assert integration.verify_protection.call_count == 1
+
+    def test_readiness_refreshes_firewalld_verdict_after_cache_ttl(
+        self, test_settings, monkeypatch
+    ):
+        """A stale verdict must trigger a fresh verification chain."""
+        test_settings["firewalld"] = {"enabled": True}
+        app.dependency_overrides[get_settings] = lambda: test_settings
+        clock = _FakeMonotonicClock()
+        monkeypatch.setattr("src.main.time", clock)
+        integration = Mock()
+        integration.is_enabled.return_value = True
+        integration.verify_protection.side_effect = [True, False]
+        monkeypatch.setattr("src.main.firewalld.get_firewalld_integration", lambda: integration)
+
+        assert client.get("/ready").status_code == 200
+
+        # Just before the TTL the cached verdict is still served.
+        clock.advance(9.0)
+        assert client.get("/ready").status_code == 200
+        assert integration.verify_protection.call_count == 1
+
+        clock.advance(1.0)
+        assert client.get("/ready").status_code == 503
+        assert integration.verify_protection.call_count == 2
+
+    def test_readiness_cache_is_keyed_to_integration_instance(self, test_settings, monkeypatch):
+        """A reloaded firewalld integration must never inherit a cached verdict."""
+        test_settings["firewalld"] = {"enabled": True}
+        app.dependency_overrides[get_settings] = lambda: test_settings
+        first_integration = Mock()
+        first_integration.is_enabled.return_value = True
+        first_integration.verify_protection.return_value = True
+        second_integration = Mock()
+        second_integration.is_enabled.return_value = True
+        monkeypatch.setattr(
+            "src.main.firewalld.get_firewalld_integration", lambda: first_integration
+        )
+
+        assert client.get("/ready").status_code == 200
+
+        # Different instance inside the TTL window must not reuse the verdict.
+        monkeypatch.setattr(
+            "src.main.firewalld.get_firewalld_integration", lambda: second_integration
+        )
+        assert client.get("/ready").status_code == 200
+        assert second_integration.verify_protection.call_count == 1
+        assert first_integration.verify_protection.call_count == 1
+
+    def test_concurrent_readiness_requests_share_one_verification(self, test_settings, monkeypatch):
+        """Parallel readiness polls must collapse into a single firewall-cmd chain."""
+        test_settings["firewalld"] = {"enabled": True}
+        app.dependency_overrides[get_settings] = lambda: test_settings
+        integration = Mock()
+        integration.is_enabled.return_value = True
+        calls: list[int] = []
+        release = threading.Event()
+
+        def verify():
+            calls.append(1)
+            release.wait(timeout=5)
+            return True
+
+        integration.verify_protection.side_effect = verify
+        monkeypatch.setattr("src.main.firewalld.get_firewalld_integration", lambda: integration)
+
+        async def poll_together():
+            tasks = [asyncio.create_task(_full_readiness_check(test_settings)) for _ in range(8)]
+            await asyncio.sleep(0.1)
+            running_chains = len(calls)
+            release.set()
+            results = await asyncio.gather(*tasks)
+            return results, running_chains
+
+        responses, running_chains = asyncio.run(poll_together())
+
+        assert all(response is None for response in responses)
+        assert running_chains == 1
+        assert len(calls) == 1
+
+    def test_cancelled_readiness_request_keeps_shared_verification(
+        self, test_settings, monkeypatch
+    ):
+        """Cancelling one poller must not start a second verification chain."""
+        test_settings["firewalld"] = {"enabled": True}
+        app.dependency_overrides[get_settings] = lambda: test_settings
+        integration = Mock()
+        integration.is_enabled.return_value = True
+        started = threading.Event()
+        release = threading.Event()
+
+        def verify():
+            started.set()
+            release.wait(timeout=5)
+            return True
+
+        integration.verify_protection.side_effect = verify
+        monkeypatch.setattr("src.main.firewalld.get_firewalld_integration", lambda: integration)
+
+        async def cancel_then_retry():
+            first = asyncio.create_task(_full_readiness_check(test_settings))
+            assert await asyncio.to_thread(started.wait, 5)
+
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+
+            second = asyncio.create_task(_full_readiness_check(test_settings))
+            release.set()
+            return await second
+
+        result = asyncio.run(cancel_then_retry())
+
+        assert result is None
+        assert integration.verify_protection.call_count == 1
 
 
 class TestConfigurationValidation:
