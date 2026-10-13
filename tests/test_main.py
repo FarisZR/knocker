@@ -122,6 +122,130 @@ def test_knock_authenticates_before_reading_body(monkeypatch):
     assert body_read is False
 
 
+@pytest.mark.parametrize("key", [b"USER_KEY_1", b"wrong", b"", b"\xc3\xa5", None])
+def test_knock_failure_limit_gates_authentication_and_body(key, mock_settings, monkeypatch):
+    from src import core
+
+    mock_settings["security"]["knock_rate_limit"] = {"failed_requests": 2}
+    mock_settings["cors"]["allowed_origin"] = "https://example.com"
+    headers = {"X-Api-Key": "wrong", "X-Forwarded-For": "1.2.3.4"}
+    assert client.post("/knock", headers=headers).status_code == 401
+    assert client.post("/knock", headers=headers).status_code == 401
+    state = core.ensure_runtime_state(mock_settings)
+
+    def unexpected_call(*args, **kwargs):
+        pytest.fail("exhausted actor reached authentication, body parsing, or mutation")
+
+    monkeypatch.setattr("src.main.core.get_api_key_record", unexpected_call)
+    monkeypatch.setattr("src.main._read_knock_body", unexpected_call)
+    monkeypatch.setattr("src.main.firewalld.run_mutation", unexpected_call)
+    raw_headers = [(b"X-Forwarded-For", b"1.2.3.4")]
+    if key is not None:
+        raw_headers.append((b"X-Api-Key", key))
+    response = client.post("/knock", headers=raw_headers, content=b"malformed body")
+
+    assert response.status_code == 429
+    assert response.json() == {"error": "Too many knock attempts."}
+    assert response.headers["Access-Control-Allow-Origin"] == "https://example.com"
+    assert state.whitelist.active_snapshot() == {}
+    assert len(state.rate_limiter._events[("failure", "1.2.3.4")]) == 2
+
+
+def test_knock_failure_window_recovers_without_extension(mock_settings, monkeypatch):
+    from src import core
+
+    now = [1000]
+    monkeypatch.setattr("src.core.time.time", lambda: now[0])
+    mock_settings["security"]["knock_rate_limit"] = {
+        "window_seconds": 60,
+        "failed_requests": 1,
+    }
+    headers = {"X-Api-Key": "wrong", "X-Forwarded-For": "1.2.3.4"}
+    assert client.post("/knock", headers=headers).status_code == 401
+    headers["X-Api-Key"] = "USER_KEY_1"
+    for timestamp in (1010, 1059):
+        now[0] = timestamp
+        assert client.post("/knock", headers=headers).status_code == 429
+    state = core.ensure_runtime_state(mock_settings)
+    assert state.rate_limiter._events[("failure", "1.2.3.4")][0][0] == 1000
+    assert client.get("/verify", headers=headers).status_code == 401
+    other_headers = {**headers, "X-Forwarded-For": "2.3.4.5"}
+    assert client.post("/knock", headers=other_headers).status_code == 200
+    now[0] = 1060
+    assert client.post("/knock", headers=headers).status_code == 200
+    assert client.get("/verify", headers=headers).status_code == 200
+
+
+def test_knock_successes_do_not_consume_failure_allowance(mock_settings):
+    mock_settings["security"]["knock_rate_limit"] = {"failed_requests": 1}
+    headers = {"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"}
+    for _ in range(3):
+        assert client.post("/knock", headers=headers).status_code == 200
+    assert client.post("/knock", headers={**headers, "X-Api-Key": "wrong"}).status_code == 401
+    assert client.post("/knock", headers=headers).status_code == 429
+
+
+def test_knock_failure_limit_can_be_disabled(mock_settings):
+    mock_settings["security"]["knock_rate_limit"] = {"failed_requests": 0}
+    headers = {"X-Api-Key": "wrong", "X-Forwarded-For": "1.2.3.4"}
+    for _ in range(3):
+        assert client.post("/knock", headers=headers).status_code == 401
+    headers["X-Api-Key"] = "USER_KEY_1"
+    assert client.post("/knock", headers=headers).status_code == 200
+
+
+def test_knock_admitted_request_can_finish_after_failure_exhaustion(mock_settings, monkeypatch):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    mock_settings["security"]["knock_rate_limit"] = {"failed_requests": 1}
+    started = threading.Event()
+    release = threading.Event()
+
+    async def paused_body(_request):
+        started.set()
+        assert await asyncio.to_thread(release.wait, 5)
+        return None, None
+
+    monkeypatch.setattr("src.main._read_knock_body", paused_body)
+    headers = {"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"}
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first = executor.submit(client.post, "/knock", headers=headers)
+        try:
+            assert started.wait(5)
+            assert (
+                client.post("/knock", headers={**headers, "X-Api-Key": "wrong"}).status_code == 401
+            )
+            assert client.post("/knock", headers=headers).status_code == 429
+        finally:
+            release.set()
+        assert first.result(timeout=5).status_code == 200
+
+
+@pytest.mark.parametrize("raw_key", [b"\x80", b"\xff", b"\xc3\xa5", b"\xef\xbc\xa1"])
+def test_knock_non_ascii_headers_count_as_authentication_failures(raw_key, mock_settings, caplog):
+    from src import core
+
+    mock_settings["security"]["knock_rate_limit"] = {"failed_requests": 2}
+    mock_settings["cors"]["allowed_origin"] = "https://example.com"
+    headers = [(b"X-Api-Key", raw_key), (b"X-Forwarded-For", b"1.2.3.4")]
+    for _ in range(2):
+        response = client.post("/knock", headers=headers, content=b"invalid JSON")
+        assert response.status_code == 401
+        assert response.json() == {"error": "Invalid or missing API key."}
+        assert response.headers["Access-Control-Allow-Origin"] == "https://example.com"
+    assert client.post("/knock", headers=headers).status_code == 429
+    assert (
+        client.post(
+            "/knock", headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"}
+        ).status_code
+        == 429
+    )
+    assert core.ensure_runtime_state(mock_settings).whitelist.active_snapshot() == {}
+    assert all(record.exc_info is None for record in caplog.records)
+
+
 def test_knock_streamed_body_limit_is_enforced():
     """The streamed body limit applies even without a trusted Content-Length."""
 

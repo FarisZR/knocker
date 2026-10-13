@@ -260,6 +260,8 @@ def validate_api_key_records(
 
         if not record.key:
             raise ValueError(f"API key at index {index} must define a non-empty string key")
+        if not record.key.isascii():
+            raise ValueError(f"API key at index {index} must contain only ASCII characters")
         normalized_key = record.key.upper()
         if "CHANGE_ME" in normalized_key or "REPLACE_WITH" in normalized_key:
             raise ValueError(
@@ -290,7 +292,7 @@ class LoggingSettings(BaseModel):
 class Settings(BaseModel):
     """Validated application configuration shared by all runtime services."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
 
     server: ServerSettings = Field(default_factory=ServerSettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)

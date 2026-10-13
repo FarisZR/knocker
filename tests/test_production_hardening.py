@@ -123,6 +123,10 @@ class TestTimingAttackResistance:
         assert compared_keys == configured_keys
 
         compared_keys.clear()
+        assert core.is_valid_api_key(configured_keys[-1], test_settings) is True
+        assert compared_keys == configured_keys
+
+        compared_keys.clear()
         assert core.is_valid_api_key("invalid_key_12345", test_settings) is False
         assert compared_keys == configured_keys
         assert "hmac.compare_digest" in verify_source
@@ -131,6 +135,14 @@ class TestTimingAttackResistance:
         """Empty API key should be handled gracefully."""
         assert core.is_valid_api_key("", test_settings) == False
         assert core.is_valid_api_key(None, test_settings) == False
+
+    @pytest.mark.parametrize("candidate", ["\u00e5", "\u0080", "\uff21", "\U0001f511"])
+    def test_non_ascii_candidate_is_rejected(self, candidate, test_settings):
+        assert core.is_valid_api_key(candidate, test_settings) is False
+
+    def test_non_ascii_record_is_rejected_without_comparison_error(self):
+        record = core.APIKeyRecord("test", 60, False, "\u00e5")
+        assert record.verify("ascii-key") is False
 
     def test_empty_api_keys_list_raises_configuration_error(self):
         """Empty API keys list should surface a configuration error."""
@@ -301,6 +313,30 @@ class TestHealthCheckDependencies:
 
 class TestConfigurationValidation:
     """Test configuration loading validation."""
+
+    def test_non_ascii_key_rejected_without_logging_secrets(self, tmp_path, caplog, monkeypatch):
+        from src import config
+
+        invalid_secret = "unique-non-ascii-\u00e5-secret"
+        other_secret = "unique-ascii-other-secret"
+        config_text = _minimal_valid_config_yaml().replace("secret-1", invalid_secret)
+        # Keep the second key inside the API-key list, before documentation.
+        config_text = config_text.replace(
+            "documentation:",
+            '  - name: "second"\n    key: "' + other_secret + '"\n'
+            "    max_ttl: 60\n    allow_remote_whitelist: false\ndocumentation:",
+        )
+        path = _write_config(tmp_path, config_text)
+        monkeypatch.setenv("KNOCKER_CONFIG_PATH", str(path))
+        caplog.set_level(logging.CRITICAL)
+
+        with pytest.raises(SystemExit) as exc_info:
+            config.load_config()
+
+        assert exc_info.value.code == 1
+        assert "API key at index 0 must contain only ASCII characters" in caplog.text
+        assert invalid_secret not in caplog.text
+        assert other_secret not in caplog.text
 
     def test_duplicate_api_keys_detected(self, tmp_path, caplog):
         """Duplicate API keys should be detected during config load."""

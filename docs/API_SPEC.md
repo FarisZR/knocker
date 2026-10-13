@@ -11,7 +11,7 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
 *   **URL**: `/knock`
 *   **Method**: `POST`, `OPTIONS`
 *   **Headers**:
-    *   `X-Api-Key` (string, **required** for POST): The secret API key for authentication.
+    *   `X-Api-Key` (ASCII string, **required** for POST): The secret API key for authentication. Non-ASCII header values are rejected as invalid keys and count toward the failure limit.
     *   `X-Forwarded-For` (string, proxy-provided): The client's real IP address. This is only trusted when the direct peer is listed in `server.trusted_proxies`.
 *   **Request Body** (optional, JSON):
     ```json
@@ -62,6 +62,7 @@ This endpoint is used to authenticate and whitelist an IP address or CIDR networ
 
 *   **`429 Too Many Requests`**
     *   Returned when the request exceeds `security.knock_rate_limit`.
+    *   An exhausted failure bucket blocks requests before key comparison or body reading, including requests with a correct key. Blocked retries do not extend the window; requests already admitted may finish.
     *   **Body**: `{"error": "Too many knock attempts."}`
 
 *   **`403 Forbidden`**
@@ -150,7 +151,7 @@ serving requests.
     - **`cleanup_interval_seconds`** (integer, optional): Background cleanup cadence for expired whitelist entries. Defaults to `60`.
 - **`api_keys`** (array of objects, required): A list of API key configurations.
     - **`name`** (string, optional): A friendly name for the key.
-    - **`key`** (string, required): The secret API key. It must be non-empty.
+    - **`key`** (ASCII string, required): The secret API key. It must be non-empty; non-ASCII secrets are rejected at startup.
     - Duplicate key values are rejected.
     - **`max_ttl`** (integer, required): The maximum time-to-live for whitelisted IPs in seconds.
     - **`allow_remote_whitelist`** (boolean, required): If `true`, the key can whitelist any IP/CIDR. If `false`, it can only whitelist the source IP of the request.
@@ -160,6 +161,7 @@ serving requests.
     - **`excluded_paths_by_host`** (mapping, optional): Host-specific excluded path prefixes, evaluated only for trusted forwarded host metadata. Omit it or use `{}` when no host-scoped exclusions are configured.
     - **`max_whitelist_entries`** (integer, optional): Maximum retained whitelist entries. Defaults to `10000`. When the limit is reached, knocks that would insert a new entry are rejected with `503`; entries already in the whitelist can still be refreshed.
     - **`knock_rate_limit`** (object, optional): Sliding-window rate limits with `window_seconds`, `successful_requests`, and `failed_requests`.
+    - Limits apply per resolved client IP in each process. A zero outcome limit disables that limit. Successful requests do not consume failure allowance; clients sharing an IP share the failure lockout. Separate workers and instances do not share history.
     - **`knock_rate_limit.max_tracked_actors`** (integer, optional, default `100000`): Upper bound on distinct client IPs tracked by the knock rate limiter. Because the actor identity is derived from client-claimable `X-Forwarded-For` values behind a trusted proxy, this cap bounds limiter memory; when the cap is reached, the least recently created actor and all of its outcome buckets are evicted, so that actor loses its throttle history. Must be positive.
 - **`cors`** (object, optional): CORS settings for the `/knock` endpoint.
     - **`allowed_origin`** (string, optional): The allowed origin for CORS requests. Defaults to "*" (any origin). Set to your web app's origin (e.g., "https://your-web-app.com") for security.

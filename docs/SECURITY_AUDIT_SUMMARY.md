@@ -7,6 +7,13 @@
 **Timing Attack Prevention:**
 - API key validation now uses `hmac.compare_digest()` for constant-time comparison
 - Prevents attackers from deducing valid API keys through timing analysis
+- Non-ASCII presented keys are rejected before comparison and counted as authentication failures, rather than raising an exception. Non-ASCII configured secrets are rejected at startup, and configuration error messages hide input values.
+
+**Failure Rate Limiting:**
+- Previously, every key was compared even after failure-bucket exhaustion; only rejected responses changed to 429, and correct keys could still grant access.
+- `/knock` now checks failure capacity before authentication and body reads. Exhausted actors receive 429 for any key; blocked retries do not extend the window, and already-admitted requests may complete.
+- Regression tests cover malformed header bytes, failure accounting, skipped key/body/mutation work, expiry, actor isolation, disabled limits, and separate success accounting. Caddy E2E tests verify lockout, protected access denial, recovery, and absence of ASGI exception tracebacks.
+- Limits remain process-local, shared by clients with the same resolved IP, and subject to the documented actor-cap eviction behavior.
 
 **Enhanced Input Validation:**
 - Maximum TTL limit of 10 years (315,360,000 seconds) to prevent integer overflow issues

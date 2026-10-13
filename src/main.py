@@ -373,12 +373,20 @@ async def knock(
     client_ip: Optional[str] = Depends(get_client_ip_dependency),
     settings: SettingsLike = Depends(get_settings),
 ):
-    api_key = request.headers.get("X-Api-Key")
     allowed_origin = config.validate_settings(settings).cors.allowed_origin
     direct_ip = request.client.host if request.client else None
     if direct_ip == "testclient":
         direct_ip = request.headers.get("x-knocker-test-direct-ip", "127.0.0.1")
     rate_limit_actor = client_ip or direct_ip or "unknown"
+
+    # Gate new admissions before checking keys or reading the body. This check
+    # does not reserve failure capacity; requests already admitted may finish.
+    if not core.can_record_knock_attempt(settings, rate_limit_actor, "failure"):
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={"error": "Too many knock attempts."},
+            headers={"Access-Control-Allow-Origin": allowed_origin},
+        )
 
     if not client_ip:
         logging.warning("Could not determine client IP.")
@@ -390,7 +398,7 @@ async def knock(
             "Could not determine client IP.",
         )
 
-    api_key_record = core.get_api_key_record(api_key, settings)
+    api_key_record = core.get_api_key_record(request.headers.get("X-Api-Key"), settings)
     if not api_key_record:
         logging.warning(f"Invalid or missing API key provided by {client_ip}.")
         return _knock_failure(

@@ -40,8 +40,17 @@ substitute the network's subnet (`172.16.238.0/24`, `fd00:dead:beef::/64`).
 
 ### 3. Request parsing and rate limiting
 
-`POST /knock` authenticates and applies the failure limiter before reading the
-body. The body is optional, must be `application/json` when present, may contain
+`POST /knock` checks failure-bucket capacity before comparing API keys or reading
+the body. An exhausted client receives 429 even with a correct key. Blocked
+requests do not extend the window; requests admitted before exhaustion may
+finish. Successful requests do not consume failure allowance, and setting
+`failed_requests: 0` disables this gate. Limits are per resolved client IP and
+per process; multiple workers or instances do not share throttle state. Clients
+sharing an IP also share its lockout, and the existing actor-cap eviction can
+discard throttle history.
+
+Authentication then completes before body parsing. The body is optional, must
+be `application/json` when present, may contain
 only `ip_address` and `ttl`, and is bounded at 4096 bytes. Authenticated malformed
 and oversized requests count as failures. The endpoint returns 413 for an
 oversized body, 415 for non-JSON content, and 503 when the serialized firewall
@@ -187,6 +196,7 @@ security:
 
 ### 2. API Key Management
 
+- **Use ASCII key material**: Non-ASCII configured secrets are rejected at startup; rotate any such secret to a random ASCII value. Non-ASCII request headers are ordinary invalid-key failures (401, or 429 after lockout), with no comparison exception. Key material is not normalized or silently converted.
 - **Use strong, random API keys**: Generate cryptographically secure random strings
 - **Do not reuse secrets across entries**: Avoid configuring the same secret twice
 - **Principle of least privilege**: Set `allow_remote_whitelist: false` for most keys
