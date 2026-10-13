@@ -893,6 +893,8 @@ class SlidingWindowRateLimiter:
         cutoff = timestamp - self.window_seconds
         bucket_key = (outcome, actor)
         with self._lock:
+            if outcome == "failure" and bucket_key not in self._events:
+                return True
             self._prune_all_buckets(cutoff, timestamp)
             bucket = self._events.get(bucket_key)
             if bucket is None:

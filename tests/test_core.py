@@ -196,25 +196,31 @@ def test_rate_limiter_prunes_stale_actor_buckets():
 
 
 @pytest.mark.parametrize("actor", ["new-actor", "success-only-actor"])
-def test_rate_limiter_admission_without_failures_does_not_scan_existing_actors(actor):
+@pytest.mark.parametrize("now", [101, 160])
+def test_rate_limiter_admission_without_failures_does_not_scan_existing_actors(actor, now):
     from collections import deque
-    from typing import Iterator, override
+    from typing import Never, override
 
-    class NoIterationDict(dict[tuple[str, str], deque[tuple[int, int]]]):
+    class NoScanDict(dict[tuple[str, str], deque[tuple[int, int]]]):
         @override
-        def __iter__(self) -> Iterator[tuple[str, str]]:
+        def __iter__(self) -> Never:
             raise AssertionError("missing failure bucket scanned unrelated actor history")
 
+        @override
+        def items(self) -> Never:
+            raise AssertionError("missing failure bucket triggered global pruning")
+
     limiter = core.SlidingWindowRateLimiter(60, 20, 30)
-    limiter._events = NoIterationDict({("success", "success-only-actor"): deque([(100, 1)])})
+    limiter._events = NoScanDict({("success", "success-only-actor"): deque([(100, 1)])})
     limiter._actor_order = {"success-only-actor": None}
-    # Periodic pruning is expected; admission within the current window must
-    # not scan all retained actors or allocate an empty outcome bucket.
+    # Missing failure history must not scan unrelated buckets, even when
+    # periodic pruning is due. Attempt accounting still performs maintenance.
     limiter._last_global_prune = 100
 
-    assert limiter.can_allow(actor, "failure", now=101) is True
+    assert limiter.can_allow(actor, "failure", now=now) is True
     assert len(limiter._events) == 1
     assert len(limiter._actor_order) == 1
+    assert limiter._last_global_prune == 100
 
 
 def test_rate_limiter_evicts_oldest_bucket_when_actor_cap_is_reached():

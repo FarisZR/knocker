@@ -291,6 +291,14 @@ async def _read_knock_body(
         return None, (status.HTTP_400_BAD_REQUEST, "Invalid request data.")
 
 
+def _knock_rate_limited(allowed_origin: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={"error": "Too many knock attempts."},
+        headers={"Access-Control-Allow-Origin": allowed_origin},
+    )
+
+
 def _knock_failure(
     settings: SettingsLike,
     actor: str,
@@ -299,8 +307,7 @@ def _knock_failure(
     message: str,
 ) -> JSONResponse:
     if not core.record_knock_attempt(settings, actor, "failure"):
-        status_code = status.HTTP_429_TOO_MANY_REQUESTS
-        message = "Too many knock attempts."
+        return _knock_rate_limited(allowed_origin)
     return JSONResponse(
         status_code=status_code,
         content={"error": message},
@@ -382,11 +389,7 @@ async def knock(
     # Gate new admissions before checking keys or reading the body. This check
     # does not reserve failure capacity; requests already admitted may finish.
     if not core.can_record_knock_attempt(settings, rate_limit_actor, "failure"):
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content={"error": "Too many knock attempts."},
-            headers={"Access-Control-Allow-Origin": allowed_origin},
-        )
+        return _knock_rate_limited(allowed_origin)
 
     if not client_ip:
         logging.warning("Could not determine client IP.")
@@ -458,11 +461,7 @@ async def knock(
 
     success_reservation = core.reserve_knock_attempt(settings, rate_limit_actor, "success")
     if success_reservation is None:
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content={"error": "Too many knock attempts."},
-            headers={"Access-Control-Allow-Origin": allowed_origin},
-        )
+        return _knock_rate_limited(allowed_origin)
 
     # Add to whitelist with firewalld integration
     # This will add firewalld rules BEFORE updating whitelist.json if firewalld is enabled

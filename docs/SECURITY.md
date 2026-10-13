@@ -49,6 +49,10 @@ per process; multiple workers or instances do not share throttle state. Clients
 sharing an IP also share its lockout, and the existing actor-cap eviction can
 discard throttle history.
 
+Admission for clients with no failure history skips global bucket pruning;
+attempt accounting still performs scheduled maintenance. Admission, failure,
+and success-limit denials share the same 429 JSON response and CORS headers.
+
 Authentication then completes before body parsing. The body is optional, must
 be `application/json` when present, may contain
 only `ip_address` and `ttl`, and is bounded at 4096 bytes. Authenticated malformed
