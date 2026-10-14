@@ -55,3 +55,48 @@ echo 'PASS: TTL capped by key permission'
 request 400 /knock -X POST -H "X-Api-Key: $admin_key" -H 'X-Forwarded-For: 1.1.1.1' \
     -H 'Content-Type: application/json' -d '{"ttl":-5}'
 echo 'PASS: invalid TTL'
+
+# Each case uses a fresh actor so preceding policy failures cannot consume its
+# allowance. These headers are trusted only on this isolated test network.
+locked_ip=198.51.100.10
+malformed_ip=198.51.100.11
+other_ip=198.51.100.12
+request 401 /private -H "X-Forwarded-For: $locked_ip"
+for attempt in {1..10}; do
+    request 401 /knock -X POST -H "X-Api-Key: wrong-$attempt" \
+        -H "X-Forwarded-For: $locked_ip"
+done
+request 429 /knock -X POST -H 'X-Api-Key: wrong' -H "X-Forwarded-For: $locked_ip"
+request 429 /knock -X POST -H "X-Api-Key: $personal_key" \
+    -H "X-Forwarded-For: $locked_ip" -H 'Content-Type: application/json' -d 'invalid JSON'
+request 401 /private -H "X-Forwarded-For: $locked_ip"
+echo 'PASS: exhausted failures block correct keys and leave protected access denied'
+
+request 200 /knock -X POST -H "X-Api-Key: $guest_key" -H "X-Forwarded-For: $other_ip"
+request 200 /private -H "X-Forwarded-For: $other_ip"
+echo 'PASS: failure lockout does not affect another client or later configured keys'
+
+request 401 /private -H "X-Forwarded-For: $malformed_ip"
+for raw_key in $'\x80' $'\xff' $'\xc3\xa5' $'\xef\xbc\xa1'; do
+    request 401 /knock -X POST -H "X-Api-Key: $raw_key" \
+        -H "X-Forwarded-For: $malformed_ip"
+done
+for attempt in {1..6}; do
+    request 401 /knock -X POST -H $'X-Api-Key: \xc3\xa5' \
+        -H "X-Forwarded-For: $malformed_ip"
+done
+request 429 /knock -X POST -H $'X-Api-Key: \xc3\xa5' -H "X-Forwarded-For: $malformed_ip"
+request 429 /knock -X POST -H "X-Api-Key: $personal_key" \
+    -H "X-Forwarded-For: $malformed_ip"
+request 401 /private -H "X-Forwarded-For: $malformed_ip"
+echo 'PASS: raw non-ASCII headers are counted failures through Caddy and Uvicorn'
+
+# The test configuration uses a five-second window. Verify recovery through
+# forward_auth as well as the knock response, with no service restart.
+sleep 5
+for recovered_ip in "$locked_ip" "$malformed_ip"; do
+    request 200 /knock -X POST -H "X-Api-Key: $personal_key" \
+        -H "X-Forwarded-For: $recovered_ip"
+    request 200 /private -H "X-Forwarded-For: $recovered_ip"
+done
+echo 'PASS: valid keys grant protected access after the failure window expires'

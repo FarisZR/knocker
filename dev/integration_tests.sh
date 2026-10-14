@@ -48,6 +48,12 @@ fi
 "${compose[@]}" up -d --no-build --wait --wait-timeout 90
 if [ "$mode" = caddy ]; then
     "${compose[@]}" run --rm --no-deps tests
+    # Malformed authentication must not produce ASGI exception tracebacks.
+    knocker_logs=$("${compose[@]}" logs --no-color knocker)
+    if grep -q 'Exception in ASGI application' <<< "$knocker_logs"; then
+        echo 'Unexpected ASGI exception during Caddy authentication tests' >&2
+        exit 1
+    fi
 else
     # The controller runs on the host; packet probes run in separate containers.
     python3 ./firewalld/e2e.py

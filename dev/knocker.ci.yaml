@@ -26,6 +26,11 @@ security:
     - "/public"
   # Maximum number of entries in the whitelist (default: 10000)
   max_whitelist_entries: 10000
+  # Short window for the authentication lockout/recovery E2E checks.
+  knock_rate_limit:
+    window_seconds: 5
+    successful_requests: 20
+    failed_requests: 10
 
 whitelist:
   # The path where the whitelist file will be stored.

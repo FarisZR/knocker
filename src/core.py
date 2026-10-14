@@ -726,7 +726,11 @@ class APIKeyRecord:
     key: str
 
     def verify(self, presented_key: str) -> bool:
-        if not isinstance(presented_key, str):
+        if (
+            not isinstance(presented_key, str)
+            or not presented_key.isascii()
+            or not self.key.isascii()
+        ):
             return False
         return hmac.compare_digest(self.key, presented_key)
 
@@ -889,8 +893,12 @@ class SlidingWindowRateLimiter:
         cutoff = timestamp - self.window_seconds
         bucket_key = (outcome, actor)
         with self._lock:
+            if outcome == "failure" and bucket_key not in self._events:
+                return True
             self._prune_all_buckets(cutoff, timestamp)
-            bucket = self._events[bucket_key]
+            bucket = self._events.get(bucket_key)
+            if bucket is None:
+                return True
             self._prune_bucket(bucket, cutoff)
             if not bucket:
                 self._remove_bucket(bucket_key)
