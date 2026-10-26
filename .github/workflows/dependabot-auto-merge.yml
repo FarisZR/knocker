@@ -1,22 +1,76 @@
 name: Dependabot auto-merge
 
 on:
-  pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_run:
+    workflows:
+      - Run Tests
+      - Build multi-arch docker image
+    types: [completed]
 
 permissions:
   contents: write
   pull-requests: write
+  checks: read
 
 jobs:
-  enable-auto-merge:
+  auto-merge:
     if: >-
-      github.event.pull_request.user.login == 'dependabot[bot]' &&
-      github.event.pull_request.draft == false
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Enable auto-merge
+      - name: Merge Dependabot PR after checks pass
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --squash "$PR_URL"
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          pr_number="$(
+            gh api "repos/$REPOSITORY/commits/$HEAD_SHA/pulls" \
+              --jq '[.[] | select(.state == "open" and .user.login == "dependabot[bot]" and .base.ref == "main") | .number] | first // empty'
+          )"
+
+          if [ -z "$pr_number" ]; then
+            echo "No open Dependabot PR found for $HEAD_SHA"
+            exit 0
+          fi
+
+          pr_json="$(gh api "repos/$REPOSITORY/pulls/$pr_number")"
+          pr_author="$(jq -r '.user.login' <<< "$pr_json")"
+          pr_state="$(jq -r '.state' <<< "$pr_json")"
+          pr_head_sha="$(jq -r '.head.sha' <<< "$pr_json")"
+
+          if [ "$pr_author" != "dependabot[bot]" ] || [ "$pr_state" != "open" ] || [ "$pr_head_sha" != "$HEAD_SHA" ]; then
+            echo "The PR is no longer an open Dependabot PR at this tested commit"
+            exit 0
+          fi
+
+          changed_files="$(gh api --paginate "repos/$REPOSITORY/pulls/$pr_number/files" --jq '.[].filename')"
+          docker_validation_required=false
+          while IFS= read -r filename; do
+            case "$filename" in
+              Dockerfile|.dockerignore|pyproject.toml|uv.lock|src/*|.github/workflows/docker-publish.yml)
+                docker_validation_required=true
+                ;;
+            esac
+          done <<< "$changed_files"
+
+          checks_json="$(gh api "repos/$REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100")"
+          test_result="$(jq -r '[.check_runs[] | select(.name == "test")] | sort_by(.started_at // "") | last | .conclusion // empty' <<< "$checks_json")"
+
+          if [ "$test_result" != "success" ]; then
+            echo "The required test suite has not succeeded"
+            exit 0
+          fi
+
+          if [ "$docker_validation_required" = true ]; then
+            docker_result="$(jq -r '[.check_runs[] | select(.name == "validate")] | sort_by(.started_at // "") | last | .conclusion // empty' <<< "$checks_json")"
+            if [ "$docker_result" != "success" ]; then
+              echo "Docker validation has not succeeded"
+              exit 0
+            fi
+          fi
+
+          gh pr merge "$pr_number" --repo "$REPOSITORY" --squash --match-head-commit "$HEAD_SHA"
