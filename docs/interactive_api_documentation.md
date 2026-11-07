@@ -80,7 +80,7 @@ The generated file (`openapi.json` by default) is automatically ignored by git t
 
 ## API Authentication in Documentation
 
-When testing endpoints that require API keys (like `/knock`):
+When testing endpoints that require API keys (like `/knock` and `/status`):
 
 1. Click the "Authorize" button in Swagger UI
 2. Enter your API key in the `X-Api-Key` field
@@ -94,8 +94,9 @@ secrets and obvious placeholders are rejected at startup.
 
 ### Authentication Endpoints
 - `POST /knock` - Add IP addresses to whitelist
+- `GET /status` - Check the current source IP for active dynamic whitelist coverage and expiry
 - `GET /verify` - Verify if IP is authorized
-- `OPTIONS /knock` - CORS preflight support
+- `OPTIONS /knock`, `OPTIONS /status` - CORS preflight support
 
 ### System Endpoints  
 - `GET /health` - Cheap liveness check and service status
@@ -106,6 +107,13 @@ secrets and obvious placeholders are rejected at startup.
 characters. Authentication happens before body reading. Invalid JSON is 400,
 oversized bodies are 413, non-JSON bodies are 415, and a saturated firewall
 mutation worker is 503.
+
+`GET /status` requires `X-Api-Key` and returns `ip_address`, `whitelisted`,
+`expires_at`, and `expires_in_seconds` without refreshing the knock. Inactive
+coverage returns `false`, `null`, and `0` for the last three fields. CIDR coverage
+is included; permanent allowances and path exclusions are excluded. Responses
+use `Cache-Control: no-store`. See [the status API contract](API_SPEC.md#3-current-ip-status)
+for authentication failures, rate limits, and client behavior.
 
 ## Request/Response Schemas
 
@@ -134,6 +142,16 @@ All endpoints now include properly typed request and response schemas:
 }
 ```
 
+**StatusResponse**:
+```json
+{
+  "ip_address": "192.168.1.100",
+  "whitelisted": true,
+  "expires_at": 2000000300,
+  "expires_in_seconds": 300
+}
+```
+
 ## Integration Examples
 
 ### Using with curl
@@ -143,6 +161,10 @@ curl -X POST "http://localhost:8000/knock" \
   -H "X-Api-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{"ip_address": "192.168.1.100", "ttl": 3600}'
+
+# Check this connection's current IP and active knock
+curl "http://localhost:8000/status" \
+  -H "X-Api-Key: your-api-key"
 ```
 
 ### Using with Python requests

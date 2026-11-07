@@ -47,6 +47,8 @@ This document outlines the key architectural and design decisions made during th
 *   **Whitelist Runtime Caching**:
     *   **Reasoning**: The v2 runtime uses an in-memory whitelist index as the single-writer authority. Mutations and explicit reloads update the index, so authorization checks do not stat or parse the JSON file on the `/verify` hot path.
 
+    *   **Deployment constraint**: Run one Knocker process per whitelist file, as in the default container command. Each process holds its own index; file locks protect persisted mutations but do not synchronize other processes' cached reads. Multiple Uvicorn workers or instances sharing storage can therefore return stale results from both `/verify` and `/status`. Supporting them requires coordinated cache invalidation or shared state; reloading only `/status` would leave authorization inconsistent.
+
 *   **Liveness and Readiness**:
     *   **Reasoning**: `/health` is a cheap liveness probe and never runs firewalld commands. `/ready` retains the full read-only storage and firewalld checks, while startup still performs setup, restoration, and verification before serving traffic.
 

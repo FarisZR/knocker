@@ -157,6 +157,10 @@ another client's knock. Status observes the address family and network route use
 for this request; a protected service using a different family/route may see a
 different IP.
 
+Run one Knocker process per whitelist file. `/status` and `/verify` read the same
+in-memory index, which is not synchronized across workers or instances sharing
+the file. See [runtime caching](DESIGN_DECISIONS.md#6-configuration-and-state).
+
 Route `/status` directly to Knocker before any `forward_auth` handler, just like
 `/knock`, so clients can check status without an active knock. Preserve the real
 client IP and configure trusted proxies as described for `/knock`.
