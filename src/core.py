@@ -201,6 +201,17 @@ class DynamicWhitelistIndex:
             for network, expiry_time in self.networks_v6.items()
         )
 
+    def matching_expiry(self, address: IPAddress, now: int) -> Optional[int]:
+        """Return the latest active expiry covering this address, including CIDRs."""
+        if isinstance(address, ipaddress.IPv4Address):
+            exact = self.exact_v4.get(address, 0)
+            matches = (expiry for network, expiry in self.networks_v4.items() if address in network)
+        else:
+            exact = self.exact_v6.get(address, 0)
+            matches = (expiry for network, expiry in self.networks_v6.items() if address in network)
+        expiry = max(exact, max(matches, default=0))
+        return expiry if expiry > now else None
+
     def to_serialized(
         self, now: Optional[int] = None, include_expired: bool = True
     ) -> Dict[str, int]:
@@ -371,6 +382,10 @@ class WhitelistStore:
     def contains(self, address: IPAddress, now: Optional[int] = None) -> bool:
         with self._lock:
             return self._index.contains(address, now)
+
+    def matching_expiry(self, address: IPAddress, now: int) -> Optional[int]:
+        with self._lock:
+            return self._index.matching_expiry(address, now)
 
     def add(self, ip_or_cidr: str, expiry_time: int) -> None:
         if not is_valid_ip_or_cidr(ip_or_cidr):

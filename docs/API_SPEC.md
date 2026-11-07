@@ -108,7 +108,66 @@ This endpoint is used by Caddy's `forward_auth` directive to verify if a client'
 
 ---
 
-### 3. Health and Readiness Checks
+### 3. Current IP Status
+
+* **URL**: `/status`
+* **Method**: `GET`, `OPTIONS`
+* **Authentication**: `X-Api-Key`, using any configured API key.
+* Uses the same trusted-proxy IP resolution as `/knock`. No body or remote-IP
+  parameter is supported, including for keys with remote-whitelist permission.
+* Returns **200** for both active and inactive dynamic whitelist coverage:
+
+  ```json
+  {
+    "ip_address": "203.0.113.10",
+    "whitelisted": true,
+    "expires_at": 2000000300,
+    "expires_in_seconds": 300
+  }
+  ```
+
+  Without an active matching entry, `whitelisted` is `false`, `expires_at` is
+  `null`, and `expires_in_seconds` is `0`. Expiry uses Unix seconds and excludes
+  entries expiring at or before the current server time. If overlapping IP/CIDR
+  entries match, the latest expiry is returned, since coverage lasts until then.
+  Expiry reflects existing coverage and is not capped by the querying key's TTL.
+* Checks do not create, refresh, persist, or remove whitelist entries or firewall
+  rules. Successful polls do not consume the successful knock quota. Authentication
+  failures share `/knock`'s per-client failure limiter and lockout; **429** uses the
+  existing `{"error": "Too many knock attempts."}` response.
+* **401**: missing/invalid key; **400**: authenticated request whose source IP cannot
+  be resolved; **429**: shared failure limit exhausted (checked before key validation).
+* Responses include `Cache-Control: no-store` and the configured
+  `Access-Control-Allow-Origin`. OPTIONS returns **204**, allows `GET, OPTIONS`
+  and the `X-Api-Key` header, and requires no API key.
+* This reports dynamic knock coverage, including entries created by other keys.
+  It excludes `always_allowed_ips` and path exclusions, and does not probe firewall
+  health or guarantee access to a protected service. Use `/ready` for readiness.
+
+#### Client behavior and deployment
+
+On network changes or app resume, request `/status` and display "Active until …"
+or "Knock needed". A failed request means status is unknown; it does not prove
+that the IP is unwhitelisted. No third-party IP service is necessary.
+
+An inactive result alone cannot distinguish expiry from an IP change. To display
+"IP changed", keep the source IP from the last self-knock's `whitelisted_entry`
+and compare it with `ip_address`. A new IP can already be covered by a CIDR or
+another client's knock. Status observes the address family and network route used
+for this request; a protected service using a different family/route may see a
+different IP.
+
+Run one Knocker process per whitelist file. `/status` and `/verify` read the same
+in-memory index, which is not synchronized across workers or instances sharing
+the file. See [runtime caching](DESIGN_DECISIONS.md#6-configuration-and-state).
+
+Route `/status` directly to Knocker before any `forward_auth` handler, just like
+`/knock`, so clients can check status without an active knock. Preserve the real
+client IP and configure trusted proxies as described for `/knock`.
+
+---
+
+### 4. Health and Readiness Checks
 
 `/health` is the cheap liveness probe used by the container. It only checks
 that the initialized runtime is available; it does not call `firewall-cmd` or
@@ -163,5 +222,5 @@ serving requests.
     - **`knock_rate_limit`** (object, optional): Sliding-window rate limits with `window_seconds`, `successful_requests`, and `failed_requests`.
     - Limits apply per resolved client IP in each process. A zero outcome limit disables that limit. Successful requests do not consume failure allowance; clients sharing an IP share the failure lockout. Separate workers and instances do not share history.
     - **`knock_rate_limit.max_tracked_actors`** (integer, optional, default `100000`): Upper bound on distinct client IPs tracked by the knock rate limiter. Because the actor identity is derived from client-claimable `X-Forwarded-For` values behind a trusted proxy, this cap bounds limiter memory; when the cap is reached, the least recently created actor and all of its outcome buckets are evicted, so that actor loses its throttle history. Must be positive.
-- **`cors`** (object, optional): CORS settings for the `/knock` endpoint.
+- **`cors`** (object, optional): CORS settings for the `/knock` and `/status` endpoints.
     - **`allowed_origin`** (string, optional): The allowed origin for CORS requests. Defaults to "*" (any origin). Set to your web app's origin (e.g., "https://your-web-app.com") for security.
