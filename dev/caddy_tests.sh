@@ -29,8 +29,20 @@ request 401 /private -H 'X-Forwarded-For: 1.1.1.1'
 echo 'PASS: unauthorized private access'
 request 200 /public -H 'X-Forwarded-For: 1.1.1.1'
 echo 'PASS: excluded public path'
+request 401 /status -H 'X-Forwarded-For: 1.1.1.1'
+request 200 /status -H "X-Api-Key: $personal_key" -H 'X-Forwarded-For: 1.1.1.1'
+[ "$(field ip_address)" = 1.1.1.1 ]
+[ "$(field whitelisted)" = False ]
+echo 'PASS: authenticated status is reachable without a knock'
 request 200 /knock -X POST -H "X-Api-Key: $admin_key" -H 'X-Forwarded-For: 1.1.1.1'
 [ "$(field whitelisted_entry)" = 1.1.1.1 ]
+knock_expiry="$(field expires_at)"
+request 200 /status -H "X-Api-Key: $personal_key" -H 'X-Forwarded-For: 1.1.1.1'
+[ "$(field whitelisted)" = True ]
+[ "$(field expires_at)" = "$knock_expiry" ]
+request 200 /status -H "X-Api-Key: $personal_key" -H 'X-Forwarded-For: 203.0.113.23'
+[ "$(field ip_address)" = 203.0.113.23 ]
+[ "$(field whitelisted)" = False ]
 echo 'PASS: knock preserves client address through Caddy'
 request 200 /private -H 'X-Forwarded-For: 1.1.1.1'
 echo 'PASS: authorized private access'

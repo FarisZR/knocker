@@ -6,8 +6,8 @@
 :80 {
 	# Route requests to different handlers based on the path
 	route {
-		# Handle the knock request by forwarding it directly to the knocker service.
-		@knock path /knock
+		# Forward client API requests before forward_auth, even without an active knock.
+		@knock path /knock /status
 		handle @knock {
 			request_body {
 				max_size 4KB

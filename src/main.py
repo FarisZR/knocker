@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -18,14 +19,14 @@ try:
     from . import config
     from . import firewalld
     from .config import Settings, SettingsLike
-    from .models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse
+    from .models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse, StatusResponse
     from .version import __version__
 except ImportError:  # pragma: no cover - fallback for direct module execution
     import core
     import config
     import firewalld
     from config import Settings, SettingsLike
-    from models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse
+    from models import KnockRequest, KnockResponse, HealthResponse, ErrorResponse, StatusResponse
     from version import __version__
 
 
@@ -129,7 +130,8 @@ A dynamic IP whitelisting service that works with reverse proxy authorization.
 
 1. Use the `/knock` endpoint to add IPs to the whitelist
 2. Reverse proxies can use `/verify` to check if an IP is authorized
-3. Monitor service health with the `/health` endpoint
+3. Clients can use `/status` with an API key to check their current IP and knock expiry
+4. Monitor service health with the `/health` endpoint
 """
 OPENAPI_TAGS = [
     {"name": "Authentication", "description": "Endpoints for IP whitelisting and verification"},
@@ -338,6 +340,86 @@ async def knock_options(settings: SettingsLike = Depends(get_settings)):
             "Access-Control-Allow-Headers": "X-Api-Key, Content-Type",
         },
     )
+
+
+@router.options("/status", tags=["Authentication"], status_code=204)
+async def status_options(settings: SettingsLike = Depends(get_settings)):
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT,
+        headers={
+            "Access-Control-Allow-Origin": config.validate_settings(settings).cors.allowed_origin,
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "X-Api-Key",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get(
+    "/status",
+    response_model=StatusResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Client IP cannot be determined"},
+        401: {"model": ErrorResponse, "description": "Invalid or missing API key"},
+        429: {
+            "model": ErrorResponse,
+            "description": "Shared authentication failure limit exceeded",
+        },
+    },
+    tags=["Authentication"],
+    summary="Check Current IP Whitelist Status",
+    description=(
+        "Requires X-Api-Key. Reports active dynamic whitelist coverage for the resolved source IP "
+        "without extending it. Includes CIDRs but excludes permanent allowances and path exclusions. "
+        "Any valid key can query its own source IP; no remote lookup is supported."
+    ),
+)
+async def whitelist_status(
+    request: Request,
+    client_ip: Optional[str] = Depends(get_client_ip_dependency),
+    settings: SettingsLike = Depends(get_settings),
+):
+    allowed_origin = config.validate_settings(settings).cors.allowed_origin
+    headers = {"Access-Control-Allow-Origin": allowed_origin, "Cache-Control": "no-store"}
+    direct_ip = request.client.host if request.client else None
+    if direct_ip == "testclient":
+        direct_ip = request.headers.get("x-knocker-test-direct-ip", "127.0.0.1")
+    actor = client_ip or direct_ip or "unknown"
+
+    if not core.can_record_knock_attempt(settings, actor, "failure"):
+        result = _knock_rate_limited(allowed_origin)
+    elif not core.get_api_key_record(request.headers.get("X-Api-Key"), settings):
+        result = _knock_failure(
+            settings,
+            actor,
+            allowed_origin,
+            status.HTTP_401_UNAUTHORIZED,
+            "Invalid or missing API key.",
+        )
+    elif client_ip is None:
+        result = _knock_failure(
+            settings,
+            actor,
+            allowed_origin,
+            status.HTTP_400_BAD_REQUEST,
+            "Could not determine client IP.",
+        )
+    else:
+        now = int(time.time())
+        expiry = core.ensure_runtime_state(settings).whitelist.matching_expiry(
+            ipaddress.ip_address(client_ip), now
+        )
+        return JSONResponse(
+            content=StatusResponse(
+                ip_address=client_ip,
+                whitelisted=expiry is not None,
+                expires_at=expiry,
+                expires_in_seconds=expiry - now if expiry is not None else 0,
+            ).model_dump(),
+            headers=headers,
+        )
+    result.headers.update(headers)
+    return result
 
 
 @router.post(

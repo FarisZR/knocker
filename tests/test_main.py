@@ -749,3 +749,143 @@ def test_verify_untrusted_peer_cannot_use_host_scoped_exclusion(mock_settings):
     )
 
     assert response.status_code == 401
+
+
+# --- Test /status Endpoint ---
+
+
+@pytest.mark.parametrize("key", [None, b"wrong", b"", b"\xc3\xa5"])
+def test_status_requires_authentication(key):
+    headers = [(b"X-Forwarded-For", b"1.2.3.4")]
+    if key is not None:
+        headers.append((b"X-Api-Key", key))
+    response = client.get("/status", headers=headers)
+    assert response.status_code == 401
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "ip,entries",
+    [
+        ("1.2.3.4", ["1.2.3.4", "1.2.3.0/24", "1.2.0.0/16"]),
+        ("2001:db8::123", ["2001:db8::123", "2001:db8::/120", "2001:db8::/64"]),
+    ],
+)
+def test_status_tracks_coverage_without_mutation(ip, entries, mock_settings, monkeypatch):
+    from src import core
+
+    clock = [2_000_000_000]
+    monkeypatch.setattr("src.core.time.time", lambda: clock[0])
+    # A key can query coverage lasting longer than its own maximum knock TTL.
+    mock_settings["api_keys"][1]["max_ttl"] = 10
+    store = core.ensure_runtime_state(mock_settings).whitelist
+    for entry, ttl in zip(entries, [100, 200, 300]):
+        store.add(entry, clock[0] + ttl)
+    original = store.storage_path.read_bytes()
+    headers = {"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": ip}
+    response = client.get("/status", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {
+        "ip_address": ip,
+        "whitelisted": True,
+        "expires_at": 2_000_000_300,
+        "expires_in_seconds": 300,
+    }
+    clock[0] += 250
+    assert client.get("/status", headers=headers).json()["expires_in_seconds"] == 50
+    clock[0] += 50
+    assert client.get("/status", headers=headers).json() == {
+        "ip_address": ip,
+        "whitelisted": False,
+        "expires_at": None,
+        "expires_in_seconds": 0,
+    }
+    assert store.storage_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("ip", ["9.8.7.6", "100.100.100.100", "2001:db8:cafe::1"])
+def test_status_no_active_knock_even_for_permanent_allowances(ip):
+    response = client.get(
+        "/status",
+        headers={"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": ip, "X-Forwarded-Uri": "/healthz"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "ip_address": ip,
+        "whitelisted": False,
+        "expires_at": None,
+        "expires_in_seconds": 0,
+    }
+
+
+def test_status_network_change_and_remote_query_ignored():
+    headers = {"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"}
+    knock = client.post("/knock", headers=headers).json()
+    assert client.get("/status", headers=headers).json()["expires_at"] == knock["expires_at"]
+    headers["X-Forwarded-For"] = "9.8.7.6"
+    result = client.get("/status?ip_address=1.2.3.4", headers=headers).json()
+    assert result["ip_address"] == "9.8.7.6"
+    assert result["whitelisted"] is False
+
+
+@pytest.mark.parametrize("forwarded", [None, "bad", "127.0.0.1"])
+def test_status_rejects_unresolved_client(forwarded):
+    headers = {"X-Api-Key": "USER_KEY_1"}
+    if forwarded is not None:
+        headers["X-Forwarded-For"] = forwarded
+    assert client.get("/status", headers=headers).status_code == 400
+
+
+def test_status_does_not_trust_forwarded_ip_from_untrusted_peer():
+    response = client.get(
+        "/status",
+        headers={
+            "X-Api-Key": "USER_KEY_1",
+            "X-Forwarded-For": "1.2.3.4",
+            "X-Knocker-Test-Direct-IP": "9.8.7.6",
+        },
+    )
+    assert response.json()["ip_address"] == "9.8.7.6"
+
+
+def test_status_shares_failure_limit_but_polling_does_not_consume_knocks(
+    mock_settings, monkeypatch
+):
+    mock_settings["security"]["knock_rate_limit"] = {
+        "failed_requests": 2,
+        "successful_requests": 1,
+    }
+    headers = {"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"}
+    for _ in range(5):
+        assert client.get("/status", headers=headers).status_code == 200
+    assert client.post("/knock", headers=headers).status_code == 200
+    bad_headers = {**headers, "X-Api-Key": "wrong"}
+    assert client.get("/status", headers=bad_headers).status_code == 401
+    assert client.post("/knock", headers=bad_headers).status_code == 401
+
+    def unexpected_auth(*args, **kwargs):
+        pytest.fail("exhausted actor reached authentication")
+
+    monkeypatch.setattr("src.main.core.get_api_key_record", unexpected_auth)
+    response = client.get("/status", headers=headers)
+    assert response.status_code == 429
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_status_cors_and_schema(mock_settings):
+    from src.main import create_app
+
+    mock_settings["cors"]["allowed_origin"] = "https://example.com"
+    preflight = client.options("/status")
+    assert preflight.status_code == 204
+    assert preflight.headers["access-control-allow-methods"] == "GET, OPTIONS"
+    assert preflight.headers["access-control-allow-headers"] == "X-Api-Key"
+    headers = {"X-Api-Key": "USER_KEY_1", "X-Forwarded-For": "1.2.3.4"}
+    response = client.get("/status", headers=headers)
+    assert response.headers["access-control-allow-origin"] == "https://example.com"
+    assert response.headers["cache-control"] == "no-store"
+    schema = create_app(mock_settings).openapi()
+    operation = schema["paths"]["/status"]["get"]
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/StatusResponse"
+    }

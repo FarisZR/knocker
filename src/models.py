@@ -62,6 +62,19 @@ class KnockResponse(BaseModel):
     )
 
 
+class StatusResponse(BaseModel):
+    """Current source IP's dynamic whitelist status."""
+
+    ip_address: str = Field(description="Client IP observed by the server")
+    whitelisted: bool = Field(
+        description="Whether an active dynamic whitelist entry covers this IP"
+    )
+    expires_at: Optional[int] = Field(description="Latest matching expiry as Unix seconds, or null")
+    expires_in_seconds: int = Field(
+        description="Remaining TTL in seconds, or zero if not whitelisted"
+    )
+
+
 class HealthResponse(BaseModel):
     """Response schema for health check endpoint."""
 
