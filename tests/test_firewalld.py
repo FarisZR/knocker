@@ -818,6 +818,34 @@ rule family="ipv4" source address="10.0.0.50" port protocol="tcp" port="22" acce
         assert result is True
         assert mock_add_rule.call_count == 0  # No rules to restore
 
+    @patch.object(firewalld.FirewalldIntegration, "is_firewalld_available", return_value=True)
+    @patch.object(firewalld.FirewalldIntegration, "_run_firewall_cmd")
+    @patch("time.time")
+    def test_restore_recognizes_live_canonical_rules(
+        self, mock_time, mock_cmd, _mock_available, firewalld_integration
+    ):
+        """Live rules print port before protocol and must satisfy reconciliation."""
+        mock_time.return_value = 1000
+
+        canonical_output = "\n".join(
+            [
+                'rule family="ipv4" source address="192.168.1.100" port port="80" protocol="tcp" accept',
+                'rule family="ipv4" source address="192.168.1.100" port port="443" protocol="tcp" accept',
+                'rule family="ipv4" source address="192.168.1.100" port port="22" protocol="tcp" accept',
+                'rule family="ipv4" port protocol="tcp" port="80" drop priority="9999"',
+            ]
+        )
+
+        mock_cmd.return_value = (True, canonical_output, "")
+
+        result = firewalld_integration.restore_missing_rules({"192.168.1.100": 2000})
+
+        assert result is True
+        added_args = [
+            args[0][0] for args in mock_cmd.call_args_list if "--add-rich-rule" in args[0]
+        ]
+        assert added_args == []
+
     def test_restore_missing_rules_disabled(self, firewalld_disabled):
         """Test restoration when firewalld is disabled."""
         result = firewalld_disabled.restore_missing_rules({"192.168.1.100": 2000})
@@ -898,10 +926,79 @@ class TestRichRuleBuilder:
         rule = firewalld_integration._build_rich_rule("192.168.1.100", 0, "tcp")
         assert rule is None
 
-    def test_build_rich_rule_invalid_protocol(self, firewalld_integration):
-        """Test building rich rule with invalid protocol."""
-        rule = firewalld_integration._build_rich_rule("192.168.1.100", 80, "invalid")
-        assert rule is None
+
+class TestRichRuleParser:
+    """Test the order-agnostic parsing of active rich rules."""
+
+    def test_parse_builder_rule(self):
+        """Parse the exact literal form emitted by _build_rich_rule."""
+        line = (
+            'rule family="ipv4" source address="203.0.113.7" '
+            'port protocol="tcp" port="22" accept priority="1000"'
+        )
+
+        rule = firewalld._parse_rich_rule(line)
+
+        assert rule == firewalld.FirewalldRule("203.0.113.7", 22, "tcp", 0)
+
+    def test_parse_firewalld_canonical_rule(self):
+        """Parse the exact literal form printed by --list-rich-rules."""
+        line = (
+            'rule family="ipv4" source address="203.0.113.7" port port="22" protocol="tcp" accept'
+        )
+
+        rule = firewalld._parse_rich_rule(line)
+
+        assert rule == firewalld.FirewalldRule("203.0.113.7", 22, "tcp", 0)
+
+    def test_parse_canonical_ipv6_cidr_rule(self):
+        """Canonical IPv6 rules parse the same way."""
+        line = (
+            'rule family="ipv6" source address="2001:db8::/32" '
+            'port port="8080" protocol="udp" accept'
+        )
+
+        rule = firewalld._parse_rich_rule(line)
+
+        assert rule == firewalld.FirewalldRule("2001:db8::/32", 8080, "udp", 0)
+
+    def test_parse_round_trips_built_rule(self, firewalld_integration):
+        """Rules built by knocker are recovered unchanged."""
+        built = firewalld_integration._build_rich_rule("198.51.100.4", 443, "tcp")
+
+        rule = firewalld._parse_rich_rule(built)
+
+        assert rule == firewalld.FirewalldRule("198.51.100.4", 443, "tcp", 0)
+
+    def test_parse_ignores_default_rules_without_source(self):
+        """Default deny/reject rules carry no source and are skipped."""
+        line = 'rule family="ipv4" port protocol="tcp" port="80" drop priority="9999"'
+
+        assert firewalld._parse_rich_rule(line) is None
+
+    def test_parse_ignores_lines_without_port_attribute(self):
+        """Lines without a port attribute stay ignored rather than raising."""
+        assert (
+            firewalld._parse_rich_rule('rule family="ipv4" source address="203.0.113.7" accept')
+            is None
+        )
+
+    def test_parse_raises_for_missing_protocol(self):
+        """A source rule missing its protocol still fails loudly."""
+        line = 'rule family="ipv4" source address="203.0.113.7" port port="22" accept'
+
+        with pytest.raises(ValueError, match="missing rich-rule fields"):
+            firewalld._parse_rich_rule(line)
+
+    def test_parse_raises_for_non_numeric_port(self):
+        """A malformed port value keeps raising instead of being accepted."""
+        line = (
+            'rule family="ipv4" source address="203.0.113.7" '
+            'port port="not-a-port" protocol="tcp" accept'
+        )
+
+        with pytest.raises(ValueError):
+            firewalld._parse_rich_rule(line)
 
 
 class TestEdgeCases:
