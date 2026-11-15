@@ -842,7 +842,10 @@ rule family="ipv4" source address="10.0.0.50" port protocol="tcp" port="22" acce
 
         assert result is True
         added_args = [
-            args[0][0] for args in mock_cmd.call_args_list if "--add-rich-rule" in args[0]
+            arg
+            for call in mock_cmd.call_args_list
+            for arg in call.args[0]
+            if arg.startswith("--add-rich-rule=")
         ]
         assert added_args == []
 

@@ -60,6 +60,8 @@ remain reachable. Negative probes require socket timeouts; successful probes
 require the echo payload. All probes use fresh connections. Control/TCP/UDP probes
 run concurrently within one client invocation, avoiding repeated Docker execs and
 serial timeout waits. Expiry checks poll the actual daemon with bounded deadlines.
+The Python reconciliation regression also checks that recognizing existing
+canonical rich rules does not issue any `--add-rich-rule=` commands.
 
 ## Required host FirewallD checks
 
