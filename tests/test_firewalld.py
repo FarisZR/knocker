@@ -929,6 +929,11 @@ class TestRichRuleBuilder:
         rule = firewalld_integration._build_rich_rule("192.168.1.100", 0, "tcp")
         assert rule is None
 
+    def test_build_rich_rule_invalid_protocol(self, firewalld_integration):
+        """Test building rich rule with invalid protocol."""
+        rule = firewalld_integration._build_rich_rule("192.168.1.100", 80, "invalid")
+        assert rule is None
+
 
 class TestRichRuleParser:
     """Test the order-agnostic parsing of active rich rules."""

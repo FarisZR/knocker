@@ -62,6 +62,7 @@ run concurrently within one client invocation, avoiding repeated Docker execs an
 serial timeout waits. Expiry checks poll the actual daemon with bounded deadlines.
 The Python reconciliation regression also checks that recognizing existing
 canonical rich rules does not issue any `--add-rich-rule=` commands.
+Rule-builder tests retain invalid IP, port, and protocol validation coverage.
 
 ## Required host FirewallD checks
 
