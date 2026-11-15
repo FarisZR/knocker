@@ -82,9 +82,10 @@ ready_status() {
         --max-time 15 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8000/ready
 }
 wait_ready() {
+    local expected="${1:-200}"
     deadline=$((SECONDS + 60))
-    until [ "$(ready_status 2>/dev/null || true)" = 200 ]; do
-        [ "$SECONDS" -lt "$deadline" ] || { echo 'Knocker did not become ready' >&2; return 1; }
+    until [ "$(ready_status 2>/dev/null || true)" = "$expected" ]; do
+        [ "$SECONDS" -lt "$deadline" ] || { echo "Knocker readiness did not become $expected" >&2; return 1; }
         sleep 1
     done
 }
@@ -181,8 +182,8 @@ echo 'PASS: rejected API keys and remote permission failures do not mutate persi
 
 default_rule='rule family="ipv4" port port="80" protocol="tcp" drop priority="9999"'
 firewall "--remove-rich-rule=$default_rule"
-[ "$(ready_status)" = 503 ]
+wait_ready 503
 "${compose[@]}" exec -T knocker curl --noproxy '*' --fail --silent http://127.0.0.1:8000/health >/dev/null
 firewall "--add-rich-rule=$default_rule"
-[ "$(ready_status)" = 200 ]
+wait_ready 200
 echo 'PASS: readiness detects lost protection; liveness remains available'
