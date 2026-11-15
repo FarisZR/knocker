@@ -82,7 +82,10 @@ running host FirewallD 2.0+ daemon, uv, and root or passwordless sudo for zone c
 The suite checks the actual host daemon, default zone target/priority/sources,
 every IPv4/IPv6 TCP/UDP rule, expiry and shorter TTL replacement, recovery of all
 eight timed rules with unchanged persistence, rejected keys/remote permissions,
-and readiness when protection is missing.
+and readiness when protection is missing. The shorter-TTL replacement uses a
+15-second grant against an original 120-second grant: replacing four rules
+requires twelve CLI calls, so a six-second grant can expire before persistence
+on slower hosts. The expiry check remains bounded to 20 seconds.
 As in the original host test, requests through the development Caddy proxy use
 a simulated documentation address; real peer/packet checks live in the CI suite.
 The host test client disables its container AppArmor profile to reach the host

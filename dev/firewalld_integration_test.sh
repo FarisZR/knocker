@@ -153,7 +153,9 @@ done
 echo 'PASS: exact IPv4/IPv6 timed rules and real expiry'
 
 knock 200 "$test_ipv4" 120
-knock 200 "$test_ipv4" 6
+# Replacing four existing rules needs twelve firewall-cmd invocations. Allow
+# slower hosts to finish the request while still proving expiry well before 120s.
+knock 200 "$test_ipv4" 15
 assert_rules yes "$test_ipv4"
 wait_expiry "$test_ipv4"
 echo 'PASS: shorter TTL replaces the original long grant'
