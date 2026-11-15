@@ -107,8 +107,8 @@ Dependabot checks Python dependencies, GitHub Actions, and Docker images weekly.
 The uv entry includes indirect dependencies and groups Python updates into one PR,
 so packages such as Pydantic, pydantic-core, and Starlette do not remain at older
 lockfile versions when their parent dependency still permits newer releases.
-Docker updates cover both the production Dockerfile and the Caddy test stacks in
-`dev/`. The uv binary version/checksums in `Dockerfile` and the cosign binary
+The `docker` updater covers the production Dockerfile at `/`; a separate
+`docker-compose` updater covers the regular and CI Caddy stacks in `dev/`. The uv binary version/checksums in `Dockerfile` and the cosign binary
 version in the publishing workflow require a manual check when refreshing tools.
 
 To refresh Python dependencies deliberately:
