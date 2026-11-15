@@ -60,10 +60,6 @@ remain reachable. Negative probes require socket timeouts; successful probes
 require the echo payload. All probes use fresh connections. Control/TCP/UDP probes
 run concurrently within one client invocation, avoiding repeated Docker execs and
 serial timeout waits. Expiry checks poll the actual daemon with bounded deadlines.
-Readiness checks also poll with bounded deadlines after external firewall changes:
-`/ready` caches its FirewallD verdict for ten seconds, so both missing protection
-and recovery become visible after the cached verdict expires. The isolated suite
-allows 20 seconds and the host suite allows 60 seconds, including verification time.
 
 ## Required host FirewallD checks
 

@@ -131,16 +131,6 @@ class FirewallEndToEnd(unittest.TestCase):
         )
         return result
 
-    def wait_ready_status(self, expected):
-        """Allow the readiness cache to expire after an external firewall change."""
-        deadline = time.monotonic() + 20
-        while True:
-            response = self.probe("client", 4, kind="http", path="/ready")
-            if response["status"] == expected:
-                return
-            self.assertLess(time.monotonic(), deadline, response)
-            time.sleep(0.5)
-
     def access(self, allowed, family, service="client"):
         """Require a working control service and the expected TCP/UDP policy."""
         # The control service distinguishes firewall blocking from an unreachable server.
@@ -284,12 +274,13 @@ class FirewallEndToEnd(unittest.TestCase):
         default_rule = 'rule family="ipv4" port port="9000" protocol="tcp" drop priority="9999"'
         firewall("--zone=knocker", f"--remove-rich-rule={default_rule}")
         try:
-            self.wait_ready_status(503)
+            ready = self.probe("client", 4, kind="http", path="/ready")
+            self.assertEqual(ready["status"], 503, ready)
             health = self.probe("client", 4, kind="http", path="/health")
             self.assertEqual(health["status"], 200, health)
         finally:
             firewall("--zone=knocker", f"--add-rich-rule={default_rule}")
-        self.wait_ready_status(200)
+        self.assertEqual(self.probe("client", 4, kind="http", path="/ready")["status"], 200)
 
     def test_08_daemon_failure_does_not_persist_access(self):
         """A failed backend grant must not be persisted or survive recovery."""
@@ -308,7 +299,7 @@ class FirewallEndToEnd(unittest.TestCase):
         self.assertEqual(response["status"], 500, response)
         persisted = json.loads(execute("knocker", "cat", "/data/whitelist.json").stdout)
         self.assertNotIn(self.addresses["stranger"][4], persisted)
-        self.wait_ready_status(503)
+        self.assertEqual(self.probe("client", 4, kind="http", path="/ready")["status"], 503)
         self.assertEqual(self.probe("client", 4, kind="http", path="/health")["status"], 200)
         self.access(False, 4, "stranger")
         self.restart()

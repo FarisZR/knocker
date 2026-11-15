@@ -436,6 +436,13 @@ class FirewalldIntegration:
             for family in ("ipv4", "ipv6")
         }
 
+    def protection_snapshot(self) -> Optional[str]:
+        """Read current zone state so external changes invalidate readiness caching."""
+        success, stdout, _ = self._run_firewall_cmd(
+            [f"--zone={self.zone_name}", "--list-all"], check=False
+        )
+        return stdout if success else None
+
     def verify_protection(self) -> bool:
         """Verify active firewalld protection without changing persistent state."""
         if not self.is_enabled():

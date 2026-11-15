@@ -321,7 +321,10 @@ repeats the protection verification without changing firewall state. Startup
 still performs zone setup, whitelist restoration, and full verification before
 serving requests. On `/ready`, that protection verification (a blocking chain of
 `firewall-cmd` calls) is cached for about 10 seconds and shared by concurrent
-pollers, so polling frequently does not multiply `firewall-cmd` invocations;
+pollers. Each poll reads the current zone with one `firewall-cmd --list-all` call;
+a changed or unavailable zone invalidates the cached verdict immediately, so
+removed protection and recovery are visible without waiting for cache expiry.
+Unchanged zone state reuses the full verification chain within the cache TTL;
 canceling one poller does not cancel the shared verification task;
 startup verification always runs uncached. Consider monitoring:
 

@@ -554,6 +554,7 @@ class _FirewalldReadinessVerdict:
     integration: firewalld.FirewalldIntegration
     ready: bool
     checked_at: float
+    snapshot: Optional[str]
 
 
 @dataclass
@@ -563,6 +564,7 @@ class _FirewalldReadinessInFlight:
     integration: firewalld.FirewalldIntegration
     task: asyncio.Task[bool]
     started_at: float
+    snapshot: Optional[str]
 
 
 _firewalld_ready_lock = asyncio.Lock()
@@ -591,7 +593,10 @@ def _complete_firewalld_readiness(task: asyncio.Task[bool]) -> None:
     if _firewalld_ready_inflight is not None and _firewalld_ready_inflight.task is task:
         try:
             _firewalld_ready_verdict = _FirewalldReadinessVerdict(
-                _firewalld_ready_inflight.integration, ready, time.monotonic()
+                _firewalld_ready_inflight.integration,
+                ready,
+                time.monotonic(),
+                _firewalld_ready_inflight.snapshot,
             )
         finally:
             # The completed task must not remain reachable through global state.
@@ -607,16 +612,19 @@ async def verify_protection_readiness(
     An uncached call runs 5 + 2 * len(monitored_ports) blocking firewall-cmd
     subprocesses, so an unauthenticated flood of readiness requests would turn
     into host subprocess and CPU exhaustion. Callers within the cache TTL share
-    one verification chain, and the cached verdict is keyed to the integration
-    instance so a config reload never serves a stale verdict.
+    one verification chain. A current zone snapshot invalidates cached verdicts
+    after external firewall changes; integration identity handles config reloads.
     """
     global _firewalld_ready_inflight
 
     async with _firewalld_ready_lock:
+        snapshot = await asyncio.to_thread(firewalld_integration.protection_snapshot)
         cached = _firewalld_ready_verdict
         if (
             cached is not None
             and cached.integration is firewalld_integration
+            and snapshot is not None
+            and cached.snapshot == snapshot
             and time.monotonic() - cached.checked_at < FIREWALLD_READY_CACHE_TTL_SECONDS
         ):
             return cached.ready
@@ -630,7 +638,7 @@ async def verify_protection_readiness(
             task = asyncio.create_task(asyncio.to_thread(firewalld_integration.verify_protection))
             task.add_done_callback(_complete_firewalld_readiness)
             _firewalld_ready_inflight = _FirewalldReadinessInFlight(
-                firewalld_integration, task, time.monotonic()
+                firewalld_integration, task, time.monotonic(), snapshot
             )
 
     return await asyncio.shield(task)
