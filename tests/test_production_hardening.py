@@ -417,6 +417,43 @@ class TestHealthCheckDependencies:
         assert running_chains == 1
         assert len(calls) == 1
 
+    def test_concurrent_readiness_requests_share_cached_snapshot(self, test_settings, monkeypatch):
+        """Cached polls share slow snapshot work without refreshing the verdict age."""
+        test_settings["firewalld"] = {"enabled": True}
+        integration = Mock()
+        integration.is_enabled.return_value = True
+        integration.verify_protection.return_value = True
+        integration.protection_snapshot.return_value = "unchanged"
+        monkeypatch.setattr("src.main.firewalld.get_firewalld_integration", lambda: integration)
+        clock = _FakeMonotonicClock()
+        monkeypatch.setattr("src.main.time", clock)
+        started = threading.Event()
+        release = threading.Event()
+
+        def snapshot():
+            started.set()
+            assert release.wait(timeout=5)
+            return "unchanged"
+
+        async def poll_together():
+            assert await _full_readiness_check(test_settings) is None
+            clock.advance(9.0)
+            integration.protection_snapshot.side_effect = snapshot
+            tasks = [asyncio.create_task(_full_readiness_check(test_settings)) for _ in range(8)]
+            try:
+                assert await asyncio.to_thread(started.wait, 5)
+                assert integration.protection_snapshot.call_count == 2
+            finally:
+                release.set()
+            assert all(result is None for result in await asyncio.gather(*tasks))
+            assert integration.protection_snapshot.call_count == 2
+            assert integration.verify_protection.call_count == 1
+            clock.advance(1.0)
+            assert await _full_readiness_check(test_settings) is None
+            assert integration.verify_protection.call_count == 2
+
+        asyncio.run(poll_together())
+
     def test_cancelled_readiness_request_keeps_shared_verification(
         self, test_settings, monkeypatch
     ):

@@ -315,13 +315,17 @@ journalctl -u firewalld -f
 
 ### Health Checks
 
+Whitelist restoration recognizes source-specific destination-port `accept` rules.
+Source-port rules and `drop`/`reject` rules do not count as existing allowances.
+
 The `/health` endpoint is a cheap liveness probe and does not run
 `firewall-cmd`. Use `/ready` for read-only storage and firewalld readiness; it
 repeats the protection verification without changing firewall state. Startup
 still performs zone setup, whitelist restoration, and full verification before
 serving requests. On `/ready`, that protection verification (a blocking chain of
 `firewall-cmd` calls) is cached for about 10 seconds and shared by concurrent
-pollers. Each poll reads the current zone with one `firewall-cmd --list-all` call;
+pollers. Each group of concurrent polls shares one current-zone
+`firewall-cmd --list-all` call along with any required full verification;
 a changed or unavailable zone invalidates the cached verdict immediately, so
 removed protection and recovery are visible without waiting for cache expiry.
 Unchanged zone state reuses the full verification chain within the cache TTL;

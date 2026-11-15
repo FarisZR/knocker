@@ -562,9 +562,8 @@ class _FirewalldReadinessInFlight:
     """Shared verification task, keyed to the integration instance."""
 
     integration: firewalld.FirewalldIntegration
-    task: asyncio.Task[bool]
+    task: asyncio.Task[_FirewalldReadinessVerdict]
     started_at: float
-    snapshot: Optional[str]
 
 
 _firewalld_ready_lock = asyncio.Lock()
@@ -579,12 +578,12 @@ def reset_firewalld_readiness_cache() -> None:
     _firewalld_ready_inflight = None
 
 
-def _complete_firewalld_readiness(task: asyncio.Task[bool]) -> None:
+def _complete_firewalld_readiness(task: asyncio.Task[_FirewalldReadinessVerdict]) -> None:
     """Publish a completed shared verification or clear its failed task state."""
     global _firewalld_ready_verdict, _firewalld_ready_inflight
 
     try:
-        ready = task.result()
+        verdict = task.result()
     except BaseException:
         if _firewalld_ready_inflight is not None and _firewalld_ready_inflight.task is task:
             _firewalld_ready_inflight = None
@@ -592,15 +591,28 @@ def _complete_firewalld_readiness(task: asyncio.Task[bool]) -> None:
 
     if _firewalld_ready_inflight is not None and _firewalld_ready_inflight.task is task:
         try:
-            _firewalld_ready_verdict = _FirewalldReadinessVerdict(
-                _firewalld_ready_inflight.integration,
-                ready,
-                time.monotonic(),
-                _firewalld_ready_inflight.snapshot,
-            )
+            _firewalld_ready_verdict = verdict
         finally:
             # The completed task must not remain reachable through global state.
             _firewalld_ready_inflight = None
+
+
+async def _check_firewalld_readiness(
+    integration: firewalld.FirewalldIntegration,
+) -> _FirewalldReadinessVerdict:
+    """Share snapshot acquisition and preserve the age of a reused verdict."""
+    snapshot = await asyncio.to_thread(integration.protection_snapshot)
+    cached = _firewalld_ready_verdict
+    if (
+        cached is not None
+        and cached.integration is integration
+        and snapshot is not None
+        and cached.snapshot == snapshot
+        and time.monotonic() - cached.checked_at < FIREWALLD_READY_CACHE_TTL_SECONDS
+    ):
+        return cached
+    ready = await asyncio.to_thread(integration.verify_protection)
+    return _FirewalldReadinessVerdict(integration, ready, time.monotonic(), snapshot)
 
 
 async def verify_protection_readiness(
@@ -618,30 +630,19 @@ async def verify_protection_readiness(
     global _firewalld_ready_inflight
 
     async with _firewalld_ready_lock:
-        snapshot = await asyncio.to_thread(firewalld_integration.protection_snapshot)
-        cached = _firewalld_ready_verdict
-        if (
-            cached is not None
-            and cached.integration is firewalld_integration
-            and snapshot is not None
-            and cached.snapshot == snapshot
-            and time.monotonic() - cached.checked_at < FIREWALLD_READY_CACHE_TTL_SECONDS
-        ):
-            return cached.ready
-
         if (
             _firewalld_ready_inflight is not None
             and _firewalld_ready_inflight.integration is firewalld_integration
         ):
             task = _firewalld_ready_inflight.task
         else:
-            task = asyncio.create_task(asyncio.to_thread(firewalld_integration.verify_protection))
+            task = asyncio.create_task(_check_firewalld_readiness(firewalld_integration))
             task.add_done_callback(_complete_firewalld_readiness)
             _firewalld_ready_inflight = _FirewalldReadinessInFlight(
-                firewalld_integration, task, time.monotonic(), snapshot
+                firewalld_integration, task, time.monotonic()
             )
 
-    return await asyncio.shield(task)
+    return (await asyncio.shield(task)).ready
 
 
 async def _full_readiness_check(settings: SettingsLike) -> Optional[JSONResponse]:

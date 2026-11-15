@@ -933,6 +933,19 @@ class TestRichRuleBuilder:
 class TestRichRuleParser:
     """Test the order-agnostic parsing of active rich rules."""
 
+    @pytest.mark.parametrize(
+        "element",
+        [
+            'source-port port="22" protocol="tcp" accept',
+            'source-port protocol="tcp" port="22" accept',
+            'port port="22" protocol="tcp" drop',
+            'port port="22" protocol="tcp" reject',
+        ],
+    )
+    def test_parse_ignores_rules_that_do_not_allow_destination_port(self, element):
+        line = f'rule family="ipv4" source address="203.0.113.7" {element}'
+        assert firewalld._parse_rich_rule(line) is None
+
     def test_parse_builder_rule(self):
         """Parse the exact literal form emitted by _build_rich_rule."""
         line = (

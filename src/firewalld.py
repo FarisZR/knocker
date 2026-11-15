@@ -50,6 +50,8 @@ def _parse_rich_rule(line: str) -> Optional[FirewalldRule]:
     """
     if not line.strip() or "source address=" not in line or 'port="' not in line:
         return None
+    if re.search(r"\bsource-port\s", line) or re.search(r"(?:^|\s)accept(?:\s|$)", line) is None:
+        return None
 
     source_match = re.search(r'\bsource\s+address="([^"]+)"', line)
     # \b plus the = anchor keeps this from matching the element name in
