@@ -40,16 +40,29 @@ class FirewalldRule:
 
 
 def _parse_rich_rule(line: str) -> Optional[FirewalldRule]:
-    """Parse a source-and-port rich rule, ignoring unrelated zone rules."""
-    if not line.strip() or "source address=" not in line or "port=" not in line:
+    """
+    Parse a source-and-port rich rule, ignoring unrelated zone rules.
+
+    firewalld prints the port element before the protocol attribute in its
+    canonical ``--list-rich-rules`` output (``port port="22" protocol="tcp"``),
+    while the rules knocker builds place them the other way around. Attributes
+    are therefore extracted independently of their relative order.
+    """
+    if not line.strip() or "source address=" not in line or 'port="' not in line:
+        return None
+    if re.search(r"\bsource-port\s", line) or re.search(r"(?:^|\s)accept(?:\s|$)", line) is None:
         return None
 
-    match = re.search(r'source address="([^"]+)".*?protocol="([^"]+)".*?port="([^"]+)"', line)
-    if match is None:
+    source_match = re.search(r'\bsource\s+address="([^"]+)"', line)
+    # \b plus the = anchor keeps this from matching the element name in
+    # `port port="22"`; only the attribute value is captured.
+    port_match = re.search(r'\bport="([^"]+)"', line)
+    protocol_match = re.search(r'\bprotocol="([^"]+)"', line)
+    if source_match is None or port_match is None or protocol_match is None:
         raise ValueError("missing rich-rule fields")
 
-    ip_address, protocol, port_text = match.groups()
-    return FirewalldRule(ip_address, int(port_text), protocol, 0)
+    ip_address = source_match.group(1)
+    return FirewalldRule(ip_address, int(port_match.group(1)), protocol_match.group(1), 0)
 
 
 class MutationQueueUnavailable(RuntimeError):
@@ -424,6 +437,13 @@ class FirewalldIntegration:
             for port_config in self.monitored_ports
             for family in ("ipv4", "ipv6")
         }
+
+    def protection_snapshot(self) -> Optional[str]:
+        """Read current zone state so external changes invalidate readiness caching."""
+        success, stdout, _ = self._run_firewall_cmd(
+            [f"--zone={self.zone_name}", "--list-all"], check=False
+        )
+        return stdout if success else None
 
     def verify_protection(self) -> bool:
         """Verify active firewalld protection without changing persistent state."""

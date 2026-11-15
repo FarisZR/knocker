@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Optional, Tuple, cast, override
 from functools import lru_cache
 from contextlib import asynccontextmanager
@@ -647,6 +648,107 @@ async def health_check(settings: SettingsLike = Depends(get_settings)):
         )
 
 
+FIREWALLD_READY_CACHE_TTL_SECONDS = 10.0
+
+
+@dataclass
+class _FirewalldReadinessVerdict:
+    """Cached verify_protection result, keyed to the integration instance."""
+
+    integration: firewalld.FirewalldIntegration
+    ready: bool
+    checked_at: float
+    snapshot: Optional[str]
+
+
+@dataclass
+class _FirewalldReadinessInFlight:
+    """Shared verification task, keyed to the integration instance."""
+
+    integration: firewalld.FirewalldIntegration
+    task: asyncio.Task[_FirewalldReadinessVerdict]
+    started_at: float
+
+
+_firewalld_ready_lock = asyncio.Lock()
+_firewalld_ready_verdict: Optional[_FirewalldReadinessVerdict] = None
+_firewalld_ready_inflight: Optional[_FirewalldReadinessInFlight] = None
+
+
+def reset_firewalld_readiness_cache() -> None:
+    """Drop any cached readiness verdict (used by tests after a reload)."""
+    global _firewalld_ready_verdict, _firewalld_ready_inflight
+    _firewalld_ready_verdict = None
+    _firewalld_ready_inflight = None
+
+
+def _complete_firewalld_readiness(task: asyncio.Task[_FirewalldReadinessVerdict]) -> None:
+    """Publish a completed shared verification or clear its failed task state."""
+    global _firewalld_ready_verdict, _firewalld_ready_inflight
+
+    try:
+        verdict = task.result()
+    except BaseException:
+        if _firewalld_ready_inflight is not None and _firewalld_ready_inflight.task is task:
+            _firewalld_ready_inflight = None
+        return
+
+    if _firewalld_ready_inflight is not None and _firewalld_ready_inflight.task is task:
+        try:
+            _firewalld_ready_verdict = verdict
+        finally:
+            # The completed task must not remain reachable through global state.
+            _firewalld_ready_inflight = None
+
+
+async def _check_firewalld_readiness(
+    integration: firewalld.FirewalldIntegration,
+) -> _FirewalldReadinessVerdict:
+    """Share snapshot acquisition and preserve the age of a reused verdict."""
+    snapshot = await asyncio.to_thread(integration.protection_snapshot)
+    cached = _firewalld_ready_verdict
+    if (
+        cached is not None
+        and cached.integration is integration
+        and snapshot is not None
+        and cached.snapshot == snapshot
+        and time.monotonic() - cached.checked_at < FIREWALLD_READY_CACHE_TTL_SECONDS
+    ):
+        return cached
+    ready = await asyncio.to_thread(integration.verify_protection)
+    return _FirewalldReadinessVerdict(integration, ready, time.monotonic(), snapshot)
+
+
+async def verify_protection_readiness(
+    firewalld_integration: firewalld.FirewalldIntegration,
+) -> bool:
+    """
+    Verify firewalld protection for /ready with a short single-flight cache.
+
+    An uncached call runs 5 + 2 * len(monitored_ports) blocking firewall-cmd
+    subprocesses, so an unauthenticated flood of readiness requests would turn
+    into host subprocess and CPU exhaustion. Callers within the cache TTL share
+    one verification chain. A current zone snapshot invalidates cached verdicts
+    after external firewall changes; integration identity handles config reloads.
+    """
+    global _firewalld_ready_inflight
+
+    async with _firewalld_ready_lock:
+        if (
+            _firewalld_ready_inflight is not None
+            and _firewalld_ready_inflight.integration is firewalld_integration
+        ):
+            task = _firewalld_ready_inflight.task
+        else:
+            task = asyncio.create_task(_check_firewalld_readiness(firewalld_integration))
+            task.add_done_callback(_complete_firewalld_readiness)
+            _firewalld_ready_inflight = _FirewalldReadinessInFlight(
+                firewalld_integration, task, time.monotonic()
+            )
+
+    return (await asyncio.shield(task)).ready
+
+
 async def _full_readiness_check(settings: SettingsLike) -> Optional[JSONResponse]:
     """Run the dependency checks reserved for the readiness endpoint."""
     runtime_state = core.ensure_runtime_state(settings)
@@ -693,7 +795,9 @@ async def _full_readiness_check(settings: SettingsLike) -> Optional[JSONResponse
             content={"status": "unhealthy", "error": "Firewalld protection not ready"},
         )
     if firewalld_enabled and firewalld_integration:
-        ready = await asyncio.to_thread(firewalld_integration.verify_protection)
+        # The startup verification in lifespan stays uncached; only the
+        # readiness endpoint rate-limits itself through a short cache.
+        ready = await verify_protection_readiness(firewalld_integration)
         if not ready:
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
