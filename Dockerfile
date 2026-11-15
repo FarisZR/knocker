@@ -1,9 +1,9 @@
 # Pin the multi-architecture runtime base by immutable manifest digest.
-FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 ARG TARGETARCH
 ARG TARGETVARIANT
-ARG UV_VERSION=0.11.31
+ARG UV_VERSION=0.13.8
 
 # Set the working directory in the container
 WORKDIR /app
@@ -20,13 +20,13 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install the official uv release artifact for each supported architecture.
-# Checksums are pinned from the uv 0.11.31 release, preserving arm/v7 support
+# Checksums are pinned from the uv 0.13.8 release, preserving arm/v7 support
 # without executing the remote installer script.
 RUN set -eux; \
     case "${TARGETARCH}/${TARGETVARIANT}" in \
-      "amd64/") uv_target="x86_64-unknown-linux-gnu"; uv_sha256="8cc1cd82d434ec565376f98bd938d4b715b5791a80ff2d3aa78821cf85091b4b" ;; \
-      "arm64/") uv_target="aarch64-unknown-linux-gnu"; uv_sha256="d74f23949fd07be4970f293d06ca99d87cd2a78a341c3d7b7fc0df7bc2d8a145" ;; \
-      "arm/v7") uv_target="armv7-unknown-linux-gnueabihf"; uv_sha256="de23124095c4df154d3807495b59f1985d8d9460bd70d3de61fef2034756bd61" ;; \
+      "amd64/") uv_target="x86_64-unknown-linux-gnu"; uv_sha256="5acfd9177cfecf0bf87578f059728215ccc884388988f55f7a65041b57387d91" ;; \
+      "arm64/") uv_target="aarch64-unknown-linux-gnu"; uv_sha256="74f2f5c6024d397481db228db8fc25eed420db192243f88438c118e7e013e585" ;; \
+      "arm/v7") uv_target="armv7-unknown-linux-gnueabihf"; uv_sha256="079618cfa7110f0bf812355cc030d3f309b2ebc085c3c8bcb7c291edf874d57d" ;; \
       *) echo "Unsupported target architecture: ${TARGETARCH}/${TARGETVARIANT}" >&2; exit 1 ;; \
     esac; \
     uv_archive="uv-${uv_target}.tar.gz"; \

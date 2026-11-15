@@ -1,6 +1,6 @@
 services:
   caddy:
-    image: caddy:2.7.6
+    image: caddy:2.11.9@sha256:4e2425f6009577e7c651010f16679c28f7d12df3e7b1914f941a7a3370746b3c
     restart: unless-stopped
     ports:
       - "127.0.0.1:18080:80"

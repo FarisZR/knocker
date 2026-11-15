@@ -13,7 +13,9 @@ directly. Host D-Bus access and the default zone-target case are required checks
 alongside the real packet tests. There is no emulation or VM boot step in the workflow.
 
 After dependency updates, run `uv sync --locked --all-groups` before the Python
-checks so validation uses the committed dependency and tool versions.
+checks so validation uses the committed dependency and tool versions. If your
+environment overrides `TMPDIR` outside the permitted whitelist storage roots,
+run with `TMPDIR=/tmp` so temporary whitelist fixtures remain valid.
 
 For environments without a host FirewallD daemon, run the portable subset:
 
@@ -80,7 +82,10 @@ running host FirewallD 2.0+ daemon, uv, and root or passwordless sudo for zone c
 The suite checks the actual host daemon, default zone target/priority/sources,
 every IPv4/IPv6 TCP/UDP rule, expiry and shorter TTL replacement, recovery of all
 eight timed rules with unchanged persistence, rejected keys/remote permissions,
-and readiness when protection is missing.
+and readiness when protection is missing. The shorter-TTL replacement uses a
+15-second grant against an original 120-second grant: replacing four rules
+requires twelve CLI calls, so a six-second grant can expire before persistence
+on slower hosts. The expiry check remains bounded to 20 seconds.
 As in the original host test, requests through the development Caddy proxy use
 a simulated documentation address; real peer/packet checks live in the CI suite.
 The host test client disables its container AppArmor profile to reach the host
@@ -95,6 +100,36 @@ external routing and Docker DNAT/FORWARD topology still need deployment validati
 The **Run Tests** workflow runs this exact Bash suite on every PR. It has its own
 runner and runs alongside the isolated suites, so host checks do not add a serial
 wait after the packet tests. No checkbox or manual invocation is needed in CI.
+
+## Dependency maintenance
+
+Dependabot checks Python dependencies, GitHub Actions, and Docker images weekly.
+The uv entry includes indirect dependencies and groups Python updates into one PR,
+so packages such as Pydantic, pydantic-core, and Starlette do not remain at older
+lockfile versions when their parent dependency still permits newer releases.
+The `docker` updater covers the production Dockerfile at `/`; a separate
+`docker-compose` updater covers the regular and CI Caddy stacks in `dev/`. The uv binary version/checksums in `Dockerfile` and the cosign binary
+version in the publishing workflow require a manual check when refreshing tools.
+
+To refresh Python dependencies deliberately:
+
+```bash
+uv lock --upgrade
+uv sync --locked --all-groups
+bash dev/test.sh linux
+```
+
+The production image uses Python 3.15 and uv 0.13.8. Pydantic 2.14.3 pins
+pydantic-core 2.50.4, whose Python 3.15 wheels cover amd64, arm64, and arm/v7;
+this avoids requiring a Rust/C compiler in the slim runtime image. Tests use
+httpx2 2.16.0, the supported TestClient dependency in Starlette 1.10.0. The Caddy
+stacks use 2.11.9, pinned to its multi-architecture image digest. Publication uses
+cosign 3.1.4; release signing still requires the GitHub Actions OIDC identity and
+registry write access and is not exercised by the local application test suites.
+
+A dependency refresh must pass the complete Linux suite and the three-architecture
+Docker build before release. Python checks alone can use cached locally built
+wheels and do not prove a clean slim image can install dependencies.
 
 ## Runtime and builds
 

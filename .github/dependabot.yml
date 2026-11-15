@@ -7,6 +7,11 @@ version: 2
 updates:
   - package-ecosystem: "uv"
     directory: "/" # Location of package manifests
+    allow:
+      - dependency-type: "all"
+    groups:
+      python-dependencies:
+        patterns: ["*"]
     schedule:
       interval: "weekly"
   - package-ecosystem: "github-actions"
@@ -15,5 +20,9 @@ updates:
       interval: "weekly"
   - package-ecosystem: "docker"
     directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker-compose"
+    directory: "/dev"
     schedule:
       interval: "weekly"
