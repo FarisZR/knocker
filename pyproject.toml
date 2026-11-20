@@ -5,21 +5,21 @@ description = "Self-hosted single-packet authorization gateway for homelabs"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.163.1",
+    "fastapi>=0.163.2",
     "pyyaml>=6.0.3",
     "uvicorn>=0.54.0",
 ]
 
 [dependency-groups]
 dev = [
-    "httpx2>=2.16.0",
+    "httpx2>=2.16.2",
     "pytest>=9.2.0",
 ]
 lint = [
     "ruff>=0.17.5",
 ]
 type = [
-    "ty>=0.0.104",
+    "ty>=0.0.105",
 ]
 
 [tool.uv]
