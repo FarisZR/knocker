@@ -16,43 +16,28 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
 
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Generate changelog
-        id: changelog
+      - name: Find release notes
+        id: notes
         run: |
-          # Get the previous tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          
-          # Generate changelog
-          if [ -n "$PREV_TAG" ]; then
-            echo "## Changes since $PREV_TAG" > CHANGELOG.md
-            git log $PREV_TAG..HEAD --pretty=format:"* %s (%h)" >> CHANGELOG.md
-          else
-            echo "## Initial Release" > CHANGELOG.md
-            echo "First tagged release of Knocker" >> CHANGELOG.md
+          notes_path="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$notes_path" ]; then
+            printf 'path=%s\n' "$notes_path" >> "$GITHUB_OUTPUT"
           fi
-          
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          cat CHANGELOG.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
-          name: Release ${{ steps.version.outputs.version }}
+          name: Release ${{ github.ref_name }}
+          body_path: ${{ steps.notes.outputs.path }}
           body: |
-            # Knocker ${{ steps.version.outputs.version }}
+            # Knocker ${{ github.ref_name }}
             
             ## Docker Images
             
             Pull the release image with:
             ```bash
-            docker pull ghcr.io/fariszr/knocker:${{ steps.version.outputs.version }}
+            docker pull ghcr.io/fariszr/knocker:${{ github.ref_name }}
             # Or use the latest tag for the most recent stable release
             docker pull ghcr.io/fariszr/knocker:latest
             ```
@@ -63,12 +48,10 @@ jobs:
             
             1. Download `knocker.example.yaml` and rename it to `knocker.yaml`
             2. Add at least one newly generated API key to `knocker.yaml`
-            3. Update `trusted_proxies` to match your Docker network
+            3. Set `server.trusted_proxies` to the reverse proxy's exact IP addresses
             4. Run with: `docker compose up -d`
             
             For detailed setup instructions, see the [README](https://github.com/FarisZR/knocker#readme).
-            
-            ${{ steps.changelog.outputs.changelog }}
             
             ## Security Notes
             
@@ -77,6 +60,6 @@ jobs:
             - Review the [Security Guide](https://github.com/FarisZR/knocker/blob/main/docs/SECURITY.md)
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: ${{ steps.notes.outputs.path == '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

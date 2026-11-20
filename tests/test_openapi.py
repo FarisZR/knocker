@@ -9,6 +9,7 @@ import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
 from src.main import create_app, generate_and_persist_openapi
+from src.version import __version__
 
 
 @pytest.fixture
@@ -57,7 +58,7 @@ def test_openapi_json_endpoint(client):
     schema = response.json()
     assert schema["openapi"] == "3.1.0"
     assert schema["info"]["title"] == "Knocker API"
-    assert schema["info"]["version"] == "1.0.0"
+    assert schema["info"]["version"] == __version__
     assert len(schema["paths"]) >= 3  # At least /knock, /health, /verify
 
 

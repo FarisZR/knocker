@@ -65,8 +65,11 @@ This project is designed to be deployed as a Docker container using the provided
 Knocker provides different image tags for different use cases:
 
 - `latest`  Latest stable release (recommended for production)
-- `v1.2.3`  Specific version tags (pinned versions)
+- `v2.0.0`  Specific release (pinned version)
+- `v2`  Latest release in the v2 series
 - `main` Development branch (rolling updates, may be unstable)
+
+See the [v2 release notes and upgrade guide](docs/releases/v2.0.0.md) when upgrading from v1.
 
 #### Registeries
 

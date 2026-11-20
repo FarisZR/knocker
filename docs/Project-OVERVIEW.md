@@ -25,8 +25,8 @@ This project uses GitHub Actions for continuous integration and deployment.
 *   **CI (`tests.yml`)**: Every pull request runs Python checks and two independent Docker Compose integration jobs: Caddy authentication and real FirewallD packet filtering over IPv4/IPv6 and TCP/UDP. See [TESTING.md](TESTING.md).
 *   **Docker Publish (`docker-publish.yml`)**: Validates pull requests with read-only permissions and publishes signed multi-arch Docker images only from non-PR events. The Dockerfile copies `uv` from an official digest-pinned image.
     - On push to `main` → `ghcr.io/fariszr/knocker:main` (rolling development)
-    - On version tags (v1.2.3) → Multiple tags including `:latest`, `:v1.2.3`, `:1.2.3`, `:1.2`, `:1` (stable releases)
-*   **Release Workflow (`release.yml`)**: On version tags, automatically creates GitHub releases with changelogs and installation instructions. Workflow-file changes are included in the normal CI path.
+    - On stable version tags (`v2.0.0`) → `:latest`, `:v2.0.0`, `:2.0.0`, `:2.0`, `:2`, `:v2`
+*   **Release Workflow (`release.yml`)**: Pushing a version tag creates a GitHub release. A matching file in `docs/releases/` supplies the release notes (for example, [v2.0.0](releases/v2.0.0.md)). For other versions, the workflow uses GitHub-generated notes with installation instructions.
 
 ## Deployment
 
