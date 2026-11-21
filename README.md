@@ -21,11 +21,9 @@ This is ideal for homelab environments where you want to expose services to the 
 - [Knocker-Web](https://github.com/FarisZR/knocker-web)
   Static PWA web app that supports knocking(whitelisting) on reload
 - [Knocker-CLI](https://github.com/FarisZR/knocker-cli)
-  A cli written in go with support for background knocks optionally trigged by ip chanages.
-
+  A cli written in go with support for background knocks.
 - [Knocker-gnome](https://github.com/FarisZR/Knocker-gnome) a gnome extension built on top of the Knocker-cli.
-- [Knocker-EXPO](https://github.com/FarisZR/knocker-EXPO)
-  An experimental Android App written in React EXPO with support for background knocking requests
+- [Knocker-app](https://github.com/FarisZR/knocker-app) an android app with extensive background knock support, so you never lose access.
 
 ## Sequence diagram
 
