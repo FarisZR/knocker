@@ -458,3 +458,23 @@ docker exec knocker-container firewall-cmd --state
 4. **Revert docker configuration** to non-root if desired
 
 The firewalld integration is designed to be non-destructive and can be safely enabled/disabled as needed.
+
+## Helper Protocol (planned)
+
+`src/firewalld_helper_protocol.py` defines the strict, versioned messages that
+the unprivileged API and the future host-side firewall helper will exchange
+(#52). It performs data validation only: no process execution, D-Bus access, or
+firewall commands.
+
+- Operations: `status` (read-only readiness), `add`, and `remove`.
+- Requests carry a request id, protocol version, and canonical IP/CIDR, port,
+  protocol, and (for `add`) a bounded TTL.
+- A `HelperAllowlist` independently restricts zones, ports, protocols, and the
+  maximum TTL. Unknown fields, extra fields on an operation, oversized
+  messages, invalid addresses, and non-allowlisted values are rejected before
+  any firewall operation can be constructed.
+- Responses use fixed error codes and never echo raw exception text, API keys,
+  or host paths.
+
+This module has no runtime effect yet; the helper transport and backend are
+tracked in #52.
